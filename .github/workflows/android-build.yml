@@ -16,6 +16,7 @@ concurrency:
 
 env:
   SIGNING_KEY_ALIAS: chatgpt-prompt-scheduler
+  EXPECTED_SIGNING_CERT_SHA256: 172dc1f21f1d1d4aaf8b22ff84a4084dbfd531f5ecfacae8fcf374b1beb4466e
 
 jobs:
   test:
@@ -58,7 +59,7 @@ jobs:
         run: exit 1
 
   release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -81,12 +82,21 @@ jobs:
       - name: Restore signing key from repository secrets
         env:
           SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           test -n "$SIGNING_KEYSTORE_BASE64"
+          test -n "$SIGNING_STORE_PASSWORD"
+          test -n "$SIGNING_KEY_PASSWORD"
+          echo "::add-mask::$SIGNING_STORE_PASSWORD"
+          echo "::add-mask::$SIGNING_KEY_PASSWORD"
           umask 077
           printf '%s' "$SIGNING_KEYSTORE_BASE64" | base64 --decode > /tmp/upload.jks
-          echo 'e92d5df128afcc039b902afa643ea4836364e5b2a7f4be0e7d44c95a71cb466b  /tmp/upload.jks' | sha256sum -c -
+          keytool -list \
+            -keystore /tmp/upload.jks \
+            -storepass "$SIGNING_STORE_PASSWORD" \
+            -alias "$SIGNING_KEY_ALIAS" >/dev/null
       - name: Build and sign release APK
         env:
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
@@ -94,8 +104,6 @@ jobs:
         run: |
           set -euo pipefail
           trap 'rm -f /tmp/upload.jks' EXIT
-          test -n "$SIGNING_STORE_PASSWORD"
-          test -n "$SIGNING_KEY_PASSWORD"
           gradle --no-daemon --stacktrace :app:assembleRelease
           mkdir -p dist
           BT="$ANDROID_HOME/build-tools/36.0.0"
@@ -109,7 +117,7 @@ jobs:
             dist/app-aligned.apk
           rm dist/app-aligned.apk
           "$BT/apksigner" verify --verbose --print-certs dist/chatgpt-prompt-scheduler-android-v0.1.13.apk | tee dist/SIGNING_CERTIFICATE.txt
-          grep -qi '172dc1f21f1d1d4aaf8b22ff84a4084dbfd531f5ecfacae8fcf374b1beb4466e' dist/SIGNING_CERTIFICATE.txt
+          grep -qi "$EXPECTED_SIGNING_CERT_SHA256" dist/SIGNING_CERTIFICATE.txt
           unzip -t dist/chatgpt-prompt-scheduler-android-v0.1.13.apk
           sha256sum dist/chatgpt-prompt-scheduler-android-v0.1.13.apk > dist/SHA256SUMS.txt
           sha256sum -c dist/SHA256SUMS.txt
@@ -126,6 +134,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           gh release delete v0.1.13 --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
           gh release create v0.1.13 \
             dist/chatgpt-prompt-scheduler-android-v0.1.13.apk \
