@@ -14,10 +14,6 @@ concurrency:
   group: android-build-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-env:
-  SIGNING_KEY_ALIAS: chatgpt-prompt-scheduler
-  EXPECTED_SIGNING_CERT_SHA256: 172dc1f21f1d1d4aaf8b22ff84a4084dbfd531f5ecfacae8fcf374b1beb4466e
-
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -79,54 +75,49 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.5.0'
-      - name: Restore signing key from repository secrets
-        env:
-          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
-          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
-          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+      - name: Build and self-sign reinstall-only release APK
+        shell: bash
         run: |
           set -euo pipefail
-          test -n "$SIGNING_KEYSTORE_BASE64"
-          test -n "$SIGNING_STORE_PASSWORD"
-          test -n "$SIGNING_KEY_PASSWORD"
-          echo "::add-mask::$SIGNING_STORE_PASSWORD"
-          echo "::add-mask::$SIGNING_KEY_PASSWORD"
-          umask 077
-          printf '%s' "$SIGNING_KEYSTORE_BASE64" | base64 --decode > /tmp/upload.jks
-          keytool -list \
-            -keystore /tmp/upload.jks \
-            -storepass "$SIGNING_STORE_PASSWORD" \
-            -alias "$SIGNING_KEY_ALIAS" >/dev/null
-      - name: Build and sign release APK
-        env:
-          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
-          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          trap 'rm -f /tmp/upload.jks' EXIT
+          KEYSTORE=/tmp/chatgpt-prompt-scheduler-reinstall-only.jks
+          STORE_PASSWORD="$(openssl rand -hex 24)"
+          KEY_ALIAS=chatgpt-prompt-scheduler-reinstall-only
+          echo "::add-mask::$STORE_PASSWORD"
+          trap 'rm -f "$KEYSTORE"' EXIT
+
+          keytool -genkeypair \
+            -keystore "$KEYSTORE" \
+            -storepass "$STORE_PASSWORD" \
+            -keypass "$STORE_PASSWORD" \
+            -alias "$KEY_ALIAS" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 3650 \
+            -dname 'CN=ChatGPT Prompt Scheduler Reinstall Only,O=Personal Android Build,C=KR'
+
           gradle --no-daemon --stacktrace :app:assembleRelease
           mkdir -p dist
           BT="$ANDROID_HOME/build-tools/36.0.0"
           "$BT/zipalign" -p -f 4 app/build/outputs/apk/release/app-release-unsigned.apk dist/app-aligned.apk
           "$BT/apksigner" sign \
-            --ks /tmp/upload.jks \
-            --ks-key-alias "$SIGNING_KEY_ALIAS" \
-            --ks-pass "pass:$SIGNING_STORE_PASSWORD" \
-            --key-pass "pass:$SIGNING_KEY_PASSWORD" \
+            --ks "$KEYSTORE" \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass "pass:$STORE_PASSWORD" \
+            --key-pass "pass:$STORE_PASSWORD" \
             --out dist/chatgpt-prompt-scheduler-android-v0.1.13.apk \
             dist/app-aligned.apk
           rm dist/app-aligned.apk
+
           "$BT/apksigner" verify --verbose --print-certs dist/chatgpt-prompt-scheduler-android-v0.1.13.apk | tee dist/SIGNING_CERTIFICATE.txt
-          grep -qi "$EXPECTED_SIGNING_CERT_SHA256" dist/SIGNING_CERTIFICATE.txt
           unzip -t dist/chatgpt-prompt-scheduler-android-v0.1.13.apk
           sha256sum dist/chatgpt-prompt-scheduler-android-v0.1.13.apk > dist/SHA256SUMS.txt
           sha256sum -c dist/SHA256SUMS.txt
           zip -qr dist/chatgpt-prompt-scheduler-android-v0.1.13-source.zip . \
-            -x '.git/*' '*/build/*' 'dist/*' '.android-signing/*' '*.jks' '*.keystore' 'signing-secrets*'
+            -x '.git/*' '*/build/*' 'dist/*' '*.jks' '*.keystore'
       - uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
-          name: chatgpt-prompt-scheduler-android-v0.1.13-signed
+          name: chatgpt-prompt-scheduler-android-v0.1.13-reinstall-only
           path: dist/*
           if-no-files-found: error
           retention-days: 90
@@ -144,4 +135,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title 'ChatGPT Prompt Scheduler Android v0.1.13' \
-            --notes-file RELEASE_NOTES-v0.1.13.md
+            --notes '개인용 공개 빌드입니다. 이 APK는 실행 시 생성되는 임시 서명키로 서명되므로 이전 설치본 위에 업데이트하지 말고 기존 앱을 삭제한 뒤 설치하세요.'
