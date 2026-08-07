@@ -35,9 +35,12 @@ jobs:
             "observed_run_id": "$OBSERVED_RUN_ID",
             "source_sha": "$OBSERVED_HEAD_SHA",
             "workflow_conclusion": "$OBSERVED_CONCLUSION",
-            "mode": "reinstall-only-ephemeral-signing",
+            "mode": "persistent-public-signing",
+            "public_certificate_sha256": "3cfe95acd09077a89cd8de85434cbd5d8bb3e2021d8e9eacb804a8da9ccce52a",
+            "private_to_public_reinstall_required": true,
+            "future_public_updates_supported_after_successful_baseline": true,
             "external_private_repo_dependency": false,
-            "repository_secrets_required": false,
+            "repository_secret_name": "CHATGPT_PUBLIC_SIGNING_BUNDLE_BASE64",
             "completed_at_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           }
           EOF
