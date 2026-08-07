@@ -5,6 +5,9 @@ on:
     branches: [main]
   push:
     branches: [main]
+    paths-ignore:
+      - '.github/release-selftest-report.json'
+      - '.github/artifact-maintenance-report.json'
   workflow_dispatch:
 
 permissions:
@@ -61,8 +64,16 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: write
+    env:
+      APK_NAME: chatgpt-prompt-scheduler-android-v0.1.13.apk
+      SOURCE_NAME: chatgpt-prompt-scheduler-android-v0.1.13-source.zip
+      PACKAGE_NAME: com.shaterguy.chatgptpromptscheduler
+      VERSION_CODE: '14'
+      VERSION_NAME: '0.1.13'
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -104,16 +115,14 @@ jobs:
             --ks-key-alias "$KEY_ALIAS" \
             --ks-pass "pass:$STORE_PASSWORD" \
             --key-pass "pass:$STORE_PASSWORD" \
-            --out dist/chatgpt-prompt-scheduler-android-v0.1.13.apk \
+            --out "dist/$APK_NAME" \
             dist/app-aligned.apk
           rm dist/app-aligned.apk
 
-          "$BT/apksigner" verify --verbose --print-certs dist/chatgpt-prompt-scheduler-android-v0.1.13.apk | tee dist/SIGNING_CERTIFICATE.txt
-          unzip -t dist/chatgpt-prompt-scheduler-android-v0.1.13.apk
-          sha256sum dist/chatgpt-prompt-scheduler-android-v0.1.13.apk > dist/SHA256SUMS.txt
-          sha256sum -c dist/SHA256SUMS.txt
-          zip -qr dist/chatgpt-prompt-scheduler-android-v0.1.13-source.zip . \
-            -x '.git/*' '*/build/*' 'dist/*' '*.jks' '*.keystore'
+          "$BT/apksigner" verify --verbose --print-certs "dist/$APK_NAME" | tee dist/SIGNING_CERTIFICATE.txt
+          unzip -t "dist/$APK_NAME" >/dev/null
+          (cd dist && sha256sum "$APK_NAME" > SHA256SUMS.txt)
+          git archive --format=zip --output="dist/$SOURCE_NAME" HEAD
       - uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
@@ -128,11 +137,56 @@ jobs:
           set -euo pipefail
           gh release delete v0.1.13 --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
           gh release create v0.1.13 \
-            dist/chatgpt-prompt-scheduler-android-v0.1.13.apk \
-            dist/chatgpt-prompt-scheduler-android-v0.1.13-source.zip \
+            "dist/$APK_NAME" \
+            "dist/$SOURCE_NAME" \
             dist/SHA256SUMS.txt \
             dist/SIGNING_CERTIFICATE.txt \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title 'ChatGPT Prompt Scheduler Android v0.1.13' \
-            --notes '개인용 공개 빌드입니다. 이 APK는 실행 시 생성되는 임시 서명키로 서명되므로 이전 설치본 위에 업데이트하지 말고 기존 앱을 삭제한 뒤 설치하세요.'
+            --notes '개인용 공개 빌드입니다. 실행 시 생성되는 임시 서명키로 서명되므로 기존 앱을 삭제한 뒤 설치하세요.'
+      - name: Read back and verify published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/release-readback
+          mkdir -p /tmp/release-readback
+          cd /tmp/release-readback
+          gh release download v0.1.13 --repo "$GITHUB_REPOSITORY" --pattern "$APK_NAME"
+          gh release download v0.1.13 --repo "$GITHUB_REPOSITORY" --pattern "$SOURCE_NAME"
+          gh release download v0.1.13 --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS.txt
+          sha256sum --check --strict SHA256SUMS.txt
+          unzip -t "$SOURCE_NAME" >/dev/null
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/apksigner" verify --verbose --print-certs "$APK_NAME" > "$GITHUB_WORKSPACE/release-signature-readback.txt"
+          "$BT/aapt" dump badging "$APK_NAME" > "$GITHUB_WORKSPACE/release-badging-readback.txt"
+          grep -q "package: name='$PACKAGE_NAME'" "$GITHUB_WORKSPACE/release-badging-readback.txt"
+          grep -q "versionCode='$VERSION_CODE'" "$GITHUB_WORKSPACE/release-badging-readback.txt"
+          grep -q "versionName='$VERSION_NAME'" "$GITHUB_WORKSPACE/release-badging-readback.txt"
+      - name: Record public release self-test
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .github
+          cat > .github/release-selftest-report.json <<EOF
+          {
+            "repository": "$GITHUB_REPOSITORY",
+            "run_id": "$GITHUB_RUN_ID",
+            "source_sha": "$GITHUB_SHA",
+            "release_tag": "v0.1.13",
+            "mode": "reinstall-only-ephemeral-signing",
+            "unit_tests": "success",
+            "signed_apk": "verified",
+            "release_readback": "verified",
+            "external_private_repo_dependency": false,
+            "repository_secrets_required": false,
+            "completed_at_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/release-selftest-report.json
+          git commit -m 'Record public release self-test'
+          git push
