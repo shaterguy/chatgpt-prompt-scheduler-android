@@ -7,6 +7,7 @@ on:
     branches: [main]
     paths-ignore:
       - '.github/release-selftest-report.json'
+      - '.github/release-selftest-jobs.json'
       - '.github/artifact-maintenance-report.json'
   workflow_dispatch:
 
@@ -70,6 +71,8 @@ jobs:
       PACKAGE_NAME: com.shaterguy.chatgptpromptscheduler
       VERSION_CODE: '14'
       VERSION_NAME: '0.1.13'
+      EXPECTED_PUBLIC_CERT_SHA256: '3cfe95acd09077a89cd8de85434cbd5d8bb3e2021d8e9eacb804a8da9ccce52a'
+      SIGNING_BUNDLE_BASE64: ${{ secrets.CHATGPT_PUBLIC_SIGNING_BUNDLE_BASE64 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -86,47 +89,43 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.5.0'
-      - name: Build and self-sign reinstall-only release APK
+      - name: Restore persistent public signing identity
         shell: bash
         run: |
           set -euo pipefail
-          KEYSTORE=/tmp/chatgpt-prompt-scheduler-reinstall-only.jks
-          STORE_PASSWORD="$(openssl rand -hex 24)"
-          KEY_ALIAS=chatgpt-prompt-scheduler-reinstall-only
-          echo "::add-mask::$STORE_PASSWORD"
-          trap 'rm -f "$KEYSTORE"' EXIT
-
-          keytool -genkeypair \
-            -keystore "$KEYSTORE" \
-            -storepass "$STORE_PASSWORD" \
-            -keypass "$STORE_PASSWORD" \
-            -alias "$KEY_ALIAS" \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 3650 \
-            -dname 'CN=ChatGPT Prompt Scheduler Reinstall Only,O=Personal Android Build,C=KR'
-
+          test -n "$SIGNING_BUNDLE_BASE64"
+          rm -rf /tmp/public-signing
+          mkdir -p /tmp/public-signing
+          printf '%s' "$SIGNING_BUNDLE_BASE64" | base64 --decode > /tmp/public-signing/bundle.tar.gz
+          tar -xzf /tmp/public-signing/bundle.tar.gz -C /tmp/public-signing
+          test -s /tmp/public-signing/key.pk8
+          test -s /tmp/public-signing/cert.pem
+          ACTUAL="$(openssl x509 -in /tmp/public-signing/cert.pem -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr 'A-F' 'a-f')"
+          test "$ACTUAL" = "$EXPECTED_PUBLIC_CERT_SHA256"
+      - name: Build and sign persistent public release APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'rm -rf /tmp/public-signing' EXIT
           gradle --no-daemon --stacktrace :app:assembleRelease
           mkdir -p dist
           BT="$ANDROID_HOME/build-tools/36.0.0"
           "$BT/zipalign" -p -f 4 app/build/outputs/apk/release/app-release-unsigned.apk dist/app-aligned.apk
           "$BT/apksigner" sign \
-            --ks "$KEYSTORE" \
-            --ks-key-alias "$KEY_ALIAS" \
-            --ks-pass "pass:$STORE_PASSWORD" \
-            --key-pass "pass:$STORE_PASSWORD" \
+            --key /tmp/public-signing/key.pk8 \
+            --cert /tmp/public-signing/cert.pem \
             --out "dist/$APK_NAME" \
             dist/app-aligned.apk
           rm dist/app-aligned.apk
-
           "$BT/apksigner" verify --verbose --print-certs "dist/$APK_NAME" | tee dist/SIGNING_CERTIFICATE.txt
+          grep -qi "$EXPECTED_PUBLIC_CERT_SHA256" dist/SIGNING_CERTIFICATE.txt
           unzip -t "dist/$APK_NAME" >/dev/null
           (cd dist && sha256sum "$APK_NAME" > SHA256SUMS.txt)
           git archive --format=zip --output="dist/$SOURCE_NAME" HEAD
       - uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
-          name: chatgpt-prompt-scheduler-android-v0.1.13-reinstall-only
+          name: chatgpt-prompt-scheduler-android-v0.1.13-public-signed
           path: dist/*
           if-no-files-found: error
           retention-days: 90
@@ -144,7 +143,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title 'ChatGPT Prompt Scheduler Android v0.1.13' \
-            --notes '개인용 공개 빌드입니다. 실행 시 생성되는 임시 서명키로 서명되므로 기존 앱을 삭제한 뒤 설치하세요.'
+            --notes '공개 저장소 서명 기준선입니다. 기존 비공개판에서는 앱을 삭제하고 이 버전을 설치해야 하지만, 이 공개판 이후 버전은 같은 공개 서명키를 사용해 덮어쓰기 업데이트할 수 있습니다.'
       - name: Read back and verify published release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -160,6 +159,7 @@ jobs:
           unzip -t "$SOURCE_NAME" >/dev/null
           BT="$ANDROID_HOME/build-tools/36.0.0"
           "$BT/apksigner" verify --verbose --print-certs "$APK_NAME" > "$GITHUB_WORKSPACE/release-signature-readback.txt"
+          grep -qi "$EXPECTED_PUBLIC_CERT_SHA256" "$GITHUB_WORKSPACE/release-signature-readback.txt"
           "$BT/aapt" dump badging "$APK_NAME" > "$GITHUB_WORKSPACE/release-badging-readback.txt"
           grep -q "package: name='$PACKAGE_NAME'" "$GITHUB_WORKSPACE/release-badging-readback.txt"
           grep -q "versionCode='$VERSION_CODE'" "$GITHUB_WORKSPACE/release-badging-readback.txt"
@@ -176,12 +176,15 @@ jobs:
             "run_id": "$GITHUB_RUN_ID",
             "source_sha": "$GITHUB_SHA",
             "release_tag": "v0.1.13",
-            "mode": "reinstall-only-ephemeral-signing",
+            "mode": "persistent-public-signing",
+            "public_certificate_sha256": "$EXPECTED_PUBLIC_CERT_SHA256",
             "unit_tests": "success",
             "signed_apk": "verified",
             "release_readback": "verified",
+            "private_to_public_reinstall_required": true,
+            "future_public_updates_supported": true,
             "external_private_repo_dependency": false,
-            "repository_secrets_required": false,
+            "repository_secrets_required": true,
             "completed_at_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           }
           EOF
