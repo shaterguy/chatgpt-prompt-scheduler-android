@@ -1,0 +1,48 @@
+name: Observe public release self-test
+
+on:
+  workflow_run:
+    workflows: ["Build and Release Android APK"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Record observed workflow result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OBSERVED_RUN_ID: ${{ github.event.workflow_run.id }}
+          OBSERVED_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          OBSERVED_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          set -euo pipefail
+          git pull --rebase origin main
+          mkdir -p .github
+          gh run view "$OBSERVED_RUN_ID" --repo "$GITHUB_REPOSITORY" --json jobs \
+            > .github/release-selftest-jobs.json
+          cat > .github/release-selftest-report.json <<EOF
+          {
+            "repository": "$GITHUB_REPOSITORY",
+            "observed_run_id": "$OBSERVED_RUN_ID",
+            "source_sha": "$OBSERVED_HEAD_SHA",
+            "workflow_conclusion": "$OBSERVED_CONCLUSION",
+            "mode": "reinstall-only-ephemeral-signing",
+            "external_private_repo_dependency": false,
+            "repository_secrets_required": false,
+            "completed_at_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/release-selftest-report.json .github/release-selftest-jobs.json
+          git commit -m 'Record observed public release result'
+          git push
