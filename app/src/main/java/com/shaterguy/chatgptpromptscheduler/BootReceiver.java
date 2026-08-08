@@ -17,7 +17,11 @@ public final class BootReceiver extends BroadcastReceiver {
             try {
                 if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(service); else context.startService(service);
             } catch (RuntimeException error) {
-                store.pause("기기 재시작 후 중계 서비스 복구 실패: " + error.getMessage());
+                store.fail("BOOT_RECOVERY_FAILED", "기기 재시작 후 오토런 중계 서비스를 복구하지 못했습니다.");
+                if (NotificationHelper.orchestrationAlertsEnabled(context)) {
+                    NotificationHelper.orchestrationError(context, store.monitoringSide(), store.runJobId(),
+                            store.currentStep(), store.currentRound(), "기기 재시작 후 중계 서비스를 복구하지 못했습니다.");
+                }
             }
         }
     }
