@@ -177,4 +177,46 @@ public class OrchestrationSignalTest {
         assertTrue(service.contains("fingerprint.matches"));
         assertTrue(service.contains("store.observeCandidate(fingerprint) < 3"));
     }
+    @Test
+    public void authRequiredUsesVisibleStructuralGateInsteadOfPageText() {
+        String prepare = OrchestrationScript.prepare("[AUTOMATION_START JOB-7]");
+        String observe = OrchestrationScript.observe("[AUTOMATION_START JOB-7]");
+        assertTrue(prepare.contains("visibleAuthGate"));
+        assertTrue(prepare.contains("hasConversation"));
+        assertTrue(prepare.contains("AUTH_REQUIRED"));
+        assertTrue(observe.contains("visibleAuthGate"));
+        assertFalse(prepare.contains("document.body?.innerText"));
+        assertFalse(prepare.contains("body.includes('log in')"));
+        assertFalse(observe.contains("pageBody.includes"));
+    }
+
+    @Test
+    public void startAndResumePreferDurableStateAndDoNotFailClosedOnAlerts() throws Exception {
+        Path activityPath = Path.of("src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationActivity.java");
+        Path storePath = Path.of("src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationStore.java");
+        Path servicePath = Path.of("src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationService.java");
+        if (!Files.exists(activityPath)) activityPath = Path.of("app").resolve(activityPath);
+        if (!Files.exists(storePath)) storePath = Path.of("app").resolve(storePath);
+        if (!Files.exists(servicePath)) servicePath = Path.of("app").resolve(servicePath);
+        String activity = new String(Files.readAllBytes(activityPath), StandardCharsets.UTF_8);
+        String store = new String(Files.readAllBytes(storePath), StandardCharsets.UTF_8);
+        String service = new String(Files.readAllBytes(servicePath), StandardCharsets.UTF_8);
+
+        assertFalse(activity.contains("ensureNotifications"));
+        assertFalse(activity.contains("store.newRunError"));
+        assertFalse(activity.contains("실행 설정이 변경되었습니다"));
+        assertFalse(activity.contains("store.pendingPrompt().isEmpty()"));
+        assertTrue(activity.contains("restoreDurableRunConfiguration"));
+        assertTrue(activity.contains("store.resumeBlockReason"));
+        assertTrue(activity.contains("NonCredentialEditText"));
+        assertTrue(activity.contains("getAutofillType"));
+        assertTrue(activity.contains("AUTOFILL_TYPE_NONE"));
+        assertTrue(activity.contains("setImportantForContentCapture"));
+        assertFalse(service.contains("NOTIFICATION_DISABLED"));
+        assertTrue(service.contains("오류 알림 꺼짐"));
+        assertFalse(store.contains("usedJobIds.contains(candidate)"));
+        assertTrue(store.contains("restored = DELIVERY_SUBMITTING"));
+        assertTrue(store.contains("자동 재전송 없음"));
+    }
+
 }
