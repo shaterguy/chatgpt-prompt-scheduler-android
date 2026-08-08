@@ -140,7 +140,10 @@ public final class OrchestrationActivity extends Activity {
         String error = store.runtimeConfigError();
         if (!error.isEmpty()) { toast(error); return; }
         if (store.pendingPrompt().isEmpty()) { toast("먼저 새로 시작을 눌러 주세요."); return; }
-        store.resume();
+        if (!store.resume()) {
+            toast("이미 완료되었거나 중단된 중계입니다. 새 Job ID로 새로 시작해 주세요.");
+            return;
+        }
         if (startRelayService()) toast("저장된 상태에서 중계를 재개했습니다.");
         render();
     }
