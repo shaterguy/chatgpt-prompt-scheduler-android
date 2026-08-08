@@ -48,7 +48,7 @@ public final class OrchestrationService extends Service implements AutomationRun
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         startAsForeground(store.status());
-        if (!store.active() || store.paused()) {
+        if (!store.active() || store.paused() || store.terminal()) {
             stopRelay();
             return START_NOT_STICKY;
         }
@@ -67,7 +67,7 @@ public final class OrchestrationService extends Service implements AutomationRun
 
     private void ensureEngine() {
         handler.removeCallbacks(resumeRunnable);
-        if (!store.active() || store.paused()) {
+        if (!store.active() || store.paused() || store.terminal()) {
             stopRelay();
             return;
         }
@@ -249,6 +249,10 @@ public final class OrchestrationService extends Service implements AutomationRun
     }
 
     private void acceptSignal(String response) {
+        if (store.terminal()) {
+            stopRelay();
+            return;
+        }
         OrchestrationSignal signal = OrchestrationSignal.parse(response, store.runJobId());
         if (signal == null) {
             pauseWithError("응답이 Protocol 3.0 제어 신호 한 줄과 정확히 일치하지 않습니다.");
