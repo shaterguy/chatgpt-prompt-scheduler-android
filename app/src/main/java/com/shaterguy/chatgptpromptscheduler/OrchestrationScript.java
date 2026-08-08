@@ -28,7 +28,7 @@ public final class OrchestrationScript {
         return "(() => {" + common() +
                 "if(!validHost())return out('TARGET_CONTEXT_MISMATCH','ChatGPT 호스트가 아닙니다.');" +
                 "if(visibleAuthGate())return out('AUTH_REQUIRED','명시적 로그인 화면이 표시되었습니다.');" +
-                "const expected=norm(" + expected + "); +
+                "const expected=norm(" + expected + ");" +
                 "const messages=[...document.querySelectorAll('[data-message-author-role=\"user\"],article[data-turn=\"user\"]')];" +
                 "if(messages.some(e=>norm(e.innerText||e.textContent)===expected))return out('ALREADY_SUBMITTED','동일 프롬프트가 이미 존재합니다.');" +
                 "const selectors=['textarea#prompt-textarea','textarea[data-testid=\"prompt-textarea\"]','div#prompt-textarea[contenteditable=\"true\"]','[contenteditable=\"true\"][data-lexical-editor=\"true\"]','main form [contenteditable=\"true\"]'];" +
@@ -94,14 +94,12 @@ public final class OrchestrationScript {
     private static String common() {
         return "const norm=s=>String(s??'').replace(/[\\u200B-\\u200D\\uFEFF]/g,'').replace(/\\u00a0/g,' ').replace(/\\r\\n?/g,'\\n').trim();" +
                 "const out=(status,detail='',data={})=>JSON.stringify({status,detail,...data});" +
-                "const visible=e=>{if(!e||!e.isConnected)return false;const r=e.getBoundingClientRect();const s=getComputedStyle(e);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden';};" +
+                "const visible=e=>{if(!e||!e.isConnected)return false;const r=e.getBoundingClientRect();const s=getComputedStyle(e);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden';}" +
                 "const authLabel=e=>norm(e?.innerText||e?.textContent||e?.value||e?.getAttribute('aria-label')||'').toLowerCase();" +
                 "const exactAuthLabel=t=>/^(log in|login|sign up|signup|로그인|회원가입|가입하기|로그인하기)$/.test(t);" +
-                "const visibleAuthGate=()=>{const main=document.querySelector('main');if(!main)return false;const hasConversation=!!main.querySelector('[data-message-author-role=\"user\"],[data-message-author-role=\"assistant\"],article[data-turn=\"user\"],article[data-turn=\"assistant\"]');const authRoot=[...main.querySelectorAll('form,[role=\"dialog\"],[data-testid*=" +
-                "\"auth\" i],[data-testid*=\"login\" i],[data-testid*=\"signup\" i],[id*=\"login\" i],[id*=\"signup\" i]')].some(e=>visible(e)&&(/login|sign.?up|auth|로그인|회원가입/i.test(authLabel(e))||!!e.querySelector('input[type=\"password\"],input[type=\"email\"]')));const authCta=[...main.querySelectorAll('button,a,[role=\"button\"],input[type=\"submit\"]')].some(e=>visible(e)&&exactAuthLabel(authLabel(e)));return authRoot||(!hasConversation&&authCta);};" +
+                "const visibleAuthGate=()=>{const main=document.querySelector('main');if(!main)return false;const hasConversation=!!main.querySelector('[data-message-author-role=user],[data-message-author-role=assistant],article[data-turn=user],article[data-turn=assistant]');const authRoot=[...main.querySelectorAll('form,[role=dialog],[data-testid*=auth i],[data-testid*=login i],[data-testid*=signup i],[id*=login i],[id*=signup i]')].some(e=>visible(e)&&(/login|sign.?up|auth|로그인|회원가입/i.test(authLabel(e))||!!e.querySelector('input[type=password],input[type=email]')));const authCta=[...main.querySelectorAll('button,a,[role=button],input[type=submit]')].some(e=>visible(e)&&exactAuthLabel(authLabel(e)));return authRoot||(!hasConversation&&authCta);};" +
                 "const validHost=()=>location.protocol==='https:'&&(location.hostname==='chatgpt.com'||location.hostname==='www.chatgpt.com');";
     }
-
     static String jsQuote(String value) {
         String safe = value == null ? "" : value;
         return "\"" + safe.replace("\\", "\\\\").replace("\"", "\\\"")
