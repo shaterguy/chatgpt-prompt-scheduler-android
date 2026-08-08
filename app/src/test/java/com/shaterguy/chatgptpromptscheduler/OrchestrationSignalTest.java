@@ -19,6 +19,9 @@ public class OrchestrationSignalTest {
 
         OrchestrationSignal done = OrchestrationSignal.parse("[AR_DONE JOB-7]", "JOB-7");
         assertEquals(OrchestrationSignal.Type.DONE, done.type);
+        assertTrue(OrchestrationStore.isTerminalSignal(OrchestrationSignal.Type.DONE));
+        assertTrue(OrchestrationStore.isTerminalSignal(OrchestrationSignal.Type.ABORTED));
+        assertFalse(OrchestrationStore.isTerminalSignal(OrchestrationSignal.Type.PAUSE));
     }
 
     @Test
