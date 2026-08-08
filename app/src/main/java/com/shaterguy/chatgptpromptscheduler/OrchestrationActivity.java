@@ -5,42 +5,63 @@ import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.InputType;
+import android.view.View;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.Toast;
 
 public final class OrchestrationActivity extends Activity {
+    private static final String STATE_PROJECT_NAME = "orchestration.projectName";
+    private static final String STATE_CHAT_URL = "orchestration.chatUrl";
+    private static final String STATE_WORK_URL = "orchestration.workUrl";
+    private static final String STATE_JOB_ID = "orchestration.jobId";
+
     private OrchestrationStore store;
     private EditText projectName;
     private EditText chatUrl;
     private EditText workUrl;
     private EditText jobId;
+    private Bundle restoredState;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         store = new OrchestrationStore(this);
+        restoredState = savedInstanceState;
         render();
+        restoredState = null;
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        if (projectName != null) render();
+        // Refresh status after returning from another screen, but never overwrite an
+        // in-progress edit with the last persisted configuration.
+        if (projectName != null && formMatchesStoredConfig()) render();
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        if (projectName != null) outState.putString(STATE_PROJECT_NAME, projectName.getText().toString());
+        if (chatUrl != null) outState.putString(STATE_CHAT_URL, chatUrl.getText().toString());
+        if (workUrl != null) outState.putString(STATE_WORK_URL, workUrl.getText().toString());
+        if (jobId != null) outState.putString(STATE_JOB_ID, jobId.getText().toString());
+        super.onSaveInstanceState(outState);
     }
 
     private void render() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
+        root.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
         root.setPadding(Ui.dp(this, 18), Ui.dp(this, 12), Ui.dp(this, 18), Ui.dp(this, 24));
         root.addView(Ui.title(this, "오토런 중계 · Protocol 3.0"));
         root.addView(Ui.body(this, "예약 실행과 분리된 선택 기능입니다. 예약 시간이 오면 오토런 WebView를 즉시 닫고 예약 실행이 끝난 뒤 이어갑니다."));
 
         root.addView(Ui.section(this, "연결 설정"));
-        projectName = field("프로젝트 이름(선택)", store.projectName(), false);
-        chatUrl = field("일반 Chat 대화 URL", store.chatUrl(), true);
-        workUrl = field("Work 대화 URL", store.workUrl(), true);
-        jobId = field("Job ID", store.jobId(), false);
+        projectName = field("프로젝트 이름(선택)", store.projectName(), false, STATE_PROJECT_NAME);
+        chatUrl = field("일반 Chat 대화 URL", store.chatUrl(), true, STATE_CHAT_URL);
+        workUrl = field("Work 대화 URL", store.workUrl(), true, STATE_WORK_URL);
+        jobId = field("Job ID", store.jobId(), false, STATE_JOB_ID);
         root.addView(projectName);
         root.addView(chatUrl);
         root.addView(workUrl);
@@ -60,19 +81,34 @@ public final class OrchestrationActivity extends Activity {
                 Ui.button(this, "중지", v -> stopRelay())));
         root.addView(Ui.body(this, "새로 시작은 [AUTOMATION_START Job ID]부터 시작합니다. 재개는 저장된 미전송/응답 대기 상태를 그대로 복구합니다."));
         android.widget.ScrollView scroll = Ui.scroll(this);
+        scroll.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
         scroll.addView(root);
         Ui.setContent(this, scroll);
     }
 
-    private EditText field(String hint, String value, boolean url) {
+    private EditText field(String hint, String value, boolean url, String stateKey) {
         EditText input = new EditText(this);
         input.setHint(hint);
-        input.setText(value);
+        input.setText(restoredValue(stateKey, value));
         input.setSingleLine(true);
         input.setMinHeight(Ui.dp(this, 52));
         input.setInputType(url ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
                 : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_NORMAL);
+        input.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
         return input;
+    }
+
+    private String restoredValue(String key, String storedValue) {
+        if (restoredState == null || !restoredState.containsKey(key)) return storedValue;
+        String restoredValue = restoredState.getString(key);
+        return restoredValue == null ? "" : restoredValue;
+    }
+
+    private boolean formMatchesStoredConfig() {
+        return projectName.getText().toString().equals(store.projectName())
+                && chatUrl.getText().toString().equals(store.chatUrl())
+                && workUrl.getText().toString().equals(store.workUrl())
+                && jobId.getText().toString().equals(store.jobId());
     }
 
     private void saveFields() {
