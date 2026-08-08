@@ -4,52 +4,55 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 import java.net.URI;
-import java.util.HashSet;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.regex.Pattern;
 
-/** Protocol 3.0 state is deliberately isolated from schedule and queue persistence. */
+/** Durable Protocol 3.x state, deliberately isolated from schedule and queue persistence. */
 public final class OrchestrationStore {
     public static final String SIDE_CHAT = "CHAT";
     public static final String SIDE_WORK = "WORK";
+
+    public static final String DELIVERY_PENDING = "PENDING";
+    public static final String DELIVERY_PREPARING = "PREPARING";
+    public static final String DELIVERY_SUBMITTING = "SUBMITTING";
+    public static final String DELIVERY_SUBMITTED = "SUBMITTED";
+    public static final String DELIVERY_WAITING_RESPONSE = "WAITING_RESPONSE";
+    public static final String DELIVERY_AMBIGUOUS = "AMBIGUOUS";
+    public static final String DELIVERY_FAILED = "FAILED";
+
+    // Backward compatibility for callers/tests from v0.1.14.
     public static final String PHASE_SUBMIT = "SUBMIT";
     public static final String PHASE_SUBMITTING = "SUBMITTING";
     public static final String PHASE_WAIT = "WAIT_RESPONSE";
 
+    private static final int SCHEMA_VERSION = 2;
     private static final String PREFS = "orchestration_protocol_3";
     private static final Pattern JOB_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,63}");
     private final SharedPreferences preferences;
 
     public OrchestrationStore(Context context) {
         preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        migrateLegacyState();
     }
 
     public void saveConfig(String projectName, String chatUrl, String workUrl, String jobId) {
-        commit(preferences.edit()
-                .putString("projectName", clean(projectName))
-                .putString("chatUrl", clean(chatUrl))
-                .putString("workUrl", clean(workUrl))
+        commit(preferences.edit().putString("projectName", clean(projectName))
+                .putString("chatUrl", clean(chatUrl)).putString("workUrl", clean(workUrl))
                 .putString("jobId", clean(jobId)));
     }
 
-    public String configError() {
-        return configError(chatUrl(), workUrl(), jobId());
-    }
-
-    public String runtimeConfigError() {
-        return configError(runChatUrl(), runWorkUrl(), runJobId());
-    }
+    public String configError() { return configError(chatUrl(), workUrl(), jobId()); }
+    public String runtimeConfigError() { return configError(runChatUrl(), runWorkUrl(), runJobId()); }
 
     public static String configError(String chatUrl, String workUrl, String jobId) {
         String cleanJob = clean(jobId);
         String cleanChat = clean(chatUrl);
         String cleanWork = clean(workUrl);
         if (!JOB_ID.matcher(cleanJob).matches()) return "Job ID는 영문/숫자로 시작하고 영문·숫자·._-만 사용할 수 있습니다.";
-        if (!isAllowedRelayUrl(cleanChat))
-            return "일반 Chat URL은 대화 ID(/c/...)가 포함된 https://chatgpt.com 주소여야 합니다.";
-        if (!isAllowedRelayUrl(cleanWork))
-            return "Work URL은 대화 ID(/c/...)가 포함된 https://chatgpt.com 주소여야 합니다.";
+        if (!isAllowedRelayUrl(cleanChat)) return "일반 Chat URL은 대화 ID(/c/...)가 포함된 https://chatgpt.com 주소여야 합니다.";
+        if (!isAllowedRelayUrl(cleanWork)) return "Work URL은 대화 ID(/c/...)가 포함된 https://chatgpt.com 주소여야 합니다.";
         if (TargetParser.conversationId(cleanChat).equals(TargetParser.conversationId(cleanWork)))
             return "일반 Chat과 Work는 서로 다른 대화여야 합니다.";
         return "";
@@ -59,115 +62,194 @@ public final class OrchestrationStore {
         long now = System.currentTimeMillis();
         Set<String> usedJobIds = new HashSet<>(preferences.getStringSet("usedJobIds", Collections.emptySet()));
         usedJobIds.add(jobId());
-        commit(preferences.edit()
-                .putBoolean("active", true)
-                .putBoolean("paused", false)
-                .putString("side", SIDE_CHAT)
-                .putString("phase", PHASE_SUBMIT)
+        commit(preferences.edit().putInt("schemaVersion", SCHEMA_VERSION)
+                .putBoolean("active", true).putBoolean("paused", false).putBoolean("terminal", false)
+                .putString("monitoringSide", SIDE_CHAT).putString("deliveryTarget", SIDE_CHAT)
+                .putString("deliveryState", DELIVERY_PENDING)
                 .putString("pendingPrompt", "[AUTOMATION_START " + jobId() + "]")
-                .putString("runChatUrl", chatUrl())
-                .putString("runWorkUrl", workUrl())
-                .putString("runJobId", jobId())
-                .putString("lastStartedJobId", jobId())
-                .putStringSet("usedJobIds", usedJobIds)
-                .putString("lastSignal", "")
-                .putString("lastStep", "")
-                .putString("lastRound", "")
-                .putString("candidateFingerprint", "")
-                .putInt("candidateStability", 0)
-                .putBoolean("terminal", false)
-                .putString("status", "일반 Chat 시작 신호 전송 준비")
-                .putString("error", "")
-                .putLong("epoch", epoch() + 1L)
-                .putLong("phaseStartedAt", now)
-                .putInt("pollCount", 0));
+                .putString("lastDeliveryTarget", "").putString("lastDeliveredPrompt", "")
+                .putString("lastDeliveryState", "").putLong("deliveryPreparedAt", 0L)
+                .putLong("deliveryAttemptAt", 0L).putLong("lastDeliveryAt", 0L)
+                .putString("runChatUrl", chatUrl()).putString("runWorkUrl", workUrl())
+                .putString("runJobId", jobId()).putString("lastStartedJobId", jobId())
+                .putStringSet("usedJobIds", usedJobIds).putString("lastSignalSource", "")
+                .putString("lastAcceptedSignal", "").putLong("lastSignalAt", 0L)
+                .putString("currentStep", "").putString("currentRound", "")
+                .putString("expectedSignal", "전송 완료 후 결정")
+                .putString("candidateFingerprint", "").putInt("candidateStability", 0)
+                .putString("status", "일반 Chat으로 시작 프롬프트 전송 대기")
+                .putString("lastErrorCode", "").putString("error", "").putLong("errorAt", 0L)
+                .putBoolean("schedulePreempted", false).putBoolean("waitingForUser", false)
+                .putString("actionId", "").putLong("epoch", epoch() + 1L)
+                .putLong("phaseStartedAt", now).putLong("pollCountLong", 0L).putInt("pollCount", 0));
     }
 
+    public void markPreparing() {
+        long now = System.currentTimeMillis();
+        commit(preferences.edit().putString("deliveryState", DELIVERY_PREPARING)
+                .putLong("deliveryPreparedAt", now).putLong("phaseStartedAt", now)
+                .putString("status", sideLabel(deliveryTarget()) + "로 프롬프트 전송 준비 완료"));
+    }
+
+    public void resetPreparing() {
+        commit(preferences.edit().putString("deliveryState", DELIVERY_PENDING)
+                .putString("status", sideLabel(deliveryTarget()) + "로 프롬프트 전송 준비 복구"));
+    }
+
+    /** Must be committed synchronously immediately before the click-capable script is evaluated. */
+    public void markSubmitting() {
+        long now = System.currentTimeMillis();
+        commit(preferences.edit().putString("deliveryState", DELIVERY_SUBMITTING)
+                .putLong("deliveryAttemptAt", now).putLong("phaseStartedAt", now)
+                .putString("status", sideLabel(deliveryTarget()) + "로 프롬프트 제출 중"));
+    }
+
+    public void markSubmitted() {
+        long now = System.currentTimeMillis();
+        commit(preferences.edit().putString("deliveryState", DELIVERY_SUBMITTED)
+                .putString("status", sideLabel(deliveryTarget()) + " 프롬프트 제출 결과 확인 중")
+                .putLong("phaseStartedAt", now));
+    }
+
+    /** Called only after the exact user turn is observed in the target conversation DOM. */
     public void markWaiting() {
-        commit(preferences.edit().putString("phase", PHASE_WAIT).putString("status", sideLabel() + " 응답 신호 대기")
-                .putLong("phaseStartedAt", System.currentTimeMillis()).putInt("pollCount", 0)
+        long now = System.currentTimeMillis();
+        String target = deliveryTarget();
+        commit(preferences.edit().putString("deliveryState", DELIVERY_WAITING_RESPONSE)
+                .putString("monitoringSide", target).putString("expectedSignal", expectedFor(target, currentStep(), currentRound()))
+                .putString("lastDeliveryTarget", target).putString("lastDeliveredPrompt", pendingPrompt())
+                .putString("lastDeliveryState", DELIVERY_WAITING_RESPONSE).putLong("lastDeliveryAt", now)
+                .putString("status", sideLabel(target) + " 응답 대기 중")
+                .putLong("phaseStartedAt", now).putLong("pollCountLong", 0L).putInt("pollCount", 0)
                 .putString("candidateFingerprint", "").putInt("candidateStability", 0));
     }
 
-    public void markSubmitting() {
-        commit(preferences.edit().putString("phase", PHASE_SUBMITTING)
-                .putString("status", sideLabel() + " 전송 커밋 중")
-                .putLong("phaseStartedAt", System.currentTimeMillis()));
-    }
-
-    public void transition(OrchestrationSignal signal) {
-        String nextSide;
+    public void transition(OrchestrationSignal signal, String sourceSide) {
+        String target;
         String prompt;
         if (signal.type == OrchestrationSignal.Type.SEND_WORK) {
-            nextSide = SIDE_WORK;
-            prompt = "[AUTOMATION_WORK_STEP " + signal.jobId + " " + signal.step + " " + signal.round + "]";
+            target = SIDE_WORK;
+            prompt = promptFor(signal);
         } else if (signal.type == OrchestrationSignal.Type.SEND_CHAT) {
-            nextSide = SIDE_CHAT;
-            prompt = "[AUTOMATION_CHAT_REVIEW " + signal.jobId + " " + signal.step + " " + signal.round + "]";
+            target = SIDE_CHAT;
+            prompt = promptFor(signal);
         } else {
             throw new IllegalArgumentException("전환 신호가 아닙니다.");
         }
-        commit(preferences.edit()
-                .putString("lastSignal", signal.raw)
-                .putString("lastStep", signal.step)
-                .putString("lastRound", signal.round)
-                .putString("side", nextSide)
-                .putString("pendingPrompt", prompt)
-                .putString("phase", PHASE_SUBMIT)
-                .putString("status", sideLabel(nextSide) + " 다음 턴 준비")
-                .putString("error", "")
-                .putString("candidateFingerprint", "")
-                .putInt("candidateStability", 0)
-                .putLong("phaseStartedAt", System.currentTimeMillis())
-                .putInt("pollCount", 0));
+        long now = System.currentTimeMillis();
+        commit(preferences.edit().putString("lastSignalSource", sourceSide)
+                .putString("lastAcceptedSignal", signal.raw).putLong("lastSignalAt", now)
+                .putString("currentStep", signal.step).putString("currentRound", signal.round)
+                .putString("deliveryTarget", target).putString("pendingPrompt", prompt)
+                .putString("deliveryState", DELIVERY_PENDING).putString("expectedSignal", "전송 완료 후 결정")
+                .putLong("deliveryPreparedAt", 0L).putLong("deliveryAttemptAt", 0L)
+                .putString("status", sideLabel(target) + "로 프롬프트 전송 대기")
+                .putString("lastErrorCode", "").putString("error", "").putLong("errorAt", 0L)
+                .putString("candidateFingerprint", "").putInt("candidateStability", 0)
+                .putLong("phaseStartedAt", now).putLong("pollCountLong", 0L).putInt("pollCount", 0));
+    }
+
+    public void waitForUser(OrchestrationSignal signal, String sourceSide) {
+        long now = System.currentTimeMillis();
+        commit(preferences.edit().putString("lastSignalSource", sourceSide)
+                .putString("lastAcceptedSignal", signal.raw).putLong("lastSignalAt", now)
+                .putString("currentStep", signal.step).putString("currentRound", signal.round)
+                .putBoolean("waitingForUser", true).putString("actionId", signal.actionId)
+                .putBoolean("paused", true).putString("expectedSignal", "사용자 처리 완료 후 일반 Chat 재검증")
+                .putString("status", "사용자 조치 대기").putString("lastErrorCode", "")
+                .putString("error", "").putLong("errorAt", 0L));
+    }
+
+    public boolean resolveUserAction() {
+        if (!waitingForUser() || actionId().isEmpty() || terminal()) return false;
+        long now = System.currentTimeMillis();
+        String prompt = userResolvedPrompt(runJobId(), actionId());
+        commit(preferences.edit().putBoolean("active", true).putBoolean("paused", false)
+                .putBoolean("waitingForUser", false).putString("deliveryTarget", SIDE_CHAT)
+                .putString("pendingPrompt", prompt).putString("deliveryState", DELIVERY_PENDING)
+                .putLong("deliveryPreparedAt", 0L).putLong("deliveryAttemptAt", 0L)
+                .putString("expectedSignal", "전송 완료 후 일반 Chat의 재검증 결과")
+                .putString("status", "일반 Chat으로 사용자 조치 재검증 요청 전송 대기")
+                .putString("lastErrorCode", "").putString("error", "").putLong("errorAt", 0L)
+                .putLong("phaseStartedAt", now).putLong("epoch", epoch() + 1L)
+                .putString("candidateFingerprint", "").putInt("candidateStability", 0)
+                .putLong("pollCountLong", 0L).putInt("pollCount", 0));
+        return true;
     }
 
     public void incrementPoll() {
-        preferences.edit().putInt("pollCount", pollCount() + 1).apply();
+        long next = pollCountLong() == Long.MAX_VALUE ? Long.MAX_VALUE : pollCountLong() + 1L;
+        preferences.edit().putLong("pollCountLong", next).putInt("pollCount", (int) Math.min(next, Integer.MAX_VALUE)).apply();
     }
 
     public int observeCandidate(String fingerprint) {
         String cleanFingerprint = clean(fingerprint);
         int stability = cleanFingerprint.equals(candidateFingerprint()) ? candidateStability() + 1 : 1;
-        preferences.edit().putString("candidateFingerprint", cleanFingerprint)
-                .putInt("candidateStability", stability).apply();
+        preferences.edit().putString("candidateFingerprint", cleanFingerprint).putInt("candidateStability", stability).apply();
         return stability;
     }
 
-    public void setStatus(String status) {
-        preferences.edit().putString("status", clean(status)).apply();
+    public void setStatus(String status) { preferences.edit().putString("status", clean(status)).apply(); }
+    public void setSchedulePreempted(boolean preempted) {
+        preferences.edit().putBoolean("schedulePreempted", preempted).apply();
     }
 
     public void pause(String reason) {
-        commit(preferences.edit().putBoolean("paused", true).putString("status", "일시정지")
+        commit(preferences.edit().putBoolean("paused", true).putString("status", "사용자가 중계를 일시정지함")
                 .putString("error", clean(reason)));
     }
 
+    public void fail(String code, String reason) {
+        String recovery = deliveryState();
+        commit(preferences.edit().putBoolean("paused", true).putString("recoveryDeliveryState", recovery)
+                .putString("deliveryState", DELIVERY_FAILED).putString("status", "오류로 중계 일시정지")
+                .putString("lastErrorCode", clean(code)).putString("error", clean(reason))
+                .putLong("errorAt", System.currentTimeMillis()));
+    }
+
+    public void ambiguous(String reason) {
+        commit(preferences.edit().putBoolean("paused", true).putString("deliveryState", DELIVERY_AMBIGUOUS)
+                .putString("status", "전송 결과 불명확 · 사용자 확인 필요")
+                .putString("lastErrorCode", "DELIVERY_AMBIGUOUS").putString("error", clean(reason))
+                .putLong("errorAt", System.currentTimeMillis()));
+    }
+
     public boolean resume() {
-        if (terminal()) return false;
+        if (terminal() || waitingForUser() || DELIVERY_AMBIGUOUS.equals(deliveryState())) return false;
+        String restored = deliveryState();
+        if (DELIVERY_FAILED.equals(restored)) {
+            restored = preferences.getString("recoveryDeliveryState", DELIVERY_WAITING_RESPONSE);
+            if (DELIVERY_SUBMITTING.equals(restored)) restored = DELIVERY_AMBIGUOUS;
+        }
+        if (DELIVERY_AMBIGUOUS.equals(restored)) return false;
         commit(preferences.edit().putBoolean("active", true).putBoolean("paused", false)
-                .putString("status", sideLabel() + " 중계 재개").putString("error", "")
-                .putInt("pollCount", 0).putLong("phaseStartedAt", System.currentTimeMillis())
+                .putString("deliveryState", restored).putString("status", currentActionFor(restored))
+                .putString("lastErrorCode", "").putString("error", "").putLong("errorAt", 0L)
+                .putLong("pollCountLong", 0L).putInt("pollCount", 0)
+                .putLong("phaseStartedAt", System.currentTimeMillis())
                 .putString("candidateFingerprint", "").putInt("candidateStability", 0));
         return true;
     }
 
-    public void finish(OrchestrationSignal signal) {
-        String status = switch (signal.type) {
+    public void finish(OrchestrationSignal signal, String sourceSide) {
+        String nextStatus = switch (signal.type) {
             case DONE -> "완료";
-            case PAUSE -> "상대 Chat 요청으로 일시정지";
+            case PAUSE -> "일반 Chat 요청으로 Job 일시정지";
             case ABORTED -> "중단됨";
             default -> throw new IllegalArgumentException("종료 신호가 아닙니다.");
         };
         boolean paused = signal.type == OrchestrationSignal.Type.PAUSE;
-        commit(preferences.edit().putString("lastSignal", signal.raw).putBoolean("active", paused)
-                .putBoolean("paused", paused).putBoolean("terminal", isTerminalSignal(signal.type))
-                .putString("status", status).putString("error", ""));
+        commit(preferences.edit().putString("lastSignalSource", sourceSide)
+                .putString("lastAcceptedSignal", signal.raw).putLong("lastSignalAt", System.currentTimeMillis())
+                .putBoolean("active", false).putBoolean("paused", paused)
+                .putBoolean("terminal", isTerminalSignal(signal.type)).putString("status", nextStatus)
+                .putString("lastErrorCode", "").putString("error", "").putLong("errorAt", 0L));
     }
 
     public void stop() {
         commit(preferences.edit().putBoolean("active", false).putBoolean("paused", false)
-                .putString("status", "사용자가 중지함").putString("error", ""));
+                .putBoolean("waitingForUser", false).putString("status", "사용자가 중지함")
+                .putString("lastErrorCode", "").putString("error", ""));
     }
 
     public String projectName() { return preferences.getString("projectName", ""); }
@@ -182,28 +264,57 @@ public final class OrchestrationStore {
     public boolean paused() { return preferences.getBoolean("paused", false); }
     public boolean terminal() {
         if (preferences.getBoolean("terminal", false)) return true;
-        // Preserve the terminal guard for state created by v0.1.14 before this flag existed.
-        OrchestrationSignal last = OrchestrationSignal.parse(lastSignal(), runJobId());
+        OrchestrationSignal last = OrchestrationSignal.parse(lastAcceptedSignal(), runJobId());
         return last != null && isTerminalSignal(last.type);
     }
-    public String side() { return preferences.getString("side", SIDE_CHAT); }
-    public String phase() { return preferences.getString("phase", PHASE_SUBMIT); }
+    public String monitoringSide() { return preferences.getString("monitoringSide", SIDE_CHAT); }
+    public String lastSignalSource() { return preferences.getString("lastSignalSource", ""); }
+    public String lastAcceptedSignal() { return preferences.getString("lastAcceptedSignal", ""); }
+    public long lastSignalAt() { return preferences.getLong("lastSignalAt", 0L); }
+    public String deliveryTarget() { return preferences.getString("deliveryTarget", SIDE_CHAT); }
     public String pendingPrompt() { return preferences.getString("pendingPrompt", ""); }
-    public String lastSignal() { return preferences.getString("lastSignal", ""); }
-    public String lastStep() { return preferences.getString("lastStep", ""); }
-    public String lastRound() { return preferences.getString("lastRound", ""); }
+    public String lastDeliveredPrompt() { return preferences.getString("lastDeliveredPrompt", ""); }
+    public String lastDeliveryTarget() { return preferences.getString("lastDeliveryTarget", ""); }
+    public String lastDeliveryState() { return preferences.getString("lastDeliveryState", ""); }
+    public String deliveryState() { return preferences.getString("deliveryState", DELIVERY_PENDING); }
+    public long deliveryAttemptAt() { return preferences.getLong("deliveryAttemptAt", 0L); }
+    public long lastDeliveryAt() { return preferences.getLong("lastDeliveryAt", 0L); }
+    public String currentStep() { return preferences.getString("currentStep", ""); }
+    public String currentRound() { return preferences.getString("currentRound", ""); }
+    public String expectedSignal() { return preferences.getString("expectedSignal", ""); }
     public String status() { return preferences.getString("status", "설정 전"); }
+    public String lastErrorCode() { return preferences.getString("lastErrorCode", ""); }
     public String error() { return preferences.getString("error", ""); }
-    public int pollCount() { return preferences.getInt("pollCount", 0); }
+    public long errorAt() { return preferences.getLong("errorAt", 0L); }
+    public boolean schedulePreempted() { return preferences.getBoolean("schedulePreempted", false); }
+    public boolean waitingForUser() { return preferences.getBoolean("waitingForUser", false); }
+    public String actionId() { return preferences.getString("actionId", ""); }
+    public long pollCountLong() { return preferences.getLong("pollCountLong", preferences.getInt("pollCount", 0)); }
+    public int pollCount() { return (int) Math.min(pollCountLong(), Integer.MAX_VALUE); }
     public String candidateFingerprint() { return preferences.getString("candidateFingerprint", ""); }
     public int candidateStability() { return preferences.getInt("candidateStability", 0); }
     public long phaseStartedAt() { return preferences.getLong("phaseStartedAt", 0L); }
     public long epoch() { return preferences.getLong("epoch", 0L); }
-    public String targetUrl() { return SIDE_WORK.equals(side()) ? runWorkUrl() : runChatUrl(); }
+
+    // v0.1.14 compatibility accessors; their meanings are no longer overloaded internally.
+    public String side() { return DELIVERY_WAITING_RESPONSE.equals(deliveryState()) ? monitoringSide() : deliveryTarget(); }
+    public String phase() {
+        if (DELIVERY_WAITING_RESPONSE.equals(deliveryState())) return PHASE_WAIT;
+        if (DELIVERY_SUBMITTING.equals(deliveryState()) || DELIVERY_SUBMITTED.equals(deliveryState())) return PHASE_SUBMITTING;
+        return PHASE_SUBMIT;
+    }
+    public String lastSignal() { return lastAcceptedSignal(); }
+    public String lastStep() { return currentStep(); }
+    public String lastRound() { return currentRound(); }
+    public String targetUrl() {
+        String side = DELIVERY_WAITING_RESPONSE.equals(deliveryState()) ? monitoringSide() : deliveryTarget();
+        return SIDE_WORK.equals(side) ? runWorkUrl() : runChatUrl();
+    }
     public String sideLabel() { return sideLabel(side()); }
 
     public static boolean isTerminalSignal(OrchestrationSignal.Type type) {
-        return type == OrchestrationSignal.Type.DONE || type == OrchestrationSignal.Type.ABORTED;
+        return type == OrchestrationSignal.Type.DONE || type == OrchestrationSignal.Type.PAUSE
+                || type == OrchestrationSignal.Type.ABORTED;
     }
 
     public static boolean isAllowedRelayUrl(String url) {
@@ -221,7 +332,66 @@ public final class OrchestrationStore {
         return "";
     }
 
-    private static String sideLabel(String side) { return SIDE_WORK.equals(side) ? "Work" : "일반 Chat"; }
+    public static String sideLabel(String side) { return SIDE_WORK.equals(side) ? "Work" : "일반 Chat"; }
+
+    public static String promptFor(OrchestrationSignal signal) {
+        if (signal.type == OrchestrationSignal.Type.SEND_WORK)
+            return "[AUTOMATION_WORK_STEP " + signal.jobId + " " + signal.step + " " + signal.round + "]";
+        if (signal.type == OrchestrationSignal.Type.SEND_CHAT)
+            return "[AUTOMATION_CHAT_REVIEW " + signal.jobId + " " + signal.step + " " + signal.round + "]";
+        throw new IllegalArgumentException("전환 신호가 아닙니다.");
+    }
+
+    public static String userResolvedPrompt(String jobId, String actionId) {
+        if (!JOB_ID.matcher(clean(jobId)).matches() || !JOB_ID.matcher(clean(actionId)).matches())
+            throw new IllegalArgumentException("Job/Action ID 형식이 올바르지 않습니다.");
+        return "[AUTOMATION_USER_RESOLVED " + clean(jobId) + " " + clean(actionId) + "]";
+    }
+
+    private String currentActionFor(String state) {
+        if (DELIVERY_WAITING_RESPONSE.equals(state)) return sideLabel(monitoringSide()) + " 응답 대기 중";
+        if (DELIVERY_SUBMITTED.equals(state)) return sideLabel(deliveryTarget()) + " 제출 결과 확인 중";
+        return sideLabel(deliveryTarget()) + "로 프롬프트 전송 준비";
+    }
+
+    private static String expectedFor(String side, String step, String round) {
+        String sequence = step == null || step.isEmpty() ? "S001/R001" : step + "/" + round;
+        return SIDE_WORK.equals(side) ? "Work의 AR_SEND_CHAT " + sequence + " 대기"
+                : "일반 Chat의 AR_SEND_WORK, AR_USER_ACTION_REQUIRED 또는 terminal 신호 대기 · 현재 " + sequence;
+    }
+
+    private void migrateLegacyState() {
+        if (preferences.getInt("schemaVersion", 0) >= SCHEMA_VERSION) return;
+        String legacySide = preferences.getString("side", SIDE_CHAT);
+        String legacyPhase = preferences.getString("phase", PHASE_SUBMIT);
+        String state = PHASE_WAIT.equals(legacyPhase) ? DELIVERY_WAITING_RESPONSE
+                : PHASE_SUBMITTING.equals(legacyPhase) ? DELIVERY_AMBIGUOUS : DELIVERY_PENDING;
+        String oldSignal = preferences.getString("lastSignal", "");
+        String source = oldSignal.isEmpty() ? "" : opposite(legacySide);
+        SharedPreferences.Editor edit = preferences.edit().putInt("schemaVersion", SCHEMA_VERSION)
+                .putString("monitoringSide", PHASE_WAIT.equals(legacyPhase) ? legacySide : source.isEmpty() ? legacySide : source)
+                .putString("deliveryTarget", legacySide).putString("deliveryState", state)
+                .putString("lastSignalSource", source).putString("lastAcceptedSignal", oldSignal)
+                .putString("lastDeliveryTarget", PHASE_WAIT.equals(legacyPhase) ? legacySide : "")
+                .putString("lastDeliveredPrompt", PHASE_WAIT.equals(legacyPhase)
+                        ? preferences.getString("pendingPrompt", "") : "")
+                .putString("lastDeliveryState", PHASE_WAIT.equals(legacyPhase) ? DELIVERY_WAITING_RESPONSE : "")
+                .putString("currentStep", preferences.getString("lastStep", ""))
+                .putString("currentRound", preferences.getString("lastRound", ""))
+                .putString("lastErrorCode", "").putLong("errorAt", 0L)
+                .putBoolean("schedulePreempted", false).putBoolean("waitingForUser", false)
+                .putString("actionId", "").putLong("pollCountLong", preferences.getInt("pollCount", 0));
+        if (DELIVERY_AMBIGUOUS.equals(state)) {
+            edit.putBoolean("paused", true).putString("lastErrorCode", "LEGACY_SUBMISSION_AMBIGUOUS")
+                    .putString("error", "이전 버전의 제출 중 상태는 중복 방지를 위해 자동 복구하지 않습니다.")
+                    .putLong("errorAt", System.currentTimeMillis());
+        }
+        if (DELIVERY_WAITING_RESPONSE.equals(state)) edit.putString("expectedSignal", expectedFor(legacySide,
+                preferences.getString("lastStep", ""), preferences.getString("lastRound", "")));
+        commit(edit);
+    }
+
+    private static String opposite(String side) { return SIDE_WORK.equals(side) ? SIDE_CHAT : SIDE_WORK; }
     private static String clean(String value) { return value == null ? "" : value.trim(); }
     private static void commit(SharedPreferences.Editor editor) {
         if (!editor.commit()) throw new IllegalStateException("오토런 중계 상태를 저장하지 못했습니다.");
