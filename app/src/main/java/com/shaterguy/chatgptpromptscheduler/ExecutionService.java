@@ -75,6 +75,7 @@ public final class ExecutionService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        AutomationRuntimeGate.setScheduleActive(true);
         String scheduleId = intent == null ? null : intent.getStringExtra("scheduleId");
         boolean manual = intent != null && intent.getBooleanExtra("manual", false);
         if (scheduleId != null && !scheduleId.isBlank()) queueStore.enqueue(scheduleId, manual);
@@ -96,17 +97,20 @@ public final class ExecutionService extends Service {
         try {
             currentItem = queueStore.claimNext();
         } catch (RuntimeException error) {
+            AutomationRuntimeGate.setScheduleActive(false);
             processing.set(false);
             stopForeground(STOP_FOREGROUND_REMOVE);
             stopSelf();
             return;
         }
         if (currentItem == null) {
+            AutomationRuntimeGate.setScheduleActive(false);
             processing.set(false);
             stopForeground(STOP_FOREGROUND_REMOVE);
             stopSelf();
             return;
         }
+        AutomationRuntimeGate.setScheduleActive(true);
         startedAt = 0L;
         resetTrace();
         trace("QUEUE_CLAIMED", object("runId", currentItem.optString("runId"), "manual", currentItem.optBoolean("manual", false)));
@@ -192,7 +196,7 @@ public final class ExecutionService extends Service {
             String desktopUserAgent = settings.getUserAgentString()
                     .replaceFirst("\\([^)]*Android[^)]*\\)", "(X11; Linux x86_64)")
                     .replace(" Version/4.0", "");
-            settings.setUserAgentString(desktopUserAgent + " ChatGPTPromptScheduler/0.1.11");
+            settings.setUserAgentString(desktopUserAgent + " ChatGPTPromptScheduler/0.1.14");
             CookieManager.getInstance().setAcceptCookie(true);
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
             webView.setWebChromeClient(new WebChromeClient() {
@@ -583,6 +587,7 @@ public final class ExecutionService extends Service {
     @Override
     public void onDestroy() {
         cleanupEngine();
+        AutomationRuntimeGate.setScheduleActive(false);
         super.onDestroy();
     }
 

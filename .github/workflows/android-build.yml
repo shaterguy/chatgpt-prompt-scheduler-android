@@ -48,7 +48,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: chatgpt-prompt-scheduler-android-v0.1.13-test-reports
+          name: chatgpt-prompt-scheduler-android-v0.1.14-test-reports
           path: |
             app/build/test-results/testDebugUnitTest/**
             app/build/reports/tests/testDebugUnitTest/**
@@ -66,11 +66,11 @@ jobs:
     permissions:
       contents: write
     env:
-      APK_NAME: chatgpt-prompt-scheduler-android-v0.1.13.apk
-      SOURCE_NAME: chatgpt-prompt-scheduler-android-v0.1.13-source.zip
+      APK_NAME: chatgpt-prompt-scheduler-android-v0.1.14.apk
+      SOURCE_NAME: chatgpt-prompt-scheduler-android-v0.1.14-source.zip
       PACKAGE_NAME: com.shaterguy.chatgptpromptscheduler
-      VERSION_CODE: '14'
-      VERSION_NAME: '0.1.13'
+      VERSION_CODE: '15'
+      VERSION_NAME: '0.1.14'
       EXPECTED_PUBLIC_CERT_SHA256: '3cfe95acd09077a89cd8de85434cbd5d8bb3e2021d8e9eacb804a8da9ccce52a'
       SIGNING_BUNDLE_BASE64: ${{ secrets.CHATGPT_PUBLIC_SIGNING_BUNDLE_BASE64 }}
     steps:
@@ -125,7 +125,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
-          name: chatgpt-prompt-scheduler-android-v0.1.13-public-signed
+          name: chatgpt-prompt-scheduler-android-v0.1.14-public-signed
           path: dist/*
           if-no-files-found: error
           retention-days: 90
@@ -134,16 +134,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release delete v0.1.13 --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
-          gh release create v0.1.13 \
+          gh release delete v0.1.14 --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          gh release create v0.1.14 \
             "dist/$APK_NAME" \
             "dist/$SOURCE_NAME" \
             dist/SHA256SUMS.txt \
             dist/SIGNING_CERTIFICATE.txt \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title 'ChatGPT Prompt Scheduler Android v0.1.13' \
-            --notes '공개 저장소 서명 기준선입니다. 기존 비공개판에서는 앱을 삭제하고 이 버전을 설치해야 하지만, 이 공개판 이후 버전은 같은 공개 서명키를 사용해 덮어쓰기 업데이트할 수 있습니다.'
+            --title 'ChatGPT Prompt Scheduler Android v0.1.14' \
+            --notes 'Protocol 3.0 오토런 중계를 별도 선택 기능으로 추가했습니다. 기존 예약 스키마와 실행 경로는 유지하며 예약 실행이 항상 우선합니다. v0.1.13 공개판과 같은 공개 서명키를 사용해 덮어쓰기 업데이트할 수 있습니다.'
       - name: Read back and verify published release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -152,9 +152,9 @@ jobs:
           rm -rf /tmp/release-readback
           mkdir -p /tmp/release-readback
           cd /tmp/release-readback
-          gh release download v0.1.13 --repo "$GITHUB_REPOSITORY" --pattern "$APK_NAME"
-          gh release download v0.1.13 --repo "$GITHUB_REPOSITORY" --pattern "$SOURCE_NAME"
-          gh release download v0.1.13 --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS.txt
+          gh release download v0.1.14 --repo "$GITHUB_REPOSITORY" --pattern "$APK_NAME"
+          gh release download v0.1.14 --repo "$GITHUB_REPOSITORY" --pattern "$SOURCE_NAME"
+          gh release download v0.1.14 --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS.txt
           sha256sum --check --strict SHA256SUMS.txt
           unzip -t "$SOURCE_NAME" >/dev/null
           BT="$ANDROID_HOME/build-tools/36.0.0"
@@ -175,7 +175,7 @@ jobs:
             "repository": "$GITHUB_REPOSITORY",
             "run_id": "$GITHUB_RUN_ID",
             "source_sha": "$GITHUB_SHA",
-            "release_tag": "v0.1.13",
+            "release_tag": "v0.1.14",
             "mode": "persistent-public-signing",
             "public_certificate_sha256": "$EXPECTED_PUBLIC_CERT_SHA256",
             "unit_tests": "success",

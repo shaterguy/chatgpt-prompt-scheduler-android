@@ -121,6 +121,17 @@ public final class QueueStore {
         return false;
     }
 
+    public synchronized boolean hasActive() {
+        JSONArray queue = read();
+        for (int i = 0; i < queue.length(); i++) {
+            JSONObject item = queue.optJSONObject(i);
+            if (item == null) continue;
+            String state = item.optString("state");
+            if ("queued".equals(state) || "running".equals(state)) return true;
+        }
+        return false;
+    }
+
     public synchronized void recoverRunning() {
         JSONArray queue = read();
         boolean changed = false;

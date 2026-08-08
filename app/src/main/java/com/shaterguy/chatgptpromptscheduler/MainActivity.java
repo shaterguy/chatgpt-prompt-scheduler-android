@@ -56,7 +56,7 @@ public final class MainActivity extends Activity {
         root.setPadding(Ui.dp(this, 18), Ui.dp(this, 12), Ui.dp(this, 18), Ui.dp(this, 24));
         scroll.addView(root);
         root.addView(Ui.title(this, "ChatGPT Prompt Scheduler"));
-        root.addView(Ui.body(this, "v0.1.12 · 화면을 열지 않고 예약 프롬프트를 실행하는 Android 앱"));
+        root.addView(Ui.body(this, "v0.1.14 · 화면을 열지 않고 예약 프롬프트를 실행하는 Android 앱"));
 
         root.addView(Ui.section(this, "실행 준비 상태"));
         AlarmManager alarmManager = getSystemService(AlarmManager.class);
@@ -80,6 +80,10 @@ public final class MainActivity extends Activity {
         if (schedules.isEmpty()) root.addView(Ui.body(this, "등록된 예약이 없습니다."));
         long now = System.currentTimeMillis();
         for (Schedule schedule : schedules) addScheduleCard(schedule, now);
+
+        root.addView(Ui.section(this, "선택 기능 · 오토런 중계"));
+        root.addView(Ui.body(this, "예약 실행과 분리된 Protocol 3.0 중계입니다. 예약 작업이 항상 우선합니다."));
+        root.addView(Ui.button(this, "오토런 중계 열기", v -> startActivity(new Intent(this, OrchestrationActivity.class))));
 
         root.addView(Ui.section(this, "백업 및 진단"));
         root.addView(Ui.actionGrid(this,
@@ -130,13 +134,16 @@ public final class MainActivity extends Activity {
     private void runNow(String scheduleId) {
         QueueStore queueStore = new QueueStore(this);
         QueueStore.EnqueueResult result;
+        AutomationRuntimeGate.setScheduleActive(true);
         try {
             result = queueStore.enqueue(scheduleId, true);
         } catch (RuntimeException error) {
+            AutomationRuntimeGate.setScheduleActive(false);
             toast("실행 대기열 저장 실패: " + error.getMessage());
             return;
         }
         if (!result.added) {
+            AutomationRuntimeGate.setScheduleActive(queueStore.hasActive());
             toast("이미 실행 중이거나 대기 중인 예약입니다.");
             return;
         }
@@ -147,6 +154,7 @@ public final class MainActivity extends Activity {
             toast("실행 대기열에 추가했습니다.");
         } catch (RuntimeException error) {
             queueStore.finish(result.runId);
+            AutomationRuntimeGate.setScheduleActive(queueStore.hasActive());
             toast("실행 서비스 시작 실패: " + error.getMessage());
         }
     }
