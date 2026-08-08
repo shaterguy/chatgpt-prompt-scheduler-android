@@ -222,13 +222,15 @@ public final class OrchestrationStore {
     }
 
     public boolean resume() {
-        if (terminal() || waitingForUser() || DELIVERY_AMBIGUOUS.equals(deliveryState())) return false;
+        if (terminal() || waitingForUser()) return false;
         String restored = deliveryState();
         if (DELIVERY_FAILED.equals(restored)) {
             restored = preferences.getString("recoveryDeliveryState", DELIVERY_WAITING_RESPONSE);
-            if (DELIVERY_SUBMITTING.equals(restored)) restored = DELIVERY_AMBIGUOUS;
         }
-        if (DELIVERY_AMBIGUOUS.equals(restored)) return false;
+        if (DELIVERY_AMBIGUOUS.equals(restored)) {
+            // Recovery is observation-only. The service enters recoverSubmission() and never clicks.
+            restored = DELIVERY_SUBMITTING;
+        }
         commit(preferences.edit().putBoolean("active", true).putBoolean("paused", false)
                 .putString("deliveryState", restored).putString("status", currentActionFor(restored))
                 .putString("lastErrorCode", "").putString("error", "").putLong("errorAt", 0L)
@@ -359,12 +361,8 @@ public final class OrchestrationStore {
         return uri.getUserInfo() == null && (uri.getPort() == -1 || uri.getPort() == 443);
     }
 
+    /** Past Job IDs are audit history, not a UI gate; signal/delivery state remains the duplicate boundary. */
     public String newRunError(String candidateJobId) {
-        String candidate = clean(candidateJobId);
-        Set<String> usedJobIds = new HashSet<>(preferences.getStringSet("usedJobIds", Collections.emptySet()));
-        if (!lastStartedJobId().isEmpty()) usedJobIds.add(lastStartedJobId());
-        if (!candidate.isEmpty() && usedJobIds.contains(candidate))
-            return "이미 중계에 사용한 Job ID입니다. 새 Job ID로 시작해 주세요.";
         return "";
     }
 
@@ -399,9 +397,22 @@ public final class OrchestrationStore {
         return "[AUTOMATION_USER_RESOLVED " + clean(jobId) + " " + clean(actionId) + "]";
     }
 
+    public String resumeBlockReason() {
+        if (terminal()) return "이미 완료·일시정지·중단된 terminal 상태라 자동 재개할 수 없습니다.";
+        if (waitingForUser()) return "사용자 조치 대기 상태입니다. ‘처리 완료’를 눌러 일반 Chat 재검증을 요청해 주세요.";
+        return "현재 영속 상태에서 중계를 재개할 수 없습니다.";
+    }
+
+    public String userActionBlockReason() {
+        if (terminal()) return "이미 terminal 상태입니다.";
+        if (!waitingForUser()) return "현재 사용자 조치 대기 상태가 아닙니다.";
+        return "사용자 조치 상태를 복구하지 못했습니다.";
+    }
+
     private String currentActionFor(String state) {
         if (DELIVERY_WAITING_RESPONSE.equals(state)) return sideLabel(monitoringSide()) + " 응답 대기 중";
         if (DELIVERY_SUBMITTED.equals(state)) return sideLabel(deliveryTarget()) + " 제출 결과 확인 중";
+        if (DELIVERY_SUBMITTING.equals(state)) return sideLabel(deliveryTarget()) + " 전송 결과 확인 중 · 자동 재전송 없음";
         return sideLabel(deliveryTarget()) + "로 프롬프트 전송 준비";
     }
 
