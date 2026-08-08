@@ -64,9 +64,7 @@ public final class OrchestrationService extends Service implements AutomationRun
         }
         startAsForeground(store.status());
         if (!NotificationHelper.orchestrationAlertsEnabled(this)) {
-            store.fail("NOTIFICATION_DISABLED", "오토런 오류 알림 권한 또는 알림 채널이 꺼져 있습니다.");
-            stopRelay();
-            return START_NOT_STICKY;
+            store.setStatus("오토런 중계 실행 중 · 오류 알림 꺼짐");
         }
         if (!canRun()) {
             stopRelay();
