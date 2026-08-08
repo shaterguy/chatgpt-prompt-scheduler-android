@@ -10,6 +10,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
+import android.graphics.Typeface;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
@@ -31,6 +32,7 @@ public final class OrchestrationActivity extends Activity {
     private EditText chatUrl;
     private EditText workUrl;
     private EditText jobId;
+    private TextView statusSummary;
     private TextView currentStatus;
     private TextView lastReceive;
     private TextView lastDelivery;
@@ -96,6 +98,10 @@ public final class OrchestrationActivity extends Activity {
         root.addView(jobId);
 
         root.addView(Ui.section(this, "현재 동작"));
+        statusSummary = Ui.body(this, "");
+        statusSummary.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        statusSummary.setTextSize(Ui.isTablet(this) ? 18 : 16);
+        root.addView(statusSummary);
         currentStatus = Ui.body(this, "");
         root.addView(currentStatus);
         root.addView(Ui.section(this, "마지막 수신"));
@@ -128,6 +134,7 @@ public final class OrchestrationActivity extends Activity {
 
     private void refreshStatus() {
         if (currentStatus == null) return;
+        statusSummary.setText("현재 상태: " + store.statusSummary());
         String stepRound = store.currentStep().isEmpty() ? "-" : store.currentStep() + " / " + store.currentRound();
         currentStatus.setText("모니터링 대화방: " + OrchestrationStore.sideLabel(store.monitoringSide())
                 + "\n현재 동작: " + store.status()

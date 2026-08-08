@@ -250,15 +250,22 @@ public final class OrchestrationService extends Service implements AutomationRun
             state = OrchestrationStore.DELIVERY_SUBMITTING;
         }
 
+        String deliveryPrompt = OrchestrationStore.DELIVERY_PENDING.equals(state)
+                ? store.ensureStampedPrompt() : store.deliveryPrompt();
+        if (deliveryPrompt.isEmpty()) {
+            pauseWithError("DELIVERY_PROMPT_MISSING", "현재 중계 전달 프롬프트를 복구하지 못했습니다.");
+            return;
+        }
+
         String script;
-        if (OrchestrationStore.DELIVERY_PENDING.equals(state)) script = OrchestrationScript.prepare(store.pendingPrompt());
+        if (OrchestrationStore.DELIVERY_PENDING.equals(state)) script = OrchestrationScript.prepare(deliveryPrompt);
         else if (OrchestrationStore.DELIVERY_SUBMITTING.equals(state)) {
-            script = clickAttempt ? OrchestrationScript.commit(store.pendingPrompt())
-                    : OrchestrationScript.recoverSubmission(store.pendingPrompt());
+            script = clickAttempt ? OrchestrationScript.commit(deliveryPrompt)
+                    : OrchestrationScript.recoverSubmission(deliveryPrompt);
         } else if (OrchestrationStore.DELIVERY_SUBMITTED.equals(state)) {
-            script = OrchestrationScript.confirmSubmission(store.pendingPrompt());
+            script = OrchestrationScript.confirmSubmission(deliveryPrompt);
         } else if (OrchestrationStore.DELIVERY_WAITING_RESPONSE.equals(state)) {
-            script = OrchestrationScript.observe(store.pendingPrompt());
+            script = OrchestrationScript.observe(deliveryPrompt);
         } else {
             pauseWithError("STATE_INVALID", "복구할 수 없는 중계 전달 상태입니다.");
             return;
@@ -421,8 +428,7 @@ public final class OrchestrationService extends Service implements AutomationRun
         if (signal.type == OrchestrationSignal.Type.DONE || signal.type == OrchestrationSignal.Type.PAUSE
                 || signal.type == OrchestrationSignal.Type.ABORTED) {
             store.finish(signal, sourceSide);
-            NotificationHelper.orchestrationResult(this, signal.type == OrchestrationSignal.Type.DONE,
-                    "오토런 " + store.status(), "Job " + store.runJobId() + " 상태가 변경되었습니다.");
+            NotificationHelper.orchestrationTerminal(this, signal.type, store.runJobId());
             stopRelay();
             return;
         }

@@ -22,6 +22,45 @@ public class CoreLogicTest {
     }
 
     @Test
+    public void automationDeliveryStampKeepsRawSignalSeparate() {
+        long epoch = LocalDateTime.of(2026, 8, 8, 20, 51, 30).atZone(ZoneId.of("Asia/Seoul")).toInstant().toEpochMilli();
+        String raw = "[AUTOMATION_WORK_STEP JOB S001 R001]";
+        assertEquals(raw, raw.trim());
+        assertEquals("[2026.08.08 | 20:51:30]\n" + raw,
+                OrchestrationStore.stampPrompt(raw, epoch));
+        assertEquals("", OrchestrationStore.stampPrompt("  ", epoch));
+    }
+
+    @Test
+    public void orchestrationStatusSummarySeparatesTerminalAndRecoveryStates() {
+        assertEquals("완료", OrchestrationStore.statusSummary(false, false, true, false,
+                OrchestrationStore.DELIVERY_WAITING_RESPONSE, OrchestrationSignal.Type.DONE));
+        assertEquals("일시정지", OrchestrationStore.statusSummary(false, true, true, false,
+                OrchestrationStore.DELIVERY_WAITING_RESPONSE, OrchestrationSignal.Type.PAUSE));
+        assertEquals("중단됨", OrchestrationStore.statusSummary(false, false, true, false,
+                OrchestrationStore.DELIVERY_WAITING_RESPONSE, OrchestrationSignal.Type.ABORTED));
+        assertEquals("사용자 조치 필요", OrchestrationStore.statusSummary(false, true, false, true,
+                OrchestrationStore.DELIVERY_WAITING_RESPONSE, null));
+        assertEquals("오류", OrchestrationStore.statusSummary(false, true, false, false,
+                OrchestrationStore.DELIVERY_FAILED, null));
+        assertEquals("진행 중", OrchestrationStore.statusSummary(true, false, false, false,
+                OrchestrationStore.DELIVERY_WAITING_RESPONSE, null));
+    }
+
+    @Test
+    public void terminalNotificationsUseDistinctExplicitMessages() {
+        assertEquals("오토런 작업 완료", NotificationHelper.terminalTitle(OrchestrationSignal.Type.DONE));
+        assertEquals("Job JOB-7 작업이 완료되었습니다.",
+                NotificationHelper.terminalMessage(OrchestrationSignal.Type.DONE, "JOB-7"));
+        assertEquals("오토런 작업 일시정지", NotificationHelper.terminalTitle(OrchestrationSignal.Type.PAUSE));
+        assertEquals("Job JOB-7 작업이 일시정지되었습니다.",
+                NotificationHelper.terminalMessage(OrchestrationSignal.Type.PAUSE, "JOB-7"));
+        assertEquals("오토런 작업 중단", NotificationHelper.terminalTitle(OrchestrationSignal.Type.ABORTED));
+        assertEquals("Job JOB-7 작업이 중단되었습니다.",
+                NotificationHelper.terminalMessage(OrchestrationSignal.Type.ABORTED, "JOB-7"));
+    }
+
+    @Test
     public void parsesSupportedTargets() {
         assertTrue(TargetParser.isSupported("https://chatgpt.com/"));
         assertEquals("abc", TargetParser.conversationId("https://chatgpt.com/g/proj/c/abc"));

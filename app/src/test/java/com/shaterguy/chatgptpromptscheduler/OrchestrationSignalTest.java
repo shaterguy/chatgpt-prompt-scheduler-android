@@ -166,6 +166,10 @@ public class OrchestrationSignalTest {
         assertTrue(service.contains("Elapsed time is telemetry only"));
         assertTrue(service.contains("scheduleHasPriority()"));
         assertTrue(service.contains("store.markSubmitting()"));
+        assertTrue(service.contains("store.ensureStampedPrompt()"));
+        assertTrue(service.contains("store.deliveryPrompt()"));
+        assertFalse(service.contains("OrchestrationScript.prepare(store.pendingPrompt())"));
+        assertFalse(service.contains("OrchestrationScript.observe(store.pendingPrompt())"));
         assertTrue(service.contains("recoverSubmission"));
         assertTrue(service.contains("confirmSubmission"));
         assertTrue(service.contains("DOM_COMPOSER_NOT_FOUND"));

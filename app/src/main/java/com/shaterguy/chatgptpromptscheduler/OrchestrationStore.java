@@ -27,7 +27,7 @@ public final class OrchestrationStore {
     public static final String PHASE_SUBMITTING = "SUBMITTING";
     public static final String PHASE_WAIT = "WAIT_RESPONSE";
 
-    private static final int SCHEMA_VERSION = 2;
+    private static final int SCHEMA_VERSION = 3;
     private static final String PREFS = "orchestration_protocol_3";
     private static final Pattern JOB_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,63}");
     private final SharedPreferences preferences;
@@ -67,6 +67,7 @@ public final class OrchestrationStore {
                 .putString("monitoringSide", SIDE_CHAT).putString("deliveryTarget", SIDE_CHAT)
                 .putString("deliveryState", DELIVERY_PENDING)
                 .putString("pendingPrompt", "[AUTOMATION_START " + jobId() + "]")
+                .putString("stampedPrompt", "")
                 .putString("lastDeliveryTarget", "").putString("lastDeliveredPrompt", "")
                 .putString("lastDeliveryState", "").putLong("deliveryPreparedAt", 0L)
                 .putLong("deliveryAttemptAt", 0L).putLong("lastDeliveryAt", 0L)
@@ -107,6 +108,10 @@ public final class OrchestrationStore {
     public void markSubmitted() {
         long now = System.currentTimeMillis();
         commit(preferences.edit().putString("deliveryState", DELIVERY_SUBMITTED)
+                .putString("lastDeliveryTarget", deliveryTarget())
+                .putString("lastDeliveredPrompt", stampedPrompt())
+                .putString("lastDeliveryState", DELIVERY_SUBMITTED)
+                .putLong("lastDeliveryAt", now)
                 .putString("status", sideLabel(deliveryTarget()) + " 프롬프트 제출 결과 확인 중")
                 .putLong("phaseStartedAt", now));
     }
@@ -117,7 +122,7 @@ public final class OrchestrationStore {
         String target = deliveryTarget();
         commit(preferences.edit().putString("deliveryState", DELIVERY_WAITING_RESPONSE)
                 .putString("monitoringSide", target).putString("expectedSignal", expectedFor(target, currentStep(), currentRound()))
-                .putString("lastDeliveryTarget", target).putString("lastDeliveredPrompt", pendingPrompt())
+                .putString("lastDeliveryTarget", target).putString("lastDeliveredPrompt", stampedPrompt())
                 .putString("lastDeliveryState", DELIVERY_WAITING_RESPONSE).putLong("lastDeliveryAt", now)
                 .putString("status", sideLabel(target) + " 응답 대기 중")
                 .putLong("phaseStartedAt", now).putLong("pollCountLong", 0L).putInt("pollCount", 0)
@@ -141,6 +146,7 @@ public final class OrchestrationStore {
                 .putString("lastAcceptedSignal", signal.raw).putLong("lastSignalAt", now)
                 .putString("currentStep", signal.step).putString("currentRound", signal.round)
                 .putString("deliveryTarget", target).putString("pendingPrompt", prompt)
+                .putString("stampedPrompt", "")
                 .putString("deliveryState", DELIVERY_PENDING).putString("expectedSignal", "전송 완료 후 결정")
                 .putLong("deliveryPreparedAt", 0L).putLong("deliveryAttemptAt", 0L)
                 .putString("status", sideLabel(target) + "로 프롬프트 전송 대기")
@@ -166,7 +172,8 @@ public final class OrchestrationStore {
         String prompt = userResolvedPrompt(runJobId(), actionId());
         commit(preferences.edit().putBoolean("active", true).putBoolean("paused", false)
                 .putBoolean("waitingForUser", false).putString("deliveryTarget", SIDE_CHAT)
-                .putString("pendingPrompt", prompt).putString("deliveryState", DELIVERY_PENDING)
+                .putString("pendingPrompt", prompt).putString("stampedPrompt", "")
+                .putString("deliveryState", DELIVERY_PENDING)
                 .putLong("deliveryPreparedAt", 0L).putLong("deliveryAttemptAt", 0L)
                 .putString("expectedSignal", "전송 완료 후 일반 Chat의 재검증 결과")
                 .putString("status", "일반 Chat으로 사용자 조치 재검증 요청 전송 대기")
@@ -273,6 +280,30 @@ public final class OrchestrationStore {
     public long lastSignalAt() { return preferences.getLong("lastSignalAt", 0L); }
     public String deliveryTarget() { return preferences.getString("deliveryTarget", SIDE_CHAT); }
     public String pendingPrompt() { return preferences.getString("pendingPrompt", ""); }
+    /** Raw control payload for the current delivery; it never includes the transport timestamp. */
+    public String rawPendingPrompt() { return pendingPrompt(); }
+    /** Exact prompt used for the current delivery after timestamp stamping. */
+    public String stampedPrompt() { return preferences.getString("stampedPrompt", ""); }
+    public String deliveryPrompt() { return stampedPrompt(); }
+
+    /**
+     * Creates the transport envelope once for the current delivery and persists it before WebView input.
+     * Synchronous commit keeps preparation/restart recovery from producing two timestamps for one delivery.
+     */
+    public synchronized String ensureStampedPrompt() {
+        String existing = stampedPrompt();
+        if (!existing.isEmpty()) return existing;
+        String raw = pendingPrompt();
+        if (raw.isEmpty()) return "";
+        String stamped = stampPrompt(raw, System.currentTimeMillis());
+        commit(preferences.edit().putString("stampedPrompt", stamped));
+        return stamped;
+    }
+
+    public static String stampPrompt(String rawPrompt, long epochMillis) {
+        String raw = rawPrompt == null ? "" : rawPrompt.trim();
+        return raw.isEmpty() ? "" : TimestampUtil.prefix(epochMillis, raw);
+    }
     public String lastDeliveredPrompt() { return preferences.getString("lastDeliveredPrompt", ""); }
     public String lastDeliveryTarget() { return preferences.getString("lastDeliveryTarget", ""); }
     public String lastDeliveryState() { return preferences.getString("lastDeliveryState", ""); }
@@ -283,6 +314,11 @@ public final class OrchestrationStore {
     public String currentRound() { return preferences.getString("currentRound", ""); }
     public String expectedSignal() { return preferences.getString("expectedSignal", ""); }
     public String status() { return preferences.getString("status", "설정 전"); }
+    public String statusSummary() {
+        OrchestrationSignal last = OrchestrationSignal.parse(lastAcceptedSignal(), runJobId());
+        return statusSummary(active(), paused(), terminal(), waitingForUser(), deliveryState(),
+                last == null ? null : last.type);
+    }
     public String lastErrorCode() { return preferences.getString("lastErrorCode", ""); }
     public String error() { return preferences.getString("error", ""); }
     public long errorAt() { return preferences.getLong("errorAt", 0L); }
@@ -334,6 +370,21 @@ public final class OrchestrationStore {
 
     public static String sideLabel(String side) { return SIDE_WORK.equals(side) ? "Work" : "일반 Chat"; }
 
+    public static String statusSummary(boolean active, boolean paused, boolean terminal,
+                                      boolean waitingForUser, String deliveryState,
+                                      OrchestrationSignal.Type terminalSignal) {
+        if (terminal) {
+            if (terminalSignal == OrchestrationSignal.Type.DONE) return "완료";
+            if (terminalSignal == OrchestrationSignal.Type.ABORTED) return "중단됨";
+            if (terminalSignal == OrchestrationSignal.Type.PAUSE) return "일시정지";
+        }
+        if (waitingForUser) return "사용자 조치 필요";
+        if (DELIVERY_FAILED.equals(deliveryState) || DELIVERY_AMBIGUOUS.equals(deliveryState)) return "오류";
+        if (paused) return "일시정지";
+        if (active) return "진행 중";
+        return "대기 중";
+    }
+
     public static String promptFor(OrchestrationSignal signal) {
         if (signal.type == OrchestrationSignal.Type.SEND_WORK)
             return "[AUTOMATION_WORK_STEP " + signal.jobId + " " + signal.step + " " + signal.round + "]";
@@ -361,7 +412,20 @@ public final class OrchestrationStore {
     }
 
     private void migrateLegacyState() {
-        if (preferences.getInt("schemaVersion", 0) >= SCHEMA_VERSION) return;
+        int currentSchema = preferences.getInt("schemaVersion", 0);
+        if (currentSchema >= SCHEMA_VERSION) return;
+        if (currentSchema >= 2) {
+            String state = preferences.getString("deliveryState", DELIVERY_PENDING);
+            String existingDelivered = preferences.getString("lastDeliveredPrompt", "");
+            String preservedPrompt = preferences.getString("stampedPrompt", "");
+            if (preservedPrompt.isEmpty() && !DELIVERY_PENDING.equals(state)) {
+                preservedPrompt = existingDelivered.isEmpty()
+                        ? preferences.getString("pendingPrompt", "") : existingDelivered;
+            }
+            commit(preferences.edit().putInt("schemaVersion", SCHEMA_VERSION)
+                    .putString("stampedPrompt", preservedPrompt));
+            return;
+        }
         String legacySide = preferences.getString("side", SIDE_CHAT);
         String legacyPhase = preferences.getString("phase", PHASE_SUBMIT);
         String state = PHASE_WAIT.equals(legacyPhase) ? DELIVERY_WAITING_RESPONSE
@@ -375,6 +439,10 @@ public final class OrchestrationStore {
                 .putString("lastDeliveryTarget", PHASE_WAIT.equals(legacyPhase) ? legacySide : "")
                 .putString("lastDeliveredPrompt", PHASE_WAIT.equals(legacyPhase)
                         ? preferences.getString("pendingPrompt", "") : "")
+                // A legacy WAIT_RESPONSE delivery was already sent without an envelope; preserve the
+                // exact old prompt for DOM matching instead of generating a new string on resume.
+                .putString("stampedPrompt", PHASE_WAIT.equals(legacyPhase)
+                        ? preferences.getString("lastDeliveredPrompt", preferences.getString("pendingPrompt", "")) : "")
                 .putString("lastDeliveryState", PHASE_WAIT.equals(legacyPhase) ? DELIVERY_WAITING_RESPONSE : "")
                 .putString("currentStep", preferences.getString("lastStep", ""))
                 .putString("currentRound", preferences.getString("lastRound", ""))
