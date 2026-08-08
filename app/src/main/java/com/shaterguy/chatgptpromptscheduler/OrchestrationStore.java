@@ -75,6 +75,7 @@ public final class OrchestrationStore {
                 .putString("lastRound", "")
                 .putString("candidateFingerprint", "")
                 .putInt("candidateStability", 0)
+                .putBoolean("terminal", false)
                 .putString("status", "일반 Chat 시작 신호 전송 준비")
                 .putString("error", "")
                 .putLong("epoch", epoch() + 1L)
@@ -142,11 +143,13 @@ public final class OrchestrationStore {
                 .putString("error", clean(reason)));
     }
 
-    public void resume() {
+    public boolean resume() {
+        if (terminal()) return false;
         commit(preferences.edit().putBoolean("active", true).putBoolean("paused", false)
                 .putString("status", sideLabel() + " 중계 재개").putString("error", "")
                 .putInt("pollCount", 0).putLong("phaseStartedAt", System.currentTimeMillis())
                 .putString("candidateFingerprint", "").putInt("candidateStability", 0));
+        return true;
     }
 
     public void finish(OrchestrationSignal signal) {
@@ -158,7 +161,8 @@ public final class OrchestrationStore {
         };
         boolean paused = signal.type == OrchestrationSignal.Type.PAUSE;
         commit(preferences.edit().putString("lastSignal", signal.raw).putBoolean("active", paused)
-                .putBoolean("paused", paused).putString("status", status).putString("error", ""));
+                .putBoolean("paused", paused).putBoolean("terminal", isTerminalSignal(signal.type))
+                .putString("status", status).putString("error", ""));
     }
 
     public void stop() {
@@ -176,6 +180,12 @@ public final class OrchestrationStore {
     public String lastStartedJobId() { return preferences.getString("lastStartedJobId", ""); }
     public boolean active() { return preferences.getBoolean("active", false); }
     public boolean paused() { return preferences.getBoolean("paused", false); }
+    public boolean terminal() {
+        if (preferences.getBoolean("terminal", false)) return true;
+        // Preserve the terminal guard for state created by v0.1.14 before this flag existed.
+        OrchestrationSignal last = OrchestrationSignal.parse(lastSignal(), runJobId());
+        return last != null && isTerminalSignal(last.type);
+    }
     public String side() { return preferences.getString("side", SIDE_CHAT); }
     public String phase() { return preferences.getString("phase", PHASE_SUBMIT); }
     public String pendingPrompt() { return preferences.getString("pendingPrompt", ""); }
@@ -191,6 +201,10 @@ public final class OrchestrationStore {
     public long epoch() { return preferences.getLong("epoch", 0L); }
     public String targetUrl() { return SIDE_WORK.equals(side()) ? runWorkUrl() : runChatUrl(); }
     public String sideLabel() { return sideLabel(side()); }
+
+    public static boolean isTerminalSignal(OrchestrationSignal.Type type) {
+        return type == OrchestrationSignal.Type.DONE || type == OrchestrationSignal.Type.ABORTED;
+    }
 
     public static boolean isAllowedRelayUrl(String url) {
         if (!TargetParser.isSupported(url) || TargetParser.conversationId(url) == null) return false;
