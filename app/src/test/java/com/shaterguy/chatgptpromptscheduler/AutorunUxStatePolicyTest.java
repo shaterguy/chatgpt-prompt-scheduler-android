@@ -57,12 +57,10 @@ public class AutorunUxStatePolicyTest {
     public void verifiedWorkPreferencesLeaveRequestedAndActualDebugEvidence() throws Exception {
         String source = source("OrchestrationService.java");
         assertTrue(source.contains("WORK_PREFERENCES_VERIFIED"));
-        assertTrue(source.contains("model.requested="));
-        assertTrue(source.contains("model.current="));
-        assertTrue(source.contains("model.evidence="));
-        assertTrue(source.contains("reasoning.requested="));
-        assertTrue(source.contains("reasoning.current="));
-        assertTrue(source.contains("reasoning.evidence="));
+        assertTrue(source.contains("WORK_MODEL_VERIFIED"));
+        assertTrue(source.contains("WORK_REASONING_VERIFIED"));
+        assertTrue(source.contains(";current="));
+        assertTrue(source.contains(";readback="));
         assertTrue(source.contains("selected_option_readback"));
     }
 

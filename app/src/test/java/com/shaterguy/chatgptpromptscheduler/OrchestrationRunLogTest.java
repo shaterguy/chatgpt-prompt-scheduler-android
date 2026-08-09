@@ -19,6 +19,13 @@ public final class OrchestrationRunLogTest {
         assertEquals("redacted", OrchestrationRunLog.sanitizeDetail("https://chatgpt.com/c/secret"));
         assertEquals("redacted", OrchestrationRunLog.sanitizeDetail("raw prompt text"));
         assertEquals("redacted", OrchestrationRunLog.sanitizeDetail("오류 원문"));
+        assertEquals("mode.current=work", OrchestrationRunLog.sanitizeDetail("mode.current=work"));
+        assertEquals("requested=sol;current=sol;readback=selected_option_readback",
+                OrchestrationRunLog.sanitizeDetail(
+                        "requested=sol;current=sol;readback=selected_option_readback"));
+        assertEquals("requested=xhigh;current=xhigh;readback=trigger_readback",
+                OrchestrationRunLog.sanitizeDetail(
+                        "requested=xhigh;current=xhigh;readback=trigger_readback"));
     }
 
     @Test

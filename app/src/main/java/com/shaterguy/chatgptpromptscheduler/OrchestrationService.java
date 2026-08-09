@@ -1634,12 +1634,11 @@ public final class OrchestrationService extends Service implements AutomationRun
             currentModel = requestedModel;
         if (currentReasoning.isEmpty() && "selected_option_readback".equals(reasoningEvidence))
             currentReasoning = requestedReasoning;
-        log("WORK_PREFERENCES_VERIFIED", "mode.current=work;model.requested="
-                + safeCode(requestedModel) + ";model.current=" + safeCode(currentModel)
-                + ";model.evidence=" + safeCode(modelEvidence)
-                + ";reasoning.requested=" + safeCode(requestedReasoning)
-                + ";reasoning.current=" + safeCode(currentReasoning)
-                + ";reasoning.evidence=" + safeCode(reasoningEvidence));
+        log("WORK_PREFERENCES_VERIFIED", "mode.current=work");
+        log("WORK_MODEL_VERIFIED", "requested=" + safeCode(requestedModel)
+                + ";current=" + safeCode(currentModel) + ";readback=" + safeCode(modelEvidence));
+        log("WORK_REASONING_VERIFIED", "requested=" + safeCode(requestedReasoning)
+                + ";current=" + safeCode(currentReasoning) + ";readback=" + safeCode(reasoningEvidence));
     }
 
     private void log(String event, String detail) {
