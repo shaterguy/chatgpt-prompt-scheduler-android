@@ -86,6 +86,11 @@ public final class OrchestrationStore {
                 .putString("requirementDraft", requirementDraft == null ? "" : requirementDraft));
     }
 
+    /** The new-Job screen deliberately persists only its reusable project address. */
+    public void saveAutomaticProjectDefault(String projectUrl) {
+        commit(preferences.edit().putString("defaultProjectUrl", clean(projectUrl)));
+    }
+
     public static String automaticConfigError(String projectUrl, String requirement) {
         String project = clean(projectUrl);
         if (!TargetParser.isProjectHome(project))
@@ -1042,7 +1047,7 @@ public final class OrchestrationStore {
 
     public String resumeBlockReason() {
         if (terminal()) return "이미 완료·일시정지·중단된 terminal 상태라 자동 재개할 수 없습니다.";
-        if (waitingForUser()) return "사용자 조치 대기 상태입니다. ‘처리 완료’를 눌러 일반 Chat 재검증을 요청해 주세요.";
+        if (waitingForUser()) return "사용자 조치 대기 상태입니다. 조치를 마친 뒤 ‘재개’를 눌러 일반 Chat 재검증을 요청해 주세요.";
         return "현재 영속 상태에서 중계를 재개할 수 없습니다.";
     }
 

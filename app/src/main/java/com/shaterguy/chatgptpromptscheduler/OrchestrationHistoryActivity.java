@@ -45,7 +45,7 @@ public final class OrchestrationHistoryActivity extends Activity {
         root.addView(Ui.title(this, "오토런 작업"));
         root.addView(Ui.body(this, "새 작업을 시작하거나 이전 작업의 수행 항목, 실행 로그, 디버그 로그를 확인합니다."));
         root.addView(Ui.actionGrid(this,
-                Ui.button(this, "새 작업", v -> startActivity(new Intent(this, OrchestrationActivity.class))),
+                Ui.button(this, "새 작업", v -> startActivity(OrchestrationActivity.newJobIntent(this))),
                 Ui.button(this, "새로고침", v -> { history.sync(current); render(); })));
 
         JSONArray jobs = history.read();

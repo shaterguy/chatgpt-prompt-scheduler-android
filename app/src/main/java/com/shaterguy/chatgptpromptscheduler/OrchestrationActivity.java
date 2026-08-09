@@ -11,7 +11,6 @@ import android.text.InputType;
 import android.graphics.Typeface;
 import android.view.View;
 import android.view.autofill.AutofillValue;
-import android.widget.Button;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -23,8 +22,11 @@ import java.text.DateFormat;
 import java.util.Date;
 
 public final class OrchestrationActivity extends Activity {
+    public static final String EXTRA_NEW_JOB = "orchestration.newJob";
     private static final String STATE_PROJECT_URL = "orchestration.projectUrl";
     private static final String STATE_REQUIREMENT = "orchestration.requirement";
+    private static final String STATE_WORK_MODEL = "orchestration.workModel";
+    private static final String STATE_REASONING = "orchestration.reasoning";
     private static final String[] MODEL_VALUES = {"inherit", "sol", "terra", "luna"};
     private static final String[] MODEL_LABELS = {"inherit (현재값 유지)", "sol", "terra", "luna"};
     private static final String[] REASONING_VALUES = {"inherit", "light", "medium", "high", "xhigh", "max", "ultra"};
@@ -42,8 +44,8 @@ public final class OrchestrationActivity extends Activity {
     private TextView lastDelivery;
     private TextView nextExpected;
     private TextView errorStatus;
-    private Button resolvedButton;
     private Bundle restoredState;
+    private boolean newJobMode;
     private final Handler refreshHandler = new Handler(Looper.getMainLooper());
     private final Runnable refreshRunnable = new Runnable() {
         @Override public void run() { refreshStatus(); refreshHandler.postDelayed(this, 1000L); }
@@ -54,11 +56,12 @@ public final class OrchestrationActivity extends Activity {
         super.onCreate(savedInstanceState);
         store = new OrchestrationStore(this);
         runLog = new OrchestrationRunLog(this);
-        runLog.record(store, "UI_OPEN", "source=activity");
+        newJobMode = getIntent().getBooleanExtra(EXTRA_NEW_JOB, false);
+        if (!newJobMode) runLog.record(store, "UI_OPEN", "source=activity");
         restoredState = savedInstanceState;
         createViews();
         restoredState = null;
-        refreshStatus();
+        if (!newJobMode) refreshStatus();
     }
 
     @Override
@@ -66,14 +69,16 @@ public final class OrchestrationActivity extends Activity {
         super.onResume();
         // Activity navigation is not a relay event. Only read the durable service state.
         refreshHandler.removeCallbacks(refreshRunnable);
-        refreshStatus();
-        refreshHandler.postDelayed(refreshRunnable, 1000L);
+        if (!newJobMode) {
+            refreshStatus();
+            refreshHandler.postDelayed(refreshRunnable, 1000L);
+        }
     }
 
     @Override
     protected void onPause() {
         refreshHandler.removeCallbacks(refreshRunnable);
-        saveDefaults();
+        saveProjectDefault();
         super.onPause();
     }
 
@@ -81,6 +86,10 @@ public final class OrchestrationActivity extends Activity {
     protected void onSaveInstanceState(Bundle outState) {
         if (projectUrl != null) outState.putString(STATE_PROJECT_URL, projectUrl.getText().toString());
         if (requirement != null) outState.putString(STATE_REQUIREMENT, requirement.getText().toString());
+        if (workModel != null) outState.putString(STATE_WORK_MODEL,
+                MODEL_VALUES[workModel.getSelectedItemPosition()]);
+        if (reasoningEffort != null) outState.putString(STATE_REASONING,
+                REASONING_VALUES[reasoningEffort.getSelectedItemPosition()]);
         super.onSaveInstanceState(outState);
     }
 
@@ -89,23 +98,34 @@ public final class OrchestrationActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         suppressCredentialCapture(root);
         root.setPadding(Ui.dp(this, 18), Ui.dp(this, 12), Ui.dp(this, 18), Ui.dp(this, 24));
-        root.addView(Ui.title(this, "오토런 · Protocol 3.3"));
+        root.addView(Ui.title(this, newJobMode ? "새 오토런 작업" : "오토런 · Protocol 3.3"));
         root.addView(Ui.button(this, "작업 목록", v -> finish()));
-        root.addView(Ui.body(this, "확정된 요구사항만 붙여넣으면 Job과 프로젝트의 일반 Chat/Work 대화를 앱이 자동으로 준비합니다. 예약 실행은 항상 우선합니다."));
+        if (showsCurrentJobState(newJobMode)) createCurrentJobViews(root); else createNewJobViews(root);
 
+        android.widget.ScrollView scroll = Ui.scroll(this);
+        suppressCredentialCapture(scroll);
+        scroll.addView(root);
+        Ui.setContent(this, scroll);
+    }
+
+    private void createNewJobViews(LinearLayout root) {
+        NewJobFormDefaults defaults = newJobFormDefaults(store.defaultProjectUrl());
+        root.addView(Ui.body(this, "프로젝트 주소만 기본값으로 불러옵니다. 요구사항과 Work 설정은 새 작업마다 독립된 빈 상태로 시작합니다."));
         root.addView(Ui.section(this, "새 Job 설정"));
         projectUrl = field("ChatGPT 프로젝트 주소 · https://chatgpt.com/g/<project-id>",
-                store.defaultProjectUrl(), true, STATE_PROJECT_URL);
+                defaults.projectUrl, true, STATE_PROJECT_URL);
         root.addView(projectUrl);
         root.addView(Ui.body(this, "프로젝트 기본값 변경은 이미 실행 중인 Job에 영향을 주지 않습니다."));
         root.addView(Ui.section(this, "Work 모델"));
-        workModel = spinner(MODEL_LABELS, indexOf(MODEL_VALUES, store.defaultWorkModel()));
+        workModel = spinner(MODEL_LABELS,
+                restoredSelection(STATE_WORK_MODEL, MODEL_VALUES, defaults.workModel));
         root.addView(workModel);
         root.addView(Ui.section(this, "Work 추론 정도"));
-        reasoningEffort = spinner(REASONING_LABELS, indexOf(REASONING_VALUES, store.defaultReasoningEffort()));
+        reasoningEffort = spinner(REASONING_LABELS,
+                restoredSelection(STATE_REASONING, REASONING_VALUES, defaults.reasoningEffort));
         root.addView(reasoningEffort);
         root.addView(Ui.section(this, "오토런 요구사항"));
-        requirement = field("(오토런)\n확정된 작업 요구사항", store.requirementDraft(), false, STATE_REQUIREMENT);
+        requirement = field("(오토런)\n확정된 작업 요구사항", defaults.requirement, false, STATE_REQUIREMENT);
         requirement.setSingleLine(false);
         requirement.setMinLines(8);
         requirement.setMaxLines(30);
@@ -113,7 +133,13 @@ public final class OrchestrationActivity extends Activity {
         requirement.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
                 | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         root.addView(requirement);
+        root.addView(Ui.section(this, "시작"));
+        root.addView(Ui.button(this, "오토런 시작", v -> startNew()));
+        root.addView(Ui.body(this, "새 Job을 시작하기 전에는 이전 Job의 현재 동작·신호·오류·로그를 이 화면에 불러오지 않습니다."));
+    }
 
+    private void createCurrentJobViews(LinearLayout root) {
+        root.addView(Ui.body(this, "현재 Job의 영속 실행 상태와 중계 제어만 표시합니다. 새 Job 입력은 작업 목록의 ‘새 작업’에서 시작합니다."));
         root.addView(Ui.section(this, "현재 동작"));
         statusSummary = Ui.body(this, "");
         statusSummary.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -135,20 +161,13 @@ public final class OrchestrationActivity extends Activity {
         root.addView(errorStatus);
 
         root.addView(Ui.section(this, "중계 제어"));
-        resolvedButton = Ui.button(this, "처리 완료", v -> resolveUserAction());
         root.addView(Ui.actionGrid(this,
-                Ui.button(this, "오토런 시작", v -> startNew()),
                 Ui.button(this, "재개", v -> resumeRelay()),
                 Ui.button(this, "일시정지", v -> pauseRelay()),
                 Ui.button(this, "중지", v -> stopRelay()),
-                resolvedButton,
                 Ui.button(this, "실행 로그", v -> openLogs(OrchestrationLogsActivity.KIND_EXECUTION)),
                 Ui.button(this, "디버그 로그", v -> openLogs(OrchestrationLogsActivity.KIND_DEBUG))));
-        root.addView(Ui.body(this, "‘처리 완료’는 성공 확정이 아닙니다. 일반 Chat에 재검증을 요청하고 검증 응답을 다시 감시합니다."));
-        android.widget.ScrollView scroll = Ui.scroll(this);
-        suppressCredentialCapture(scroll);
-        scroll.addView(root);
-        Ui.setContent(this, scroll);
+        root.addView(Ui.body(this, "‘재개’는 두 대화방의 실제 상태를 다시 확인합니다. 사용자 조치 대기 중에는 조치를 마쳤다는 제어 신호를 일반 Chat에 보내고 재검증 응답부터 계속 감시합니다."));
     }
 
     private void refreshStatus() {
@@ -183,7 +202,6 @@ public final class OrchestrationActivity extends Activity {
         errorStatus.setText(store.error().isEmpty() ? "오류 없음"
                 : "코드: " + emptyAsDash(store.lastErrorCode()) + "\n내용: " + store.error()
                 + "\n시각: " + time(store.errorAt()));
-        resolvedButton.setEnabled(store.waitingForUser());
     }
 
     private EditText field(String hint, String value, boolean url, String stateKey) {
@@ -203,6 +221,11 @@ public final class OrchestrationActivity extends Activity {
         return value == null ? "" : value;
     }
 
+    private int restoredSelection(String key, String[] values, String defaultValue) {
+        if (restoredState == null || !restoredState.containsKey(key)) return indexOf(values, defaultValue);
+        return indexOf(values, restoredState.getString(key, defaultValue));
+    }
+
     private Spinner spinner(String[] labels, int selected) {
         Spinner spinner = new Spinner(this);
         spinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels));
@@ -210,11 +233,9 @@ public final class OrchestrationActivity extends Activity {
         return spinner;
     }
 
-    private void saveDefaults() {
-        if (projectUrl == null || requirement == null || workModel == null || reasoningEffort == null) return;
-        store.saveAutomaticDefaults(projectUrl.getText().toString(),
-                MODEL_VALUES[workModel.getSelectedItemPosition()],
-                REASONING_VALUES[reasoningEffort.getSelectedItemPosition()], requirement.getText().toString());
+    private void saveProjectDefault() {
+        if (!newJobMode || projectUrl == null) return;
+        store.saveAutomaticProjectDefault(projectUrl.getText().toString());
     }
 
     private void startNew() {
@@ -228,13 +249,15 @@ public final class OrchestrationActivity extends Activity {
         String error = OrchestrationStore.automaticConfigError(nextProject, nextRequirement);
         if (!error.isEmpty()) { toast(error); return; }
         stopService(new Intent(this, OrchestrationService.class));
-        saveDefaults();
+        saveProjectDefault();
         String generated = store.beginAutomatic(nextProject,
                 MODEL_VALUES[workModel.getSelectedItemPosition()],
                 REASONING_VALUES[reasoningEffort.getSelectedItemPosition()], nextRequirement);
         runLog.record(store, "UI_START", "source=automatic_bootstrap");
         if (startRelayService()) toast("오토런을 시작했습니다. Job ID: " + generated);
-        refreshStatus();
+        getIntent().removeExtra(EXTRA_NEW_JOB);
+        newJobMode = false;
+        recreate();
     }
 
     private void resumeRelay() {
@@ -245,22 +268,30 @@ public final class OrchestrationActivity extends Activity {
             return;
         }
         boolean fullRelay = !store.runChatUrl().isEmpty() && !store.runWorkUrl().isEmpty();
-        boolean resumed = fullRelay ? store.beginReconciliation() : store.resume();
-        if (!resumed) { toast(store.resumeBlockReason()); refreshStatus(); return; }
-        runLog.record(store, "UI_RESUME", "source=manual");
-        if (fullRelay) runLog.record(store, "RESUME_RECONCILE_STARTED", "source=manual");
-        if (startRelayService()) {
-            toast(fullRelay ? "두 대화방의 실제 상태를 확인해 오토런 중계를 재구성합니다."
-                    : "마지막으로 확인된 bootstrap 상태에서 관찰 전용으로 재개합니다.");
+        ResumePath path = resumePath(store.waitingForUser(), fullRelay);
+        boolean resumed = switch (path) {
+            case USER_ACTION_RESOLVED -> store.resolveUserAction();
+            case RECONCILE -> store.beginReconciliation();
+            case BOOTSTRAP -> store.resume();
+        };
+        if (!resumed) {
+            toast(path == ResumePath.USER_ACTION_RESOLVED
+                    ? store.userActionBlockReason() : store.resumeBlockReason());
+            refreshStatus();
+            return;
         }
-        refreshStatus();
-    }
-
-    private void resolveUserAction() {
-        warnNotifications();
-        if (!store.resolveUserAction()) { toast(store.userActionBlockReason()); return; }
-        runLog.record(store, "UI_USER_RESOLVED", "source=manual");
-        if (startRelayService()) toast("일반 Chat에 사용자 조치 재검증을 요청합니다.");
+        runLog.record(store, "UI_RESUME", "source=manual;path=" + path.name());
+        if (path == ResumePath.USER_ACTION_RESOLVED)
+            runLog.record(store, "UI_USER_RESOLVED", "source=resume");
+        if (path == ResumePath.RECONCILE)
+            runLog.record(store, "RESUME_RECONCILE_STARTED", "source=manual");
+        if (startRelayService()) {
+            toast(switch (path) {
+                case USER_ACTION_RESOLVED -> "사용자 조치 완료 신호를 일반 Chat에 보내 재검증부터 재개합니다.";
+                case RECONCILE -> "두 대화방의 실제 상태를 확인해 오토런 중계를 재구성합니다.";
+                case BOOTSTRAP -> "마지막으로 확인된 bootstrap 상태에서 관찰 전용으로 재개합니다.";
+            });
+        }
         refreshStatus();
     }
 
@@ -341,6 +372,38 @@ public final class OrchestrationActivity extends Activity {
 
     private static String connectionLabel(String url) {
         return url == null || url.isEmpty() ? "준비 전" : "연결됨 · " + url;
+    }
+
+    public static Intent newJobIntent(Context context) {
+        return new Intent(context, OrchestrationActivity.class).putExtra(EXTRA_NEW_JOB, true);
+    }
+
+    static boolean showsCurrentJobState(boolean newJobMode) { return !newJobMode; }
+
+    enum ResumePath { USER_ACTION_RESOLVED, RECONCILE, BOOTSTRAP }
+
+    static ResumePath resumePath(boolean waitingForUser, boolean fullRelay) {
+        if (waitingForUser) return ResumePath.USER_ACTION_RESOLVED;
+        return fullRelay ? ResumePath.RECONCILE : ResumePath.BOOTSTRAP;
+    }
+
+    static NewJobFormDefaults newJobFormDefaults(String defaultProjectUrl) {
+        return new NewJobFormDefaults(defaultProjectUrl == null ? "" : defaultProjectUrl,
+                "inherit", "inherit", "");
+    }
+
+    static final class NewJobFormDefaults {
+        final String projectUrl;
+        final String workModel;
+        final String reasoningEffort;
+        final String requirement;
+
+        NewJobFormDefaults(String projectUrl, String workModel, String reasoningEffort, String requirement) {
+            this.projectUrl = projectUrl;
+            this.workModel = workModel;
+            this.reasoningEffort = reasoningEffort;
+            this.requirement = requirement;
+        }
     }
 
     private void toast(String message) { Toast.makeText(this, message, Toast.LENGTH_LONG).show(); }
