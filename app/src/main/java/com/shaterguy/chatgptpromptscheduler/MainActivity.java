@@ -57,7 +57,7 @@ public final class MainActivity extends Activity {
         root.setPadding(Ui.dp(this, 18), Ui.dp(this, 12), Ui.dp(this, 18), Ui.dp(this, 24));
         scroll.addView(root);
         root.addView(Ui.title(this, "ChatGPT Prompt Scheduler"));
-        root.addView(Ui.body(this, "v0.1.15 · 화면을 열지 않고 예약 프롬프트를 실행하는 Android 앱"));
+        root.addView(Ui.body(this, "v0.1.16 · 화면을 열지 않고 예약 프롬프트를 실행하는 Android 앱"));
 
         root.addView(Ui.section(this, "선택 기능 · 오토런 중계"));
         root.addView(Ui.body(this, "예약 실행과 분리된 Protocol 3.x 중계입니다. 예약 작업이 항상 우선합니다."));
@@ -104,13 +104,14 @@ public final class MainActivity extends Activity {
         String delivery = relay.deliveryState();
         if (!relay.active() || relay.paused() || relay.terminal() || relay.waitingForUser()
                 || OrchestrationStore.DELIVERY_AMBIGUOUS.equals(delivery)
-                || OrchestrationStore.DELIVERY_FAILED.equals(delivery)
-                || !NotificationHelper.orchestrationAlertsEnabled(this)) return;
+                || OrchestrationStore.DELIVERY_FAILED.equals(delivery)) return;
         Intent service = new Intent(this, OrchestrationService.class).setAction(OrchestrationService.ACTION_RUN);
         try {
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(service); else startService(service);
+            new OrchestrationRunLog(this).record(relay, "APP_RECOVERY", "source=activity");
         } catch (RuntimeException ignored) {
             relay.fail("SERVICE_RECOVERY_FAILED", "앱 재실행 후 오토런 중계 서비스를 복구하지 못했습니다.");
+            new OrchestrationRunLog(this).record(relay, "APP_RECOVERY_FAILED", "source=activity");
             if (NotificationHelper.orchestrationAlertsEnabled(this)) {
                 NotificationHelper.orchestrationError(this, relay.monitoringSide(), relay.runJobId(),
                         relay.currentStep(), relay.currentRound(), "앱 재실행 후 중계 서비스를 복구하지 못했습니다.");
