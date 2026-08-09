@@ -1500,6 +1500,11 @@ public final class OrchestrationService extends Service implements AutomationRun
         return code;
     }
 
+    private static String safeDiagnosticValue(String value) {
+        if (value == null || !value.matches("[A-Za-z0-9_.-]{1,64}")) return "UNKNOWN";
+        return value;
+    }
+
     private static String fixedScriptMessage(String status) {
         return switch (status) {
             case "AUTH_REQUIRED" -> "ChatGPT 로그인 세션을 확인해야 합니다.";
@@ -1635,10 +1640,12 @@ public final class OrchestrationService extends Service implements AutomationRun
         if (currentReasoning.isEmpty() && "selected_option_readback".equals(reasoningEvidence))
             currentReasoning = requestedReasoning;
         log("WORK_PREFERENCES_VERIFIED", "mode.current=work");
-        log("WORK_MODEL_VERIFIED", "requested=" + safeCode(requestedModel)
-                + ";current=" + safeCode(currentModel) + ";readback=" + safeCode(modelEvidence));
-        log("WORK_REASONING_VERIFIED", "requested=" + safeCode(requestedReasoning)
-                + ";current=" + safeCode(currentReasoning) + ";readback=" + safeCode(reasoningEvidence));
+        log("WORK_MODEL_VERIFIED", "requested=" + safeDiagnosticValue(requestedModel)
+                + ";current=" + safeDiagnosticValue(currentModel)
+                + ";readback=" + safeDiagnosticValue(modelEvidence));
+        log("WORK_REASONING_VERIFIED", "requested=" + safeDiagnosticValue(requestedReasoning)
+                + ";current=" + safeDiagnosticValue(currentReasoning)
+                + ";readback=" + safeDiagnosticValue(reasoningEvidence));
     }
 
     private void log(String event, String detail) {

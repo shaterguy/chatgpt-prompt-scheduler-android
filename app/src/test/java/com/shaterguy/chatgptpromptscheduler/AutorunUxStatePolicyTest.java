@@ -62,6 +62,8 @@ public class AutorunUxStatePolicyTest {
         assertTrue(source.contains(";current="));
         assertTrue(source.contains(";readback="));
         assertTrue(source.contains("selected_option_readback"));
+        assertTrue(source.contains("safeDiagnosticValue(requestedModel)"));
+        assertTrue(source.contains("[A-Za-z0-9_.-]{1,64}"));
     }
 
     private static String method(String source, String startToken, String endToken) {
