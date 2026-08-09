@@ -150,9 +150,9 @@ public final class OrchestrationScript {
                 "if(!navigator.onLine)return out('NETWORK_ERROR','네트워크 연결이 끊어졌습니다.');" +
                 "if(visibleAuthGate())return out('AUTH_REQUIRED','명시적 로그인 화면이 표시되었습니다.');" +
                 "if(!document.querySelector('main'))return out('DOM_STRUCTURE_ERROR','ChatGPT 대화 영역을 찾지 못했습니다.');" +
-                "const expected=norm(" + expected + ");" +
+                "const expected=norm(" + expected + ");const marker=automationMarker(expected);" +
                 "const turns=[...document.querySelectorAll('article,[data-message-author-role]')].filter((e,i,a)=>!a.some((p,j)=>j<i&&p.contains(e)));" +
-                "let userIndex=-1;for(let i=0;i<turns.length;i++){const role=turns[i].getAttribute('data-message-author-role')||turns[i].getAttribute('data-turn')||turns[i].querySelector('[data-message-author-role]')?.getAttribute('data-message-author-role');if(role==='user'&&equiv(turns[i].innerText||turns[i].textContent,expected))userIndex=i;}" +
+                "let userIndex=-1;for(let i=0;i<turns.length;i++){const role=turns[i].getAttribute('data-message-author-role')||turns[i].getAttribute('data-turn')||turns[i].querySelector('[data-message-author-role]')?.getAttribute('data-message-author-role');const text=turns[i].innerText||turns[i].textContent;if(role==='user'&&(equiv(text,expected)||(marker&&norm(text).includes(marker))))userIndex=i;}" +
                 "if(userIndex<0)return out('USER_TURN_MISSING','전송 확인된 사용자 턴이 현재 DOM에 없습니다.',{assistant_present:false,streaming:false,stop_available:false});" +
                 "let assistant=null;for(let i=userIndex+1;i<turns.length;i++){const role=turns[i].getAttribute('data-message-author-role')||turns[i].getAttribute('data-turn')||turns[i].querySelector('[data-message-author-role]')?.getAttribute('data-message-author-role');if(role==='user')break;if(role==='assistant'){assistant=turns[i];break;}}" +
                 "if(!assistant)return out('RETRY','어시스턴트 응답 대기',{assistant_present:false,streaming:false,stop_available:false});" +
@@ -222,6 +222,7 @@ public final class OrchestrationScript {
     private static String common() {
         return "const norm=s=>String(s??'').replace(/[\\u200B-\\u200D\\uFEFF]/g,'').replace(/\\u00a0/g,' ').replace(/\\r\\n?/g,'\\n').trim();" +
                 "const equiv=(a,b)=>norm(a).replace(/\\s+/g,' ')===norm(b).replace(/\\s+/g,' ');" +
+                "const automationMarker=s=>{const m=norm(s).match(/\\[(?:AUTOMATION_BOOTSTRAP|AUTOMATION_START|AUTOMATION_WORK_STEP|AUTOMATION_CHAT_REVIEW|AUTOMATION_CONTINUE_SAME|AUTOMATION_USER_RESOLVED)[^\\]]+\\]/g);return m?.[m.length-1]||'';};" +
                 "const out=(status,detail='',data={})=>JSON.stringify({status,detail,...data});" +
                 "const visible=e=>{if(!e||!e.isConnected)return false;const r=e.getBoundingClientRect();const s=getComputedStyle(e);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden';};" +
                 "const authLabel=e=>norm(e?.innerText||e?.textContent||e?.value||e?.getAttribute('aria-label')||'').toLowerCase();" +
