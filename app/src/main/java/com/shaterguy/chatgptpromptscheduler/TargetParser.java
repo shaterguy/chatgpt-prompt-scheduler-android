@@ -62,6 +62,24 @@ public final class TargetParser {
         return expectedConversation != null && expectedConversation.equals(actualConversation);
     }
 
+    /** Accepts only the configured project and any conversation created inside that project. */
+    public static boolean matchesProjectIdentity(String expectedProjectUrl, String actualUrl) {
+        if (!isSupported(expectedProjectUrl) || !isSupported(actualUrl)) return false;
+        String expectedProject = projectId(expectedProjectUrl);
+        String actualProject = projectId(actualUrl);
+        return expectedProject != null && expectedProject.equals(actualProject);
+    }
+
+    public static boolean isProjectHome(String url) {
+        if (!isSupported(url) || projectId(url) == null || conversationId(url) != null) return false;
+        String path = URI.create(url).getPath();
+        return path != null && path.matches("/g/[^/]+/?");
+    }
+
+    public static boolean isProjectConversation(String projectUrl, String conversationUrl) {
+        return matchesProjectIdentity(projectUrl, conversationUrl) && conversationId(conversationUrl) != null;
+    }
+
     public static String mismatchDetail(String targetType, String expectedUrl, String actualUrl) {
         return "type=" + targetType + " expected=" + expectedUrl + " actual=" + (actualUrl == null ? "" : actualUrl);
     }
