@@ -72,7 +72,10 @@ public final class OrchestrationActivity extends Activity {
         runLog = new OrchestrationRunLog(this);
         newJobMode = getIntent().getBooleanExtra(EXTRA_NEW_JOB, false);
         viewedJobId = cleanJobId(getIntent().getStringExtra(EXTRA_JOB_ID));
-        if (isArchivedJob(viewedJobId, store.runJobId())) {
+        if (!newJobMode && viewedJobId.isEmpty() && historyStore.isHidden(store.runJobId())) {
+            viewedJobId = store.runJobId();
+            missingJob = true;
+        } else if (isArchivedJob(viewedJobId, store.runJobId())) {
             archivedJob = historyStore.get(viewedJobId);
             missingJob = archivedJob == null;
         }
@@ -82,6 +85,14 @@ public final class OrchestrationActivity extends Activity {
         createViews();
         restoredState = null;
         if (isLiveJobMode()) refreshStatus();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        refreshHandler.removeCallbacks(refreshRunnable);
+        setIntent(intent);
+        recreate();
     }
 
     @Override

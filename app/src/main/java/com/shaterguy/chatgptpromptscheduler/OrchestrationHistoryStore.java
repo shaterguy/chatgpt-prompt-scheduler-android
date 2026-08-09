@@ -59,6 +59,10 @@ public final class OrchestrationHistoryStore {
         }
     }
 
+    public synchronized boolean isHidden(String jobId) {
+        return jobId != null && !jobId.isEmpty() && hiddenJobIds().contains(jobId);
+    }
+
     public boolean hasWorkspace(String jobId) { return new OrchestrationStore(context).hasWorkspace(context, jobId); }
 
     public boolean restoreWorkspace(String jobId, OrchestrationStore target) {

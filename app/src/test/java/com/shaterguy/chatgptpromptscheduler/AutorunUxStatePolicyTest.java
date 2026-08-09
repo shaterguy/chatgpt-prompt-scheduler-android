@@ -51,6 +51,10 @@ public class AutorunUxStatePolicyTest {
         assertTrue(source.contains("private boolean isLiveJobMode() { return !newJobMode && archivedJob == null && !missingJob; }"));
         assertTrue(source.contains("중지하면 이 Job은 앱에서 다시 재개할 수 없습니다"));
         assertTrue(source.contains("현재 Job의 상태는 대신 표시하지 않습니다"));
+        assertTrue(source.contains("historyStore.isHidden(store.runJobId())"));
+        assertTrue(source.contains("protected void onNewIntent(Intent intent)"));
+        assertTrue(source.contains("setIntent(intent)"));
+        assertTrue(source.contains("Build.VERSION_CODES.R"));
     }
 
     @Test
