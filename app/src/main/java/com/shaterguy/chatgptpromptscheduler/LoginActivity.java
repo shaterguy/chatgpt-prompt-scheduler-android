@@ -1,6 +1,8 @@
 package com.shaterguy.chatgptpromptscheduler;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.os.Build;
 import android.os.Bundle;
 import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
@@ -8,9 +10,12 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.LinearLayout;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
 
 public final class LoginActivity extends Activity {
     private WebView webView;
+    private OnBackInvokedCallback backCallback;
 
     @Override
     @SuppressWarnings("SetJavaScriptEnabled")
@@ -36,15 +41,29 @@ public final class LoginActivity extends Activity {
         root.addView(webView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
         Ui.setContent(this, root);
         webView.loadUrl("https://chatgpt.com/");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            backCallback = this::navigateBack;
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback);
+        }
     }
 
     @Override
+    @SuppressLint("GestureBackNavigation")
     public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) webView.goBack(); else super.onBackPressed();
+        navigateBack();
+    }
+
+    private void navigateBack() {
+        if (webView != null && webView.canGoBack()) webView.goBack(); else finish();
     }
 
     @Override
     protected void onDestroy() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && backCallback != null) {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
+            backCallback = null;
+        }
         if (webView != null) {
             CookieManager.getInstance().flush();
             webView.stopLoading();

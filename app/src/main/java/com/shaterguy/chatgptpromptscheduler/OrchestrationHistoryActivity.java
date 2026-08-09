@@ -103,14 +103,11 @@ public final class OrchestrationHistoryActivity extends Activity {
                     + " · " + job.optString("error")));
         }
 
-        LinearLayout actions = isCurrent
-                ? Ui.actionGrid(this,
-                    Ui.button(this, "현재 작업 열기", v -> startActivity(new Intent(this, OrchestrationActivity.class))),
-                    Ui.button(this, "실행 로그", v -> openLogs(jobId, OrchestrationLogsActivity.KIND_EXECUTION)),
-                    Ui.button(this, "디버그 로그", v -> openLogs(jobId, OrchestrationLogsActivity.KIND_DEBUG)))
-                : Ui.actionGrid(this,
-                    Ui.button(this, "실행 로그", v -> openLogs(jobId, OrchestrationLogsActivity.KIND_EXECUTION)),
-                    Ui.button(this, "디버그 로그", v -> openLogs(jobId, OrchestrationLogsActivity.KIND_DEBUG)));
+        LinearLayout actions = Ui.actionGrid(this,
+                Ui.button(this, isCurrent ? "현재 작업 열기" : "작업 열기",
+                        v -> startActivity(OrchestrationActivity.jobIntent(this, jobId))),
+                Ui.button(this, "실행 로그", v -> openLogs(jobId, OrchestrationLogsActivity.KIND_EXECUTION)),
+                Ui.button(this, "디버그 로그", v -> openLogs(jobId, OrchestrationLogsActivity.KIND_DEBUG)));
         card.addView(actions);
         return card;
     }

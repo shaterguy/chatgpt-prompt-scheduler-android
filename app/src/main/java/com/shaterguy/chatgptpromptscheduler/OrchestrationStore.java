@@ -6,6 +6,7 @@ import android.content.SharedPreferences;
 import java.net.URI;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -64,6 +65,10 @@ public final class OrchestrationStore {
 
     private static final int SCHEMA_VERSION = 6;
     private static final String PREFS = "orchestration_protocol_3";
+    private static final String WORKSPACE_PREFS_PREFIX = "orchestration_workspace_";
+    private static final Set<String> GLOBAL_KEYS = Set.of(
+            "defaultProjectUrl", "defaultWorkModel", "defaultReasoningEffort",
+            "requirementDraft", "usedJobIds");
     private static final Pattern JOB_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,63}");
     private final SharedPreferences preferences;
 
@@ -89,6 +94,62 @@ public final class OrchestrationStore {
     /** The new-Job screen deliberately persists only its reusable project address. */
     public void saveAutomaticProjectDefault(String projectUrl) {
         commit(preferences.edit().putString("defaultProjectUrl", clean(projectUrl)));
+    }
+
+    /** Saves the complete active Job state without copying mutable app-wide defaults. */
+    public boolean saveWorkspace(Context context) {
+        String jobId = runJobId();
+        if (!JOB_ID.matcher(jobId).matches()) return false;
+        SharedPreferences target = context.getSharedPreferences(WORKSPACE_PREFS_PREFIX + jobId,
+                Context.MODE_PRIVATE);
+        SharedPreferences.Editor editor = target.edit().clear();
+        for (Map.Entry<String, ?> entry : preferences.getAll().entrySet()) {
+            if (!GLOBAL_KEYS.contains(entry.getKey())) putPreference(editor, entry.getKey(), entry.getValue());
+        }
+        return editor.commit();
+    }
+
+    public boolean hasWorkspace(Context context, String jobId) {
+        if (!JOB_ID.matcher(clean(jobId)).matches()) return false;
+        SharedPreferences source = context.getSharedPreferences(WORKSPACE_PREFS_PREFIX + clean(jobId),
+                Context.MODE_PRIVATE);
+        return clean(jobId).equals(source.getString("runJobId", ""));
+    }
+
+    /** Restores one inactive Job as the sole relay workspace while preserving global defaults. */
+    public boolean restoreWorkspace(Context context, String jobId) {
+        String requested = clean(jobId);
+        if (!hasWorkspace(context, requested)) return false;
+        SharedPreferences source = context.getSharedPreferences(WORKSPACE_PREFS_PREFIX + requested,
+                Context.MODE_PRIVATE);
+        String flow = source.getString("flowMode", FLOW_LEGACY_MANUAL);
+        String project = source.getString("runProjectUrl", "");
+        String chat = source.getString("runChatUrl", "");
+        String work = source.getString("runWorkUrl", "");
+        if (FLOW_AUTO_BOOTSTRAP.equals(flow)) {
+            if (!TargetParser.isProjectHome(project)) return false;
+            if (!chat.isEmpty() && !TargetParser.isProjectConversation(project, chat)) return false;
+            if (!work.isEmpty() && !TargetParser.isProjectConversation(project, work)) return false;
+            if (!chat.isEmpty() && !work.isEmpty()
+                    && TargetParser.conversationId(chat).equals(TargetParser.conversationId(work))) return false;
+        } else if ((!chat.isEmpty() || !work.isEmpty()) && !configError(chat, work, requested).isEmpty()) {
+            return false;
+        }
+        SharedPreferences.Editor editor = preferences.edit();
+        for (String key : preferences.getAll().keySet()) if (!GLOBAL_KEYS.contains(key)) editor.remove(key);
+        for (Map.Entry<String, ?> entry : source.getAll().entrySet())
+            putPreference(editor, entry.getKey(), entry.getValue());
+        return editor.commit();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void putPreference(SharedPreferences.Editor editor, String key, Object value) {
+        if (value instanceof String string) editor.putString(key, string);
+        else if (value instanceof Boolean bool) editor.putBoolean(key, bool);
+        else if (value instanceof Integer integer) editor.putInt(key, integer);
+        else if (value instanceof Long number) editor.putLong(key, number);
+        else if (value instanceof Float number) editor.putFloat(key, number);
+        else if (value instanceof Set<?>) editor.putStringSet(key, new HashSet<>((Set<String>) value));
     }
 
     public static String automaticConfigError(String projectUrl, String requirement) {
