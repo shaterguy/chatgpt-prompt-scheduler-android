@@ -1,0 +1,101 @@
+name: Apply verified publication packet v3
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publication-recovery-v3-ar-20260808-215800-ryfx
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: github.head_ref == 'automation/ar-20260808-215800-ryfx'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          ref: automation/ar-20260808-215800-ryfx
+
+      - name: Reconstruct and verify publication packet
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/publication-candidate
+          mkdir -p /tmp/publication-candidate
+          python3 - <<'PY'
+          import base64, hashlib, io, json, pathlib, zipfile
+          repo = pathlib.Path('.').resolve()
+          recovery = repo / '.publication-recovery'
+          out = pathlib.Path('/tmp/publication-candidate')
+          manifest = json.loads((recovery / 'manifest.json').read_text(encoding='utf-8'))
+          ordered = ['chunk-00.txt','chunk-01.txt','chunk-02.txt'] + [f'exact-tail-{i:02d}.txt' for i in range(15)]
+          encoded = ''.join((recovery / name).read_text(encoding='ascii').strip() for name in ordered)
+          packet = base64.b64decode(encoded, validate=True)
+          actual_packet_sha = hashlib.sha256(packet).hexdigest()
+          if actual_packet_sha != '81cd68b4826da934a58b3379109d2e0ae30cbeebaba84d326a571c1f1508b441':
+              raise SystemExit(f'packet sha mismatch: {actual_packet_sha}')
+          if actual_packet_sha != manifest['packet_sha256']:
+              raise SystemExit('manifest packet sha mismatch')
+          expected = {item['path']: item for item in manifest['changed_files']}
+          if len(expected) != 22 or len(expected) != manifest['packet_member_count']:
+              raise SystemExit('manifest member count mismatch')
+          with zipfile.ZipFile(io.BytesIO(packet)) as zf:
+              names = [n for n in zf.namelist() if not n.endswith('/')]
+              if set(names) != set(expected):
+                  raise SystemExit('packet member mismatch')
+              for name in names:
+                  path = pathlib.PurePosixPath(name)
+                  if path.is_absolute() or '..' in path.parts:
+                      raise SystemExit(f'unsafe path: {name}')
+                  data = zf.read(name)
+                  digest = hashlib.sha256(data).hexdigest()
+                  if digest != expected[name]['sha256']:
+                      raise SystemExit(f'file sha mismatch: {name}')
+                  target = out / path
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_bytes(data)
+          (out / '.verified-manifest.json').write_text(json.dumps(manifest), encoding='utf-8')
+          print('PACKET_SHA_OK', actual_packet_sha)
+          print('FILES_OK', len(expected))
+          PY
+
+      - name: Build clean candidate commit from remote base
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='21fdbae2856b1f4a36a492258103c8f63686e2e9'
+          FINAL_BRANCH='automation/ar-20260808-215800-ryfx-final'
+          git checkout --detach "$BASE"
+          python3 - <<'PY'
+          import hashlib, json, pathlib, shutil
+          repo = pathlib.Path('.').resolve()
+          src = pathlib.Path('/tmp/publication-candidate')
+          manifest = json.loads((src / '.verified-manifest.json').read_text(encoding='utf-8'))
+          expected = []
+          for item in manifest['changed_files']:
+              name = item['path']
+              expected.append(name)
+              source = src / name
+              target = repo / name
+              target.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copyfile(source, target)
+              if hashlib.sha256(target.read_bytes()).hexdigest() != item['sha256']:
+                  raise SystemExit(f'post-copy sha mismatch: {name}')
+          pathlib.Path('/tmp/expected-paths.txt').write_text('\n'.join(sorted(expected)) + '\n', encoding='utf-8')
+          PY
+          git add -A
+          git diff --check --cached
+          git diff --cached --name-only | sort > /tmp/staged-paths.txt
+          diff -u /tmp/expected-paths.txt /tmp/staged-paths.txt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Publish v0.1.16 verified release candidate'
+          git push origin "HEAD:refs/heads/$FINAL_BRANCH"
+          echo "FINAL_REMOTE_SHA=$(git rev-parse HEAD)"
