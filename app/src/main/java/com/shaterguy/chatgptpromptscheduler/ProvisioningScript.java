@@ -48,7 +48,12 @@ public final class ProvisioningScript {
         String project = AutomationScript.jsQuote(TargetParser.projectId(projectUrl));
         return "(() => {" + base(expected, project)
                 + "if(actualConversation&&promptAlreadyPresent)return result('CONFIRMED','첫 요청과 대화 URL 확인',{...routeDiagnostics,conversationId:actualConversation});"
-                + "if(actualConversation&&!promptAlreadyPresent)return result('WRONG_CONVERSATION','요청과 일치하지 않는 프로젝트 대화입니다.',routeDiagnostics);"
+                // ChatGPT can replace the project-home route with the new conversation URL before
+                // the submitted user turn is mounted in the DOM.  Treat that short window as an
+                // unconfirmed submission: the service waits up to its ambiguity deadline and never
+                // clicks Send again.  A stable mismatch therefore pauses fail-closed instead of
+                // falsely reporting that the app opened an existing conversation.
+                + "if(actualConversation&&!promptAlreadyPresent)return result('RETRY','대화 URL 생성 후 첫 요청 DOM 확인 대기',routeDiagnostics);"
                 + "return result('RETRY','생성된 대화와 첫 요청 확인 대기',routeDiagnostics);"
                 + "})()";
     }

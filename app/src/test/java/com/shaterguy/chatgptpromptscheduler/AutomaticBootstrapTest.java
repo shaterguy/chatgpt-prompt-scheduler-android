@@ -50,5 +50,7 @@ public final class AutomaticBootstrapTest {
         assertTrue(prepared.contains("desiredEffort=\"ultra\""));
         assertTrue(prepared.contains("main form [contenteditable=\"true\"][data-lexical-editor=\"true\"]"));
         assertFalse(prepared.contains("','[contenteditable=\"true\"][data-lexical-editor=\"true\"]'"));
+        assertTrue(observed.contains("대화 URL 생성 후 첫 요청 DOM 확인 대기"));
+        assertFalse(observed.contains("WRONG_CONVERSATION"));
     }
 }
