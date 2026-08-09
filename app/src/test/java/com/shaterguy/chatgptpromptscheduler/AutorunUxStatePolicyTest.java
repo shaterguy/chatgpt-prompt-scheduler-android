@@ -59,8 +59,11 @@ public class AutorunUxStatePolicyTest {
         assertTrue(source.contains("WORK_PREFERENCES_VERIFIED"));
         assertTrue(source.contains("model.requested="));
         assertTrue(source.contains("model.current="));
+        assertTrue(source.contains("model.evidence="));
         assertTrue(source.contains("reasoning.requested="));
         assertTrue(source.contains("reasoning.current="));
+        assertTrue(source.contains("reasoning.evidence="));
+        assertTrue(source.contains("selected_option_readback"));
     }
 
     private static String method(String source, String startToken, String endToken) {

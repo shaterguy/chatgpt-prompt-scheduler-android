@@ -296,7 +296,7 @@ public final class OrchestrationStore {
     public static String bootstrapPrompt(String jobId, String projectId, String requirement) {
         String request = requirement == null ? "" : requirement.trim();
         if (!request.startsWith("(오토런)")) request = "(오토런)\n" + request;
-        return request + "\n\n[AUTOMATION_BOOTSTRAP 3.3.0 " + clean(jobId) + "]\n"
+        return request + "\n\n[AUTOMATION_BOOTSTRAP 3.3.2 " + clean(jobId) + "]\n"
                 + "app_created=true\nproject_id=" + clean(projectId)
                 + "\nprovisioning_owner=android_app\nmanual_identifiers_required=false";
     }

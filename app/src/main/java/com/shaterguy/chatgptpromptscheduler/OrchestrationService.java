@@ -236,7 +236,7 @@ public final class OrchestrationService extends Service implements AutomationRun
             settings.setAllowUniversalAccessFromFileURLs(false);
             settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
             String userAgent = settings.getUserAgentString();
-            settings.setUserAgentString(userAgent + " ChatGPTPromptScheduler/0.1.19 Orchestration/3.3.0");
+            settings.setUserAgentString(userAgent + " ChatGPTPromptScheduler/0.1.21 Orchestration/3.3.2");
             CookieManager.getInstance().setAcceptCookie(true);
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false);
             webView.setWebViewClient(new WebViewClient() {
@@ -1624,10 +1624,22 @@ public final class OrchestrationService extends Service implements AutomationRun
                 : model == null ? "" : model.optString("current", "");
         String currentReasoning = "inherit".equals(requestedReasoning) ? "inherit"
                 : reasoning == null ? "" : reasoning.optString("current", "");
+        String modelEvidence = "inherit".equals(requestedModel) ? "inherit"
+                : model != null && !currentModel.isEmpty() ? "trigger_readback"
+                : model != null && model.optBoolean("ready", false) ? "selected_option_readback" : "";
+        String reasoningEvidence = "inherit".equals(requestedReasoning) ? "inherit"
+                : reasoning != null && !currentReasoning.isEmpty() ? "trigger_readback"
+                : reasoning != null && reasoning.optBoolean("ready", false) ? "selected_option_readback" : "";
+        if (currentModel.isEmpty() && "selected_option_readback".equals(modelEvidence))
+            currentModel = requestedModel;
+        if (currentReasoning.isEmpty() && "selected_option_readback".equals(reasoningEvidence))
+            currentReasoning = requestedReasoning;
         log("WORK_PREFERENCES_VERIFIED", "mode.current=work;model.requested="
                 + safeCode(requestedModel) + ";model.current=" + safeCode(currentModel)
+                + ";model.evidence=" + safeCode(modelEvidence)
                 + ";reasoning.requested=" + safeCode(requestedReasoning)
-                + ";reasoning.current=" + safeCode(currentReasoning));
+                + ";reasoning.current=" + safeCode(currentReasoning)
+                + ";reasoning.evidence=" + safeCode(reasoningEvidence));
     }
 
     private void log(String event, String detail) {

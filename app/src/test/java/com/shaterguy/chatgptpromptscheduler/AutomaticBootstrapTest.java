@@ -31,7 +31,7 @@ public final class AutomaticBootstrapTest {
         String prompt = OrchestrationStore.bootstrapPrompt("AR-20260809-010203-ABC234", "project-one",
                 "(오토런)\n기능을 구현한다.");
         assertTrue(prompt.startsWith("(오토런)"));
-        assertTrue(prompt.contains("[AUTOMATION_BOOTSTRAP 3.3.0 AR-20260809-010203-ABC234]"));
+        assertTrue(prompt.contains("[AUTOMATION_BOOTSTRAP 3.3.2 AR-20260809-010203-ABC234]"));
         assertTrue(prompt.contains("provisioning_owner=android_app"));
         assertTrue(prompt.contains("manual_identifiers_required=false"));
     }
