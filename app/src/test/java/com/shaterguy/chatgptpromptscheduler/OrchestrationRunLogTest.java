@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public final class OrchestrationRunLogTest {
@@ -59,10 +60,36 @@ public final class OrchestrationRunLogTest {
                 log.record("AR-TEST", "S001", "R001", "POLL_EVALUATE", "CHAT",
                         "WAITING_RESPONSE", "RUNNING", "count=" + i + ";tier=3");
             }
-            File[] files = directory.listFiles((dir, name) -> name.endsWith(".jsonl"));
+            File[] files = directory.listFiles((dir, name) -> name.startsWith("orchestration-") && name.endsWith(".jsonl"));
             assertTrue(files != null && files.length <= OrchestrationRunLog.MAX_FILES);
             for (File file : files) assertTrue(file.length() <= OrchestrationRunLog.MAX_FILE_BYTES);
             assertTrue(log.readRecentLines(10).size() == 10);
+        } finally {
+            File[] files = directory.listFiles();
+            if (files != null) for (File file : files) file.delete();
+            directory.delete();
+        }
+    }
+
+    @Test
+    public void perJobExecutionAndDebugLogsStaySeparated() throws Exception {
+        File directory = Files.createTempDirectory("orchestration-job-log-test").toFile();
+        try {
+            OrchestrationRunLog log = new OrchestrationRunLog(directory);
+            log.record("AR-A", "S001", "R001", "POLL_EVALUATE", "CHAT",
+                    "WAITING_RESPONSE", "RUNNING", "count=1;tier=0");
+            log.record("AR-A", "S001", "R001", "SIGNAL_ACCEPTED", "CHAT",
+                    "WAITING_RESPONSE", "RUNNING", "type=SEND_WORK");
+            log.record("AR-B", "S002", "R001", "FAILED", "WORK",
+                    "FAILED", "PAUSED", "code=NETWORK_ERROR");
+
+            assertEquals(2, log.readJobLines("AR-A", 20).size());
+            assertEquals(1, log.readJobLines("AR-B", 20).size());
+            List<String> execution = log.readExecutionLines("AR-A", 20);
+            assertEquals(1, execution.size());
+            assertTrue(execution.get(0).contains("제어 신호 수신"));
+            assertFalse(execution.get(0).contains("POLL_EVALUATE"));
+            assertTrue(log.exportJob("AR-A").contains("POLL_EVALUATE"));
         } finally {
             File[] files = directory.listFiles();
             if (files != null) for (File file : files) file.delete();

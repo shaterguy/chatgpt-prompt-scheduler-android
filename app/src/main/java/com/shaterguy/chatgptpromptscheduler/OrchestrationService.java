@@ -978,6 +978,11 @@ public final class OrchestrationService extends Service implements AutomationRun
     private void handlePrepare(JSONObject result) {
         String status = result.optString("status", "SCRIPT_RESULT_INVALID");
         logScriptResult("PREPARE_RESULT", status);
+        if ("DRAFT_PRESENT".equals(status)) {
+            String fingerprint = result.optString("draft_fingerprint", "").replaceAll("[^a-f0-9]", "");
+            log("DRAFT_COLLISION", "length=" + Math.max(0, result.optInt("draft_length", 0))
+                    + ";fingerprint=" + fingerprint);
+        }
         switch (status) {
             case "READY" -> {
                 if (store.initialStartPending()) {
