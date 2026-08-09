@@ -72,6 +72,10 @@ public final class Ui {
     public static LinearLayout actionGrid(Context context, View... actions) {
         LinearLayout grid = new LinearLayout(context);
         grid.setOrientation(LinearLayout.VERTICAL);
+        // An explicit wrap-content height prevents a trailing filler cell from consuming the
+        // ScrollView viewport and pushing short log/status content below the visible area.
+        grid.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
         int columns = isTablet(context) ? 4 : 2;
         for (int index = 0; index < actions.length; index += columns) {
             LinearLayout row = row(context);
