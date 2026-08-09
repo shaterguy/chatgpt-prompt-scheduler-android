@@ -53,6 +53,16 @@ public class AutorunUxStatePolicyTest {
         assertTrue(source.contains("현재 Job의 상태는 대신 표시하지 않습니다"));
     }
 
+    @Test
+    public void verifiedWorkPreferencesLeaveRequestedAndActualDebugEvidence() throws Exception {
+        String source = source("OrchestrationService.java");
+        assertTrue(source.contains("WORK_PREFERENCES_VERIFIED"));
+        assertTrue(source.contains("model.requested="));
+        assertTrue(source.contains("model.current="));
+        assertTrue(source.contains("reasoning.requested="));
+        assertTrue(source.contains("reasoning.current="));
+    }
+
     private static String method(String source, String startToken, String endToken) {
         int start = source.indexOf(startToken);
         int end = source.indexOf(endToken, start + startToken.length());

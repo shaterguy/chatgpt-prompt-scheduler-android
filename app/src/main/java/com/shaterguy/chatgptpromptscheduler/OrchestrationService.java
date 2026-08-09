@@ -522,7 +522,10 @@ public final class OrchestrationService extends Service implements AutomationRun
                 return;
             }
             if ("READY".equals(status)) {
-                if (OrchestrationStore.SIDE_WORK.equals(side)) store.markWorkPreferencesVerified();
+                if (OrchestrationStore.SIDE_WORK.equals(side)) {
+                    store.markWorkPreferencesVerified();
+                    logWorkPreferencesVerified(result);
+                }
                 commitAuthorized = true;
                 provisioningRecoveryStartedAt = 0L;
                 scheduleStep(0L);
@@ -1609,6 +1612,22 @@ public final class OrchestrationService extends Service implements AutomationRun
 
     private void logStateTransition(String previous) {
         log("STATE_TRANSITION", "from=" + safeCode(previous) + ";to=" + safeCode(store.deliveryState()));
+    }
+
+    private void logWorkPreferencesVerified(JSONObject result) {
+        JSONObject diagnostics = result == null ? null : result.optJSONObject("diagnostics");
+        JSONObject model = diagnostics == null ? null : diagnostics.optJSONObject("model");
+        JSONObject reasoning = diagnostics == null ? null : diagnostics.optJSONObject("reasoning");
+        String requestedModel = store.runWorkModel();
+        String requestedReasoning = store.runReasoningEffort();
+        String currentModel = "inherit".equals(requestedModel) ? "inherit"
+                : model == null ? "" : model.optString("current", "");
+        String currentReasoning = "inherit".equals(requestedReasoning) ? "inherit"
+                : reasoning == null ? "" : reasoning.optString("current", "");
+        log("WORK_PREFERENCES_VERIFIED", "mode.current=work;model.requested="
+                + safeCode(requestedModel) + ";model.current=" + safeCode(currentModel)
+                + ";reasoning.requested=" + safeCode(requestedReasoning)
+                + ";reasoning.current=" + safeCode(currentReasoning));
     }
 
     private void log(String event, String detail) {

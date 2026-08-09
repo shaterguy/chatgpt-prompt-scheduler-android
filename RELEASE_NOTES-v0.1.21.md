@@ -12,6 +12,7 @@
 - 다른 Job이 실행 중일 때 새 Job 시작 또는 과거 Job 재개를 시도하면 자동 전환하지 않고 현재 Job ID와 `현재 작업 열기`를 제공합니다. 사용자가 현재 Job을 직접 일시정지·중지한 뒤 진행합니다.
 - 기존 Job의 전체 workspace 저장이 실패하면 새 Job으로 덮어쓰지 않습니다. 잘못 입력한 프로젝트 주소는 마지막 유효 기본 프로젝트를 덮어쓰지 않고, 사라진 Job 딥링크는 현재 Job을 대신 표시하지 않습니다.
 - 작업 카드는 최근 수행 항목 4개만 간결하게 표시하되 완료 이력을 자동 폐기하지 않습니다. 상세 화면은 per-Job workspace에서 최대 200,000자의 원본 요구사항을 읽습니다.
+- Work 설정 검증 성공 시 요청 모델/추론과 실제 UI readback 값을 `WORK_PREFERENCES_VERIFIED` Job별 디버그 로그로 남깁니다.
 - 상태·화면 이동·프로세스 재시작·오류·예약 선점 조합을 `docs/AUTORUN_UX_SCENARIO_MATRIX.md`로 고정하고 자동 정책 테스트를 추가했습니다.
 - 기존 예약 실행 우선권, AlarmEngine, QueueStore, ExecutionService, 예약 데이터와 알림 경로는 변경하지 않았습니다.
 
