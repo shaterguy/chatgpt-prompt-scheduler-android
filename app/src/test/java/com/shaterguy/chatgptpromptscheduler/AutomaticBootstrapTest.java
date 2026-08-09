@@ -48,5 +48,7 @@ public final class AutomaticBootstrapTest {
         assertFalse(observed.contains("send.click()"));
         assertTrue(prepared.contains("desiredModel=\"sol\""));
         assertTrue(prepared.contains("desiredEffort=\"ultra\""));
+        assertTrue(prepared.contains("main form [contenteditable=\"true\"][data-lexical-editor=\"true\"]"));
+        assertFalse(prepared.contains("','[contenteditable=\"true\"][data-lexical-editor=\"true\"]'"));
     }
 }

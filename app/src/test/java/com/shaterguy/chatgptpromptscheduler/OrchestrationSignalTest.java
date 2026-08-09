@@ -185,9 +185,15 @@ public class OrchestrationSignalTest {
         assertTrue(prepare.contains("validHost"));
         assertTrue(prepare.contains("ALREADY_SUBMITTED"));
         assertTrue(prepare.contains("DRAFT_PRESENT"));
+        assertTrue(prepare.contains("draft_length"));
+        assertTrue(prepare.contains("const equiv=(a,b)=>"));
+        assertTrue(prepare.contains("actual&&!equiv(actual,expected)"));
+        assertTrue(prepare.contains("main form [contenteditable=\"true\"][data-lexical-editor=\"true\"]"));
+        assertFalse(prepare.contains("','[contenteditable=\"true\"][data-lexical-editor=\"true\"]'"));
         assertTrue(prepare.contains("READY"));
         assertFalse(prepare.contains("send.click()"));
         assertTrue(commit.contains("send.click()"));
+        assertTrue(commit.contains("!equiv(actual,expected)"));
         assertTrue(commit.contains("composer.closest('form')"));
         assertTrue(recovery.contains("RECOVERY_ABSENT"));
         assertFalse(confirmation.contains("send.click()"));

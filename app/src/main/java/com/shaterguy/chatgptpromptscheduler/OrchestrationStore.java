@@ -147,6 +147,7 @@ public final class OrchestrationStore {
                 .putLong("deliveryAttemptAt", 0L).putLong("lastDeliveryAt", 0L)
                 .putString("runChatUrl", chatUrl()).putString("runWorkUrl", workUrl())
                 .putString("runJobId", jobId()).putString("lastStartedJobId", jobId())
+                .putLong("runCreatedAt", now)
                 .putStringSet("usedJobIds", usedJobIds).putString("lastSignalSource", "")
                 .putString("lastAcceptedSignal", "").putLong("lastSignalAt", 0L)
                 .putString("currentStep", "").putString("currentRound", "")
@@ -188,7 +189,8 @@ public final class OrchestrationStore {
                 .putString("runRequirement", requirement).putString("runWorkModel", model)
                 .putString("runReasoningEffort", reasoning).putString("runChatUrl", "")
                 .putString("runChatConversationId", "").putString("runWorkUrl", "")
-                .putString("runWorkConversationId", "").putString("monitoringSide", SIDE_CHAT)
+                .putString("runWorkConversationId", "").putLong("runCreatedAt", now)
+                .putString("monitoringSide", SIDE_CHAT)
                 .putString("deliveryTarget", SIDE_CHAT).putString("deliveryState", DELIVERY_PENDING)
                 .putString("pendingPrompt", bootstrapPrompt).putString("stampedPrompt", bootstrapPrompt)
                 .putBoolean("initialStartPending", false).putInt("initialStartBaselineCount", 0)
@@ -782,6 +784,7 @@ public final class OrchestrationStore {
     public String runReasoningEffort() { return preferences.getString("runReasoningEffort", "inherit"); }
     public String runChatConversationId() { return preferences.getString("runChatConversationId", ""); }
     public String runWorkConversationId() { return preferences.getString("runWorkConversationId", ""); }
+    public long runCreatedAt() { return preferences.getLong("runCreatedAt", 0L); }
     public boolean automaticBootstrap() { return FLOW_AUTO_BOOTSTRAP.equals(flowMode()); }
     public boolean bootstrapProvisioning() {
         if (!automaticBootstrap()) return false;

@@ -90,6 +90,7 @@ public final class OrchestrationActivity extends Activity {
         suppressCredentialCapture(root);
         root.setPadding(Ui.dp(this, 18), Ui.dp(this, 12), Ui.dp(this, 18), Ui.dp(this, 24));
         root.addView(Ui.title(this, "오토런 · Protocol 3.3"));
+        root.addView(Ui.button(this, "작업 목록", v -> finish()));
         root.addView(Ui.body(this, "확정된 요구사항만 붙여넣으면 Job과 프로젝트의 일반 Chat/Work 대화를 앱이 자동으로 준비합니다. 예약 실행은 항상 우선합니다."));
 
         root.addView(Ui.section(this, "새 Job 설정"));
@@ -141,7 +142,8 @@ public final class OrchestrationActivity extends Activity {
                 Ui.button(this, "일시정지", v -> pauseRelay()),
                 Ui.button(this, "중지", v -> stopRelay()),
                 resolvedButton,
-                Ui.button(this, "실행 로그", v -> startActivity(new Intent(this, OrchestrationLogsActivity.class)))));
+                Ui.button(this, "실행 로그", v -> openLogs(OrchestrationLogsActivity.KIND_EXECUTION)),
+                Ui.button(this, "디버그 로그", v -> openLogs(OrchestrationLogsActivity.KIND_DEBUG))));
         root.addView(Ui.body(this, "‘처리 완료’는 성공 확정이 아닙니다. 일반 Chat에 재검증을 요청하고 검증 응답을 다시 감시합니다."));
         android.widget.ScrollView scroll = Ui.scroll(this);
         suppressCredentialCapture(scroll);
@@ -291,6 +293,13 @@ public final class OrchestrationActivity extends Activity {
             toast("중계 서비스 시작 실패");
             return false;
         }
+    }
+
+    private void openLogs(String kind) {
+        Intent intent = new Intent(this, OrchestrationLogsActivity.class)
+                .putExtra(OrchestrationLogsActivity.EXTRA_LOG_KIND, kind);
+        if (!store.runJobId().isEmpty()) intent.putExtra(OrchestrationLogsActivity.EXTRA_JOB_ID, store.runJobId());
+        startActivity(intent);
     }
 
     private static String deliveryLabel(String state) {
