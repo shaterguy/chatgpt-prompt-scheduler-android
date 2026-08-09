@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.18 — 2026-08-09
+
+- `새로 시작` 시 일반 Chat 입력창의 기존 초안을 지우고 정확한 `[AUTOMATION_START <JOB_ID>]`를 항상 새 사용자 턴으로 전송
+- 최초 시작 중 같은 conversation ID를 유지하는 ChatGPT 정규화·SPA 주소 변경 허용
+- 시작 사용자 턴 확인 뒤 기존 초안 보호, 중복 방지, 대상 검사 및 예약 실행 우선 로직 유지
+- 첫 일반 Chat 제어 신호로 기존 Drive Step/Round를 한 번만 재설정하는 durable bootstrap 추가
+- 최초 대상 SPA 경로 복구를 무제한 유지하되 적응형 백오프로 중복 로드 억제
+
 ## 0.1.14 — 2026-08-08
 
 - 일반 Chat과 Work 대화를 엄격한 Protocol 3.0 신호로 한 턴씩 연결하는 선택형 오토런 중계 추가

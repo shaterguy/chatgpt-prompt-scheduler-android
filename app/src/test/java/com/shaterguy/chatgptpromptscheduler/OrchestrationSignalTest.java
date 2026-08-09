@@ -72,6 +72,39 @@ public class OrchestrationSignalTest {
     }
 
     @Test
+    public void bootstrapRebasesFirstGeneralChatSignalThenLeavesStrictValidationAvailable() {
+        assertTrue(OrchestrationSignal.validateBootstrap(
+                "[AR_SEND_WORK JOB S004 R003]", "JOB", OrchestrationStore.SIDE_CHAT, "").isValid());
+        assertTrue(OrchestrationSignal.validateBootstrap(
+                "[AR_SEND_WORK JOB S001 R001]", "JOB", OrchestrationStore.SIDE_CHAT, "").isValid());
+        assertTrue(OrchestrationSignal.validateBootstrap(
+                "[AR_CONTINUE_SAME JOB S004 R003]", "JOB", OrchestrationStore.SIDE_CHAT, "").isValid());
+        assertTrue(OrchestrationSignal.validateBootstrap(
+                "[AR_USER_ACTION_REQUIRED JOB S004 R003 VERIFY]", "JOB",
+                OrchestrationStore.SIDE_CHAT, "").isValid());
+        assertTrue(OrchestrationSignal.validateBootstrap(
+                "[AR_DONE JOB]", "JOB", OrchestrationStore.SIDE_CHAT, "").isValid());
+
+        assertEquals(OrchestrationSignal.ErrorCode.WRONG_DIRECTION,
+                OrchestrationSignal.validateBootstrap("[AR_SEND_CHAT JOB S004 R003]", "JOB",
+                        OrchestrationStore.SIDE_CHAT, "").errorCode);
+        assertEquals(OrchestrationSignal.ErrorCode.WRONG_DIRECTION,
+                OrchestrationSignal.validateBootstrap("[AR_SEND_WORK JOB S004 R003]", "JOB",
+                        OrchestrationStore.SIDE_WORK, "").errorCode);
+        assertEquals(OrchestrationSignal.ErrorCode.WRONG_JOB,
+                OrchestrationSignal.validateBootstrap("[AR_SEND_WORK OTHER S004 R003]", "JOB",
+                        OrchestrationStore.SIDE_CHAT, "").errorCode);
+        assertEquals(OrchestrationSignal.ErrorCode.DUPLICATE,
+                OrchestrationSignal.validateBootstrap("[AR_SEND_WORK JOB S004 R003]", "JOB",
+                        OrchestrationStore.SIDE_CHAT, "[AR_SEND_WORK JOB S004 R003]").errorCode);
+
+        // Once seeded at S004/R003, the original strict validator rejects a non-next route.
+        assertEquals(OrchestrationSignal.ErrorCode.WRONG_STEP_ROUND,
+                OrchestrationSignal.validate("[AR_SEND_WORK JOB S006 R001]", "JOB",
+                        OrchestrationStore.SIDE_CHAT, "S004", "R003", "").errorCode);
+    }
+
+    @Test
     public void parsesUserActionRequiredOnlyFromGeneralChat() {
         OrchestrationSignal action = OrchestrationSignal.parse(
                 "[AR_USER_ACTION_REQUIRED JOB-7 S001 R001 MAIL-VERIFY-1]", "JOB-7");
@@ -172,6 +205,65 @@ public class OrchestrationSignalTest {
         assertTrue(stopGeneration.contains("stop-button"));
         assertTrue(observe.contains("assistant_present"));
         assertTrue(observe.contains("stop_available"));
+    }
+
+    @Test
+    public void initialStartOverwritesDraftAndRequiresANewUserTurn() {
+        String prompt = "[AUTOMATION_START JOB-7]";
+        String prepare = OrchestrationScript.prepareInitialStart(prompt);
+        String commit = OrchestrationScript.commitInitialStart(prompt);
+        String recover = OrchestrationScript.recoverInitialStartSubmission(prompt, 2);
+        String confirm = OrchestrationScript.confirmInitialStartSubmission(prompt, 2);
+
+        assertTrue(prepare.contains("시작 문구로 입력창 덮어쓰기"));
+        assertTrue(prepare.contains("descriptor.set.call(composer,expected)"));
+        assertTrue(prepare.contains("range.selectNodeContents(composer)"));
+        assertTrue(prepare.contains("execCommand('delete'"));
+        assertTrue(prepare.contains("matching_user_turns"));
+        assertFalse(prepare.contains("DRAFT_PRESENT"));
+        assertFalse(prepare.contains("ALREADY_SUBMITTED"));
+        assertTrue(commit.contains("send.click()"));
+        assertFalse(commit.contains("ALREADY_SUBMITTED"));
+        assertTrue(recover.contains("const baseline=2"));
+        assertTrue(recover.contains("matching>baseline"));
+        assertTrue(recover.contains("RECOVERY_ABSENT"));
+        assertTrue(confirm.contains("matching>baseline"));
+        assertTrue(confirm.contains("return out('RETRY'"));
+
+        // All later deliveries retain the conservative draft and duplicate guards.
+        String normalPrepare = OrchestrationScript.prepare("[AUTOMATION_WORK_STEP JOB-7 S001 R001]");
+        assertTrue(normalPrepare.contains("DRAFT_PRESENT"));
+        assertTrue(normalPrepare.contains("ALREADY_SUBMITTED"));
+    }
+
+    @Test
+    public void serviceScopesForceStartBeforeNormalRelayAndKeepsSchedulePriority() throws Exception {
+        Path source = Path.of("src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationService.java");
+        Path storeSource = Path.of("src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationStore.java");
+        if (!Files.exists(source)) source = Path.of("app").resolve(source);
+        if (!Files.exists(storeSource)) storeSource = Path.of("app").resolve(storeSource);
+        String service = new String(Files.readAllBytes(source), StandardCharsets.UTF_8);
+        String store = new String(Files.readAllBytes(storeSource), StandardCharsets.UTF_8);
+        assertTrue(service.contains("store.initialStartPending()"));
+        assertTrue(service.contains("prepareInitialStart"));
+        assertTrue(service.contains("commitInitialStart"));
+        assertTrue(service.contains("confirmInitialStartSubmission"));
+        assertTrue(service.contains("matchesConversationIdentity"));
+        assertTrue(service.contains("acceptInitialStartTargetIfNeeded"));
+        assertTrue(service.contains("reloadInitialStartTarget(\"page_finish\")"));
+        assertTrue(service.contains("reloadInitialStartTarget(\"step_guard\")"));
+        assertTrue(service.contains("INITIAL_START_TRANSIENT_ROUTE"));
+        assertTrue(service.contains("validateBootstrap"));
+        assertTrue(service.contains("BOOTSTRAP_SEQUENCE_SEEDED"));
+        assertTrue(service.contains("continueSameBootstrap"));
+        assertTrue(service.contains("initialTargetPolling.onRetry"));
+        assertTrue(service.contains("handler.postDelayed(initialTargetReloadRunnable"));
+        assertTrue(service.contains("initialTargetReloadScheduled"));
+        assertTrue(store.contains("boolean confirmedInitialStart = initialStartPending()"));
+        assertTrue(store.contains("putBoolean(\"bootstrapSignalPending\", true)"));
+        assertTrue(store.contains("continueSameBootstrap"));
+        assertTrue(service.contains("scheduleHasPriority()"));
+        assertTrue(service.indexOf("if (scheduleHasPriority())") < service.indexOf("prepareInitialStart"));
     }
 
     @Test

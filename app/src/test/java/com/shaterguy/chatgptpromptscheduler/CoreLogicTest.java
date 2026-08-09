@@ -32,6 +32,11 @@ public class CoreLogicTest {
     }
 
     @Test
+    public void initialStartPromptIsExactAndUnstamped() {
+        assertEquals("[AUTOMATION_START JOB-18]", OrchestrationStore.startPrompt(" JOB-18 "));
+    }
+
+    @Test
     public void orchestrationStatusSummarySeparatesTerminalAndRecoveryStates() {
         assertEquals("완료", OrchestrationStore.statusSummary(false, false, true, false,
                 OrchestrationStore.DELIVERY_WAITING_RESPONSE, OrchestrationSignal.Type.DONE));
@@ -81,6 +86,18 @@ public class CoreLogicTest {
         assertFalse(TargetParser.matchesTarget("project", "https://chatgpt.com/g/proj/project", "https://chatgpt.com/"));
         assertTrue(TargetParser.matchesTarget("general", "https://chatgpt.com/", "https://chatgpt.com/"));
         assertFalse(TargetParser.matchesTarget("general", "https://chatgpt.com/", "https://chatgpt.com/c/abc"));
+    }
+
+    @Test
+    public void startupIdentityAllowsSpaNormalizationOnlyForSameConversation() {
+        String configured = "https://chatgpt.com/g/project/c/conversation-7?view=work";
+        assertTrue(TargetParser.matchesConversationIdentity(configured,
+                "https://www.chatgpt.com/c/conversation-7"));
+        assertTrue(TargetParser.matchesConversationIdentity(configured,
+                "https://chatgpt.com/g/normalized-project/c/conversation-7?model=auto"));
+        assertFalse(TargetParser.matchesConversationIdentity(configured,
+                "https://chatgpt.com/c/other-conversation"));
+        assertFalse(TargetParser.matchesConversationIdentity(configured, "https://chatgpt.com/"));
     }
 
     @Test

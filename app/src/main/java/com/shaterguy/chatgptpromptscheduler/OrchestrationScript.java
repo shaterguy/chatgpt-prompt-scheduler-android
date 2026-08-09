@@ -23,6 +23,28 @@ public final class OrchestrationScript {
                 "})()";
     }
 
+    /**
+     * First-turn-only preparation: it intentionally replaces any composer draft and does not
+     * suppress a new start merely because the same Job ID appeared in an older user turn.
+     */
+    public static String prepareInitialStart(String prompt) {
+        String expected = jsQuote(prompt);
+        return "(() => {" + common() +
+                "if(!validHost())return out('TARGET_CONTEXT_MISMATCH','ChatGPT 호스트가 아닙니다.');" +
+                "if(!navigator.onLine)return out('NETWORK_ERROR','네트워크 연결이 끊어졌습니다.');if(!document.querySelector('main'))return out('DOM_STRUCTURE_ERROR','ChatGPT 대화 영역을 찾지 못했습니다.');" +
+                "const expected=norm(" + expected + ");" +
+                "const messages=[...document.querySelectorAll('[data-message-author-role=\"user\"],article[data-turn=\"user\"]')];" +
+                "const matching=messages.filter(e=>norm(e.innerText||e.textContent)===expected).length;" +
+                "const selectors=['textarea#prompt-textarea','textarea[data-testid=\"prompt-textarea\"]','div#prompt-textarea[contenteditable=\"true\"]','[contenteditable=\"true\"][data-lexical-editor=\"true\"]','main form [contenteditable=\"true\"]'];" +
+                "let composer=null;for(const s of selectors){composer=[...document.querySelectorAll(s)].find(e=>e.isConnected&&e.offsetParent!==null);if(composer)break;}" +
+                "if(!composer&&visibleAuthGate())return out('AUTH_REQUIRED','명시적 로그인 화면이 표시되었습니다.');" +
+                "if(!composer)return out('RETRY','입력창 대기');" +
+                "const read=()=>norm('value'in composer?composer.value:(composer.innerText||composer.textContent||''));" +
+                "const actual=read();if(actual!==expected){composer.focus();if('value'in composer){const proto=Object.getPrototypeOf(composer);const descriptor=Object.getOwnPropertyDescriptor(proto,'value')||Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value');if(descriptor?.set)descriptor.set.call(composer,expected);else composer.value=expected;composer.dispatchEvent(new Event('input',{bubbles:true}));}else{const selection=window.getSelection();const range=document.createRange();range.selectNodeContents(composer);selection.removeAllRanges();selection.addRange(range);document.execCommand('delete',false,null);document.execCommand('insertText',false,expected);composer.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:expected}));}return out('RETRY','시작 문구로 입력창 덮어쓰기',{matching_user_turns:matching});}" +
+                "return out('READY','시작 문구 입력 확인 완료',{matching_user_turns:matching});" +
+                "})()";
+    }
+
     public static String commit(String prompt) {
         String expected = jsQuote(prompt);
         return "(() => {" + common() +
@@ -43,6 +65,25 @@ public final class OrchestrationScript {
                 "})()";
     }
 
+    /** Clicks the exact startup prompt without applying historical-turn duplicate suppression. */
+    public static String commitInitialStart(String prompt) {
+        String expected = jsQuote(prompt);
+        return "(() => {" + common() +
+                "if(!validHost())return out('TARGET_CONTEXT_MISMATCH','ChatGPT 호스트가 아닙니다.');" +
+                "if(visibleAuthGate())return out('AUTH_REQUIRED','명시적 로그인 화면이 표시되었습니다.');" +
+                "const expected=norm(" + expected + ");" +
+                "const selectors=['textarea#prompt-textarea','textarea[data-testid=\"prompt-textarea\"]','div#prompt-textarea[contenteditable=\"true\"]','[contenteditable=\"true\"][data-lexical-editor=\"true\"]','main form [contenteditable=\"true\"]'];" +
+                "let composer=null;for(const s of selectors){composer=[...document.querySelectorAll(s)].find(e=>e.isConnected&&e.offsetParent!==null);if(composer)break;}" +
+                "if(!composer)return out('AMBIGUOUS','전송 커밋 중 입력창을 찾지 못했습니다.');" +
+                "const actual=norm('value'in composer?composer.value:(composer.innerText||composer.textContent||''));" +
+                "if(actual!==expected)return out('AMBIGUOUS','전송 커밋 중 입력값이 달라졌습니다.');" +
+                "const form=composer.closest('form');const buttons=[...(form||document).querySelectorAll('button')];" +
+                "const send=buttons.find(b=>b.dataset.testid==='send-button'||b.dataset.testid==='composer-submit-button'||/send|보내기|submit/i.test((b.getAttribute('aria-label')||'')+' '+(b.title||'')));" +
+                "if(!send||send.disabled||send.getAttribute('aria-disabled')==='true')return out('AMBIGUOUS','전송 버튼이 준비되지 않았습니다.');" +
+                "send.click();return out('SUBMITTED','시작 문구 전송 클릭 완료');" +
+                "})()";
+    }
+
     public static String recoverSubmission(String prompt) {
         String expected = jsQuote(prompt);
         return "(() => {" + common() +
@@ -52,6 +93,10 @@ public final class OrchestrationScript {
                 "if(messages.some(e=>norm(e.innerText||e.textContent)===expected))return out('SUBMITTED','전송된 사용자 턴을 확인했습니다.');" +
                 "return out('RECOVERY_ABSENT','전송 사용자 턴이 아직 확인되지 않습니다.');" +
                 "})()";
+    }
+
+    public static String recoverInitialStartSubmission(String prompt, int baselineCount) {
+        return confirmInitialStartSubmission(prompt, baselineCount, "RECOVERY_ABSENT");
     }
 
     /** Confirmation after a click result was received; does not click or rewrite the composer. */
@@ -65,6 +110,23 @@ public final class OrchestrationScript {
                 "const selectors=['textarea#prompt-textarea','textarea[data-testid=\"prompt-textarea\"]','div#prompt-textarea[contenteditable=\"true\"]','[contenteditable=\"true\"][data-lexical-editor=\"true\"]','main form [contenteditable=\"true\"]'];" +
                 "let composer=null;for(const s of selectors){composer=[...document.querySelectorAll(s)].find(e=>e.isConnected&&e.offsetParent!==null);if(composer)break;}" +
                 "return out('RETRY','전송된 사용자 턴 반영 대기');" +
+                "})()";
+    }
+
+    public static String confirmInitialStartSubmission(String prompt, int baselineCount) {
+        return confirmInitialStartSubmission(prompt, baselineCount, "RETRY");
+    }
+
+    private static String confirmInitialStartSubmission(String prompt, int baselineCount, String absentStatus) {
+        String expected = jsQuote(prompt);
+        int baseline = Math.max(0, baselineCount);
+        return "(() => {" + common() +
+                "if(!validHost())return out('TARGET_CONTEXT_MISMATCH','ChatGPT 호스트가 아닙니다.');" +
+                "const expected=norm(" + expected + ");const baseline=" + baseline + ";" +
+                "const messages=[...document.querySelectorAll('[data-message-author-role=\"user\"],article[data-turn=\"user\"]')];" +
+                "const matching=messages.filter(e=>norm(e.innerText||e.textContent)===expected).length;" +
+                "if(matching>baseline)return out('SUBMITTED','새 시작 사용자 턴을 확인했습니다.',{matching_user_turns:matching});" +
+                "return out('" + absentStatus + "','새 시작 사용자 턴 반영 대기',{matching_user_turns:matching});" +
                 "})()";
     }
 

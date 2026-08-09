@@ -43,6 +43,8 @@ public final class OrchestrationService extends Service implements AutomationRun
     private final Runnable resumeRunnable = this::ensureEngine;
     private final AdaptivePolling responsePolling = new AdaptivePolling();
     private final AdaptivePolling reconciliationPolling = new AdaptivePolling();
+    private final AdaptivePolling initialTargetPolling = new AdaptivePolling();
+    private final Runnable initialTargetReloadRunnable = this::performInitialTargetReload;
     private OrchestrationStore store;
     private OrchestrationRunLog runLog;
     private HeadlessWebViewHost host;
@@ -70,6 +72,8 @@ public final class OrchestrationService extends Service implements AutomationRun
     private boolean reconciliationDeliveryInProgress;
     private boolean reconciliationFinalTargetScan;
     private long reconciliationPollingEpoch;
+    private boolean initialTargetReloadScheduled;
+    private String initialTargetReloadReason = "";
 
     @Override
     public void onCreate() {
@@ -228,7 +232,7 @@ public final class OrchestrationService extends Service implements AutomationRun
             settings.setAllowUniversalAccessFromFileURLs(false);
             settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
             String userAgent = settings.getUserAgentString();
-            settings.setUserAgentString(userAgent + " ChatGPTPromptScheduler/0.1.16 Orchestration/3.2.3");
+            settings.setUserAgentString(userAgent + " ChatGPTPromptScheduler/0.1.18 Orchestration/3.2.4");
             CookieManager.getInstance().setAcceptCookie(true);
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false);
             webView.setWebViewClient(new WebViewClient() {
@@ -239,15 +243,25 @@ public final class OrchestrationService extends Service implements AutomationRun
                     resetResponsePolling("PAGE_START");
                     handler.removeCallbacks(stepRunnable);
                     log("WEBVIEW_PAGE_START", "generation=" + generation);
-                    if (!matchesExpectedTarget(url)) pauseWithError("TARGET_CHANGED", "중계 대상 대화가 바뀌었습니다.");
+                    if (!matchesExpectedTarget(url)) {
+                        if (store.initialStartPending()) {
+                            // about:blank/home can be a transient SPA hop before ChatGPT restores
+                            // the requested conversation. Never authorize JS on this URL.
+                            log("INITIAL_START_TRANSIENT_ROUTE", "phase=page_start");
+                        } else {
+                            pauseWithError("TARGET_CHANGED", "중계 대상 대화가 바뀌었습니다.");
+                        }
+                    }
                 }
 
                 @Override
                 public void onPageFinished(WebView view, String url) {
                     if (!matchesExpectedTarget(url)) {
-                        pauseWithError("TARGET_CHANGED", "중계 대상 대화가 바뀌었습니다.");
+                        if (store.initialStartPending()) reloadInitialStartTarget("page_finish");
+                        else pauseWithError("TARGET_CHANGED", "중계 대상 대화가 바뀌었습니다.");
                         return;
                     }
+                    resetInitialTargetRetry();
                     log("WEBVIEW_PAGE_FINISH", "progress=" + view.getProgress());
                     // A page-load delay is a one-off readiness delay, not a recurring
                     // reconciliation cadence. Repeated idle/generating checks use AdaptivePolling.
@@ -272,7 +286,11 @@ public final class OrchestrationService extends Service implements AutomationRun
 
                 @Override
                 public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                    return request.isForMainFrame() && !matchesExpectedTarget(String.valueOf(request.getUrl()));
+                    if (!request.isForMainFrame()) return false;
+                    String requested = String.valueOf(request.getUrl());
+                    if (matchesExpectedTarget(requested)) return false;
+                    if (store.initialStartPending()) handler.post(() -> reloadInitialStartTarget("navigation"));
+                    return true;
                 }
 
                 @Override
@@ -339,7 +357,8 @@ public final class OrchestrationService extends Service implements AutomationRun
         }
         String actualUrl = webView.getUrl();
         if (!matchesExpectedTarget(actualUrl)) {
-            pauseWithError("TARGET_CHANGED", "중계 대상 대화가 바뀌어 자동 전송을 멈췄습니다.");
+            if (store.initialStartPending()) reloadInitialStartTarget("step_guard");
+            else pauseWithError("TARGET_CHANGED", "중계 대상 대화가 바뀌어 자동 전송을 멈췄습니다.");
             return;
         }
 
@@ -369,13 +388,24 @@ public final class OrchestrationService extends Service implements AutomationRun
             return;
         }
 
+        boolean initialStart = store.initialStartPending();
         String script;
-        if (OrchestrationStore.DELIVERY_PENDING.equals(state)) script = OrchestrationScript.prepare(deliveryPrompt);
-        else if (OrchestrationStore.DELIVERY_SUBMITTING.equals(state)) {
-            script = clickAttempt ? OrchestrationScript.commit(deliveryPrompt)
-                    : OrchestrationScript.recoverSubmission(deliveryPrompt);
+        if (OrchestrationStore.DELIVERY_PENDING.equals(state)) {
+            script = initialStart ? OrchestrationScript.prepareInitialStart(deliveryPrompt)
+                    : OrchestrationScript.prepare(deliveryPrompt);
+        } else if (OrchestrationStore.DELIVERY_SUBMITTING.equals(state)) {
+            if (clickAttempt) {
+                script = initialStart ? OrchestrationScript.commitInitialStart(deliveryPrompt)
+                        : OrchestrationScript.commit(deliveryPrompt);
+            } else {
+                script = initialStart ? OrchestrationScript.recoverInitialStartSubmission(
+                        deliveryPrompt, store.initialStartBaselineCount())
+                        : OrchestrationScript.recoverSubmission(deliveryPrompt);
+            }
         } else if (OrchestrationStore.DELIVERY_SUBMITTED.equals(state)) {
-            script = OrchestrationScript.confirmSubmission(deliveryPrompt);
+            script = initialStart ? OrchestrationScript.confirmInitialStartSubmission(
+                    deliveryPrompt, store.initialStartBaselineCount())
+                    : OrchestrationScript.confirmSubmission(deliveryPrompt);
         } else if (OrchestrationStore.DELIVERY_WAITING_RESPONSE.equals(state)) {
             script = store.stopGenerationSubmitting()
                     ? OrchestrationScript.stopGeneration() : OrchestrationScript.observe(deliveryPrompt);
@@ -403,7 +433,8 @@ public final class OrchestrationService extends Service implements AutomationRun
                 return;
             }
             if (!matchesExpectedTarget(active.getUrl())) {
-                pauseWithError("TARGET_CHANGED", "스크립트 실행 중 중계 대상 대화가 바뀌었습니다.");
+                if (store.initialStartPending()) reloadInitialStartTarget("evaluation_guard");
+                else pauseWithError("TARGET_CHANGED", "스크립트 실행 중 중계 대상 대화가 바뀌었습니다.");
                 return;
             }
             JSONObject result = parseObject(raw);
@@ -828,6 +859,10 @@ public final class OrchestrationService extends Service implements AutomationRun
         logScriptResult("PREPARE_RESULT", status);
         switch (status) {
             case "READY" -> {
+                if (store.initialStartPending()) {
+                    store.setInitialStartBaselineCount(result.optInt("matching_user_turns", 0));
+                    log("INITIAL_START_READY", "existing_turns=" + store.initialStartBaselineCount());
+                }
                 String previous = store.deliveryState();
                 store.markPreparing();
                 logStateTransition(previous);
@@ -878,6 +913,7 @@ public final class OrchestrationService extends Service implements AutomationRun
         if (!clickAttempt && "SUBMITTED".equals(status)) {
             recoveryProbeStartedAt = 0L;
             String previous = store.deliveryState();
+            acceptInitialStartTargetIfNeeded();
             store.markWaiting();
             log("RESPONSE_EPOCH_RESET", "reason=RECOVERY_SUBMITTED");
             logStateTransition(previous);
@@ -914,6 +950,7 @@ public final class OrchestrationService extends Service implements AutomationRun
         switch (status) {
             case "SUBMITTED" -> {
                 String previous = store.deliveryState();
+                acceptInitialStartTargetIfNeeded();
                 store.markWaiting();
                 log("RESPONSE_EPOCH_RESET", "reason=CONFIRM_SUBMITTED");
                 logStateTransition(previous);
@@ -1069,16 +1106,21 @@ public final class OrchestrationService extends Service implements AutomationRun
             return;
         }
         String sourceSide = store.monitoringSide();
-        OrchestrationSignal.ParseResult parsed = OrchestrationSignal.validate(response, store.runJobId(),
-                sourceSide, store.currentStep(), store.currentRound(), store.lastAcceptedSignal(),
-                store.responseEpoch(), store.lastSignalResponseEpoch());
+        boolean bootstrap = store.bootstrapSignalPending();
+        OrchestrationSignal.ParseResult parsed = bootstrap
+                ? OrchestrationSignal.validateBootstrap(response, store.runJobId(), sourceSide,
+                        store.lastAcceptedSignal())
+                : OrchestrationSignal.validate(response, store.runJobId(), sourceSide,
+                        store.currentStep(), store.currentRound(), store.lastAcceptedSignal(),
+                        store.responseEpoch(), store.lastSignalResponseEpoch());
         if (!parsed.isValid()) {
             log("SIGNAL_REJECTED", "reason=" + safeCode(parsed.errorCode.name()));
             pauseWithProtocolError(parsed.errorCode, sourceSide);
             return;
         }
         OrchestrationSignal signal = parsed.signal;
-        log("SIGNAL_ACCEPTED", "type=" + safeCode(signal.type.name()));
+        log("SIGNAL_ACCEPTED", "type=" + safeCode(signal.type.name())
+                + ";bootstrap=" + (bootstrap ? "1" : "0"));
         if (signal.type == OrchestrationSignal.Type.DONE || signal.type == OrchestrationSignal.Type.PAUSE
                 || signal.type == OrchestrationSignal.Type.ABORTED) {
             log("TERMINAL_COMMIT", "type=" + safeCode(signal.type.name()));
@@ -1097,7 +1139,13 @@ public final class OrchestrationService extends Service implements AutomationRun
         }
         if (signal.type == OrchestrationSignal.Type.CONTINUE_SAME) {
             String previous = store.deliveryState();
-            store.continueSame(signal, sourceSide);
+            if (bootstrap) {
+                store.continueSameBootstrap(signal, sourceSide);
+                log("BOOTSTRAP_SEQUENCE_SEEDED", "step=" + safeCode(signal.step)
+                        + ";round=" + safeCode(signal.round) + ";type=CONTINUE_SAME");
+            } else {
+                store.continueSame(signal, sourceSide);
+            }
             log("CONTINUE_SAME_ACCEPTED", "source=" + safeCode(sourceSide)
                     + ";response_epoch=" + store.lastSignalResponseEpoch()
                     + ";continuation_epoch=" + store.continuationEpoch());
@@ -1112,6 +1160,10 @@ public final class OrchestrationService extends Service implements AutomationRun
         }
         String previous = store.deliveryState();
         store.transition(signal, sourceSide);
+        if (bootstrap) {
+            log("BOOTSTRAP_SEQUENCE_SEEDED", "step=" + safeCode(signal.step)
+                    + ";round=" + safeCode(signal.round) + ";type=" + safeCode(signal.type.name()));
+        }
         logStateTransition(previous);
         log("RESPONSE_EPOCH_RESET", "reason=SIGNAL_TRANSITION");
         resetResponsePolling("SIGNAL_TRANSITION");
@@ -1224,7 +1276,60 @@ public final class OrchestrationService extends Service implements AutomationRun
     }
 
     private boolean matchesExpectedTarget(String actualUrl) {
+        if (!store.reconciling() && store.initialStartPending()) {
+            return TargetParser.matchesConversationIdentity(currentRelayTargetUrl(), actualUrl);
+        }
         return TargetParser.matchesTarget("existing", currentRelayTargetUrl(), actualUrl);
+    }
+
+    private void acceptInitialStartTargetIfNeeded() {
+        if (!store.initialStartPending() || webView == null) return;
+        String actualUrl = webView.getUrl();
+        store.acceptInitialChatTarget(actualUrl);
+        log("INITIAL_START_CONFIRMED", "target=chat;conversation="
+                + safeDetail(TargetParser.conversationId(actualUrl)));
+    }
+
+    /**
+     * A startup mismatch never receives composer JavaScript. Re-open the configured Chat URL and
+     * wait until its conversation identity is visible instead of failing on transient SPA routes.
+     */
+    private void reloadInitialStartTarget(String reason) {
+        if (!store.initialStartPending() || webView == null || scheduleHasPriority()
+                || initialTargetReloadScheduled) return;
+        AdaptivePolling.Decision decision = initialTargetPolling.onRetry(store.epoch());
+        initialTargetReloadScheduled = true;
+        initialTargetReloadReason = safeCode(reason.toUpperCase());
+        log("INITIAL_START_TARGET_RETRY", "reason=" + initialTargetReloadReason
+                + ";retry=" + decision.retryCount + ";tier=" + decision.tier
+                + ";delay_ms=" + decision.delayMs);
+        handler.postDelayed(initialTargetReloadRunnable, decision.delayMs);
+    }
+
+    private void performInitialTargetReload() {
+        initialTargetReloadScheduled = false;
+        if (!store.initialStartPending() || webView == null) return;
+        if (scheduleHasPriority()) {
+            yieldForSchedule();
+            return;
+        }
+        if (matchesExpectedTarget(webView.getUrl())) {
+            resetInitialTargetRetry();
+            scheduleStep(500L);
+            return;
+        }
+        String expected = store.runChatUrl();
+        store.setStatus("일반 Chat 시작 대화 다시 여는 중");
+        log("INITIAL_START_TARGET_RELOAD", "reason=" + initialTargetReloadReason);
+        webView.stopLoading();
+        webView.loadUrl(expected);
+    }
+
+    private void resetInitialTargetRetry() {
+        handler.removeCallbacks(initialTargetReloadRunnable);
+        initialTargetReloadScheduled = false;
+        initialTargetReloadReason = "";
+        initialTargetPolling.reset(store.epoch());
     }
 
     private String activeTargetSide() {
@@ -1272,6 +1377,8 @@ public final class OrchestrationService extends Service implements AutomationRun
 
     private void cleanupWebView() {
         handler.removeCallbacks(stepRunnable);
+        handler.removeCallbacks(initialTargetReloadRunnable);
+        initialTargetReloadScheduled = false;
         generation++;
         evaluationInFlight = false;
         commitAuthorized = false;

@@ -51,6 +51,17 @@ public final class TargetParser {
         };
     }
 
+    /**
+     * Startup-only identity check. ChatGPT may normalize a project conversation URL to another
+     * SPA path while retaining the same /c/{conversationId}; that is still the same room.
+     */
+    public static boolean matchesConversationIdentity(String expectedUrl, String actualUrl) {
+        if (!isSupported(expectedUrl) || !isSupported(actualUrl)) return false;
+        String expectedConversation = conversationId(expectedUrl);
+        String actualConversation = conversationId(actualUrl);
+        return expectedConversation != null && expectedConversation.equals(actualConversation);
+    }
+
     public static String mismatchDetail(String targetType, String expectedUrl, String actualUrl) {
         return "type=" + targetType + " expected=" + expectedUrl + " actual=" + (actualUrl == null ? "" : actualUrl);
     }

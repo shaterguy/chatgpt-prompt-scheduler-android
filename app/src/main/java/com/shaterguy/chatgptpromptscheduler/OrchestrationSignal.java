@@ -142,6 +142,24 @@ public final class OrchestrationSignal {
         return parsed;
     }
 
+    /**
+     * One-shot validation for the first General Chat response after a confirmed START turn.
+     * The General Chat may recover an existing Drive position, so sequence ordering is deliberately
+     * not compared until this response seeds the durable local baseline.
+     */
+    public static ParseResult validateBootstrap(String response, String expectedJobId,
+                                                String sourceSide, String lastSignal) {
+        ParseResult parsed = parseDetailed(response, expectedJobId);
+        if (!parsed.isValid()) return parsed;
+        OrchestrationSignal signal = parsed.signal;
+        if (signal.raw.equals(lastSignal)) return error(ErrorCode.DUPLICATE);
+        if (!OrchestrationStore.SIDE_CHAT.equals(sourceSide)) return error(ErrorCode.WRONG_DIRECTION);
+        if (signal.type == Type.DONE || signal.type == Type.PAUSE || signal.type == Type.ABORTED)
+            return parsed;
+        if (!signal.routesFrom(sourceSide)) return error(ErrorCode.WRONG_DIRECTION);
+        return parsed;
+    }
+
     public boolean isOlderThan(String previousStep, String previousRound) {
         if (step.isEmpty() || previousStep == null || previousStep.isEmpty()) return false;
         int stepCompare = step.compareTo(previousStep);

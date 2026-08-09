@@ -73,14 +73,18 @@ public final class OrchestrationStore {
 
     public void begin() {
         long now = System.currentTimeMillis();
+        String startPrompt = startPrompt(jobId());
         Set<String> usedJobIds = new HashSet<>(preferences.getStringSet("usedJobIds", Collections.emptySet()));
         usedJobIds.add(jobId());
         commit(preferences.edit().putInt("schemaVersion", SCHEMA_VERSION)
                 .putBoolean("active", true).putBoolean("paused", false).putBoolean("terminal", false)
                 .putString("monitoringSide", SIDE_CHAT).putString("deliveryTarget", SIDE_CHAT)
                 .putString("deliveryState", DELIVERY_PENDING)
-                .putString("pendingPrompt", "[AUTOMATION_START " + jobId() + "]")
-                .putString("stampedPrompt", "")
+                .putString("pendingPrompt", startPrompt)
+                // The first control turn is deliberately exact and has no timestamp envelope.
+                .putString("stampedPrompt", startPrompt)
+                .putBoolean("initialStartPending", true).putInt("initialStartBaselineCount", 0)
+                .putBoolean("bootstrapSignalPending", false)
                 .putString("lastDeliveryTarget", "").putString("lastDeliveredPrompt", "")
                 .putString("lastDeliveryState", "").putLong("deliveryPreparedAt", 0L)
                 .putLong("deliveryAttemptAt", 0L).putLong("lastDeliveryAt", 0L)
@@ -139,14 +143,45 @@ public final class OrchestrationStore {
     public void markWaiting() {
         long now = System.currentTimeMillis();
         String target = deliveryTarget();
-        commit(preferences.edit().putString("deliveryState", DELIVERY_WAITING_RESPONSE)
+        boolean confirmedInitialStart = initialStartPending();
+        SharedPreferences.Editor edit = preferences.edit().putString("deliveryState", DELIVERY_WAITING_RESPONSE)
                 .putString("monitoringSide", target).putString("expectedSignal", expectedFor(target, currentStep(), currentRound()))
                 .putString("lastDeliveryTarget", target).putString("lastDeliveredPrompt", stampedPrompt())
                 .putString("lastDeliveryState", DELIVERY_WAITING_RESPONSE).putLong("lastDeliveryAt", now)
                 .putString("status", sideLabel(target) + " 응답 대기 중")
                 .putLong("phaseStartedAt", now).putLong("pollCountLong", 0L).putInt("pollCount", 0)
-                .putString("candidateFingerprint", "").putInt("candidateStability", 0));
+                .putString("candidateFingerprint", "").putInt("candidateStability", 0);
+        if (confirmedInitialStart) {
+            edit.putBoolean("initialStartPending", false)
+                    .putInt("initialStartBaselineCount", 0)
+                    .putBoolean("bootstrapSignalPending", true);
+        }
+        commit(edit);
         resetResponseTiming("WAITING_RESPONSE");
+    }
+
+    public boolean initialStartPending() {
+        return preferences.getBoolean("initialStartPending", false);
+    }
+
+    public boolean bootstrapSignalPending() {
+        return preferences.getBoolean("bootstrapSignalPending", false);
+    }
+
+    public int initialStartBaselineCount() {
+        return Math.max(0, preferences.getInt("initialStartBaselineCount", 0));
+    }
+
+    public void setInitialStartBaselineCount(int count) {
+        if (!initialStartPending()) return;
+        commit(preferences.edit().putInt("initialStartBaselineCount", Math.max(0, count)));
+    }
+
+    /** Persists the normalized SPA route only after startup was confirmed in the same room. */
+    public void acceptInitialChatTarget(String actualUrl) {
+        if (!initialStartPending() || !TargetParser.matchesConversationIdentity(runChatUrl(), actualUrl)) return;
+        String cleanActual = clean(actualUrl);
+        commit(preferences.edit().putString("runChatUrl", cleanActual).putString("chatUrl", cleanActual));
     }
 
     public void transition(OrchestrationSignal signal, String sourceSide) {
@@ -170,6 +205,7 @@ public final class OrchestrationStore {
                 .putString("deliveryState", DELIVERY_PENDING).putString("expectedSignal", "전송 완료 후 결정")
                 .putLong("deliveryPreparedAt", 0L).putLong("deliveryAttemptAt", 0L)
                 .putString("status", sideLabel(target) + "로 프롬프트 전송 대기")
+                .putBoolean("bootstrapSignalPending", false)
                 .putString("lastErrorCode", "").putString("error", "").putLong("errorAt", 0L)
                 .putString("candidateFingerprint", "").putInt("candidateStability", 0)
                 .putLong("phaseStartedAt", now).putLong("pollCountLong", 0L).putInt("pollCount", 0));
@@ -181,6 +217,32 @@ public final class OrchestrationStore {
         if (signal == null || signal.type != OrchestrationSignal.Type.CONTINUE_SAME)
             throw new IllegalArgumentException("SAME-SIDE 신호가 아닙니다.");
         prepareSameSideDelivery(sourceSide, signal.raw);
+    }
+
+    /** Atomically seeds a recovered Drive sequence and prepares its same-side continuation. */
+    public void continueSameBootstrap(OrchestrationSignal signal, String sourceSide) {
+        if (signal == null || signal.type != OrchestrationSignal.Type.CONTINUE_SAME
+                || !SIDE_CHAT.equals(sourceSide))
+            throw new IllegalArgumentException("bootstrap SAME-SIDE 신호가 올바르지 않습니다.");
+        long now = System.currentTimeMillis();
+        long nextContinuation = continuationEpoch() == Long.MAX_VALUE
+                ? Long.MAX_VALUE : continuationEpoch() + 1L;
+        commit(preferences.edit().putString("lastSignalSource", sourceSide)
+                .putString("lastAcceptedSignal", signal.raw).putLong("lastSignalAt", now)
+                .putString("currentStep", signal.step).putString("currentRound", signal.round)
+                .putString("deliveryTarget", sourceSide)
+                .putString("pendingPrompt", sameSidePrompt(runJobId(), signal.step, signal.round))
+                .putString("stampedPrompt", "").putString("deliveryState", DELIVERY_PENDING)
+                .putString("expectedSignal", expectedFor(sourceSide, signal.step, signal.round))
+                .putLong("deliveryPreparedAt", 0L).putLong("deliveryAttemptAt", 0L)
+                .putString("status", "일반 Chat SAME-SIDE bootstrap continuation 전송 대기")
+                .putString("lastErrorCode", "").putString("error", "").putLong("errorAt", 0L)
+                .putString("candidateFingerprint", "").putInt("candidateStability", 0)
+                .putLong("phaseStartedAt", now).putLong("pollCountLong", 0L).putInt("pollCount", 0)
+                .putLong("continuationEpoch", nextContinuation)
+                .putLong("lastSignalResponseEpoch", responseEpoch())
+                .putBoolean("bootstrapSignalPending", false));
+        resetResponseTiming("BOOTSTRAP_CONTINUE_SAME");
     }
 
     /** Creates the short same-side trigger used only after confirmed Hard Fallback recovery. */
@@ -223,6 +285,7 @@ public final class OrchestrationStore {
         commit(preferences.edit().putString("lastSignalSource", sourceSide)
                 .putString("lastAcceptedSignal", signal.raw).putLong("lastSignalAt", now)
                 .putString("currentStep", signal.step).putString("currentRound", signal.round)
+                .putBoolean("bootstrapSignalPending", false)
                 .putBoolean("waitingForUser", true).putString("actionId", signal.actionId)
                 .putBoolean("paused", true).putBoolean("terminal", false)
                 .putString("expectedSignal", "사용자 처리 완료 후 일반 Chat 재검증")
@@ -404,6 +467,7 @@ public final class OrchestrationStore {
                 : continuationEpoch();
         commit(preferences.edit().putBoolean("active", true).putBoolean("paused", false)
                 .putBoolean("terminal", false).putBoolean("waitingForUser", false)
+                .putBoolean("bootstrapSignalPending", false)
                 .putBoolean("reconciling", false).putString("reconciliationPhase", RECONCILIATION_NONE)
                 .putString("monitoringSide", target).putString("lastSignalSource", sourceSide)
                 .putString("lastAcceptedSignal", signal.raw).putLong("lastSignalAt", now)
@@ -440,6 +504,7 @@ public final class OrchestrationStore {
                 : continuationEpoch();
         commit(preferences.edit().putBoolean("active", true).putBoolean("paused", false)
                 .putBoolean("terminal", false).putBoolean("waitingForUser", false)
+                .putBoolean("bootstrapSignalPending", false)
                 .putBoolean("reconciling", false).putString("reconciliationPhase", RECONCILIATION_NONE)
                 .putString("monitoringSide", sourceSide).putString("lastSignalSource", sourceSide)
                 .putString("lastAcceptedSignal", signal.raw).putLong("lastSignalAt", now)
@@ -480,6 +545,7 @@ public final class OrchestrationStore {
                 .putString("lastAcceptedSignal", signal.raw).putLong("lastSignalAt", System.currentTimeMillis())
                 .putBoolean("active", false).putBoolean("paused", paused)
                 .putBoolean("waitingForUser", false).putString("actionId", "")
+                .putBoolean("bootstrapSignalPending", false)
                 .putBoolean("terminal", isTerminalSignal(signal.type)).putString("status", nextStatus)
                 .putString("lastErrorCode", "").putString("error", "").putLong("errorAt", 0L)
                 .putBoolean("reconciling", false).putString("reconciliationPhase", RECONCILIATION_NONE));
@@ -543,6 +609,10 @@ public final class OrchestrationStore {
     public static String stampPrompt(String rawPrompt, long epochMillis) {
         String raw = rawPrompt == null ? "" : rawPrompt.trim();
         return raw.isEmpty() ? "" : TimestampUtil.prefix(epochMillis, raw);
+    }
+
+    public static String startPrompt(String jobId) {
+        return "[AUTOMATION_START " + clean(jobId) + "]";
     }
     public String lastDeliveredPrompt() { return preferences.getString("lastDeliveredPrompt", ""); }
     public String lastDeliveryTarget() { return preferences.getString("lastDeliveryTarget", ""); }
