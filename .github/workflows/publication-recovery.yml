@@ -1,0 +1,100 @@
+name: Apply verified publication packet
+
+on:
+  push:
+    branches:
+      - automation/ar-20260808-215800-ryfx
+    paths:
+      - '.github/workflows/publication-recovery.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publication-recovery-ar-20260808-215800-ryfx
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          ref: automation/ar-20260808-215800-ryfx
+
+      - name: Reconstruct, verify, and apply candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, hashlib, json, pathlib, zipfile, io
+
+          root = pathlib.Path('.').resolve()
+          recovery = root / '.publication-recovery'
+          manifest = json.loads((recovery / 'manifest.json').read_text(encoding='utf-8'))
+          chunks = sorted(recovery.glob('chunk-*.txt'))
+          if len(chunks) != 5:
+              raise SystemExit(f'expected 5 chunks, found {len(chunks)}')
+          encoded = ''.join(p.read_text(encoding='ascii').strip() for p in chunks)
+          packet = base64.b64decode(encoded, validate=True)
+          packet_sha = hashlib.sha256(packet).hexdigest()
+          if packet_sha != manifest['packet_sha256']:
+              raise SystemExit(f'packet sha mismatch: {packet_sha}')
+
+          expected = {item['path']: item for item in manifest['changed_files']}
+          if len(expected) != manifest['packet_member_count'] or len(expected) != 22:
+              raise SystemExit('manifest member count mismatch')
+
+          with zipfile.ZipFile(io.BytesIO(packet)) as zf:
+              names = [n for n in zf.namelist() if not n.endswith('/')]
+              if set(names) != set(expected):
+                  missing = sorted(set(expected) - set(names))
+                  extra = sorted(set(names) - set(expected))
+                  raise SystemExit(f'packet members mismatch missing={missing} extra={extra}')
+              for name in names:
+                  target = (root / name).resolve()
+                  if root not in target.parents:
+                      raise SystemExit(f'unsafe packet path: {name}')
+                  data = zf.read(name)
+                  actual = hashlib.sha256(data).hexdigest()
+                  if actual != expected[name]['sha256']:
+                      raise SystemExit(f'file sha mismatch before write: {name} {actual}')
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_bytes(data)
+
+          for name, item in expected.items():
+              actual = hashlib.sha256((root / name).read_bytes()).hexdigest()
+              if actual != item['sha256']:
+                  raise SystemExit(f'file sha mismatch after write: {name} {actual}')
+
+          print('PACKET_SHA_OK', packet_sha)
+          print('FILES_OK', len(expected))
+          PY
+
+      - name: Remove recovery transport and validate final diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .publication-recovery
+          rm -f .github/workflows/publication-recovery.yml
+          git diff --check
+          git add -A
+          test -n "$(git diff --cached --name-only)"
+          test ! -e .publication-recovery
+          test ! -e .github/workflows/publication-recovery.yml
+          if git diff --cached --name-only | grep -E '^\.publication-recovery/|^\.github/workflows/publication-recovery\.yml$'; then
+            echo 'Recovery transport unexpectedly remains in staged final tree' >&2
+            exit 1
+          fi
+
+      - name: Commit verified candidate and publish branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Publish v0.1.16 verified release candidate'
+          git push origin HEAD:automation/ar-20260808-215800-ryfx
+          echo "FINAL_REMOTE_SHA=$(git rev-parse HEAD)"
