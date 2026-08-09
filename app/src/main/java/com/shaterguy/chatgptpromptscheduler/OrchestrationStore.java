@@ -42,6 +42,7 @@ public final class OrchestrationStore {
     public static final String BOOTSTRAP_RELAY_ACTIVE = "RELAY_ACTIVE";
     public static final String BOOTSTRAP_WAITING_USER = "WAITING_USER";
     public static final String BOOTSTRAP_PAUSED = "PAUSED";
+    public static final String BOOTSTRAP_STOPPED = "STOPPED";
     public static final String BOOTSTRAP_FAILED = "FAILED";
     public static final String BOOTSTRAP_DONE = "DONE";
 
@@ -114,6 +115,16 @@ public final class OrchestrationStore {
         SharedPreferences source = context.getSharedPreferences(WORKSPACE_PREFS_PREFIX + clean(jobId),
                 Context.MODE_PRIVATE);
         return clean(jobId).equals(source.getString("runJobId", ""));
+    }
+
+    /** Reads the original requirement without replacing the currently selected Job workspace. */
+    public static String workspaceRequirement(Context context, String jobId, String fallback) {
+        String requested = clean(jobId);
+        if (context == null || !JOB_ID.matcher(requested).matches()) return fallback == null ? "" : fallback;
+        SharedPreferences source = context.getSharedPreferences(WORKSPACE_PREFS_PREFIX + requested,
+                Context.MODE_PRIVATE);
+        if (!requested.equals(source.getString("runJobId", ""))) return fallback == null ? "" : fallback;
+        return source.getString("runRequirement", fallback == null ? "" : fallback);
     }
 
     /** Restores one inactive Job as the sole relay workspace while preserving global defaults. */
@@ -201,6 +212,7 @@ public final class OrchestrationStore {
         commit(preferences.edit().putInt("schemaVersion", SCHEMA_VERSION)
                 .putString("flowMode", FLOW_LEGACY_MANUAL).putString("bootstrapState", BOOTSTRAP_NONE)
                 .putBoolean("active", true).putBoolean("paused", false).putBoolean("terminal", false)
+                .putBoolean("userStopped", false)
                 .putString("monitoringSide", SIDE_CHAT).putString("deliveryTarget", SIDE_CHAT)
                 .putString("deliveryState", DELIVERY_PENDING)
                 .putString("pendingPrompt", startPrompt)
@@ -248,6 +260,7 @@ public final class OrchestrationStore {
         commit(preferences.edit().putInt("schemaVersion", SCHEMA_VERSION)
                 .putString("flowMode", FLOW_AUTO_BOOTSTRAP).putString("bootstrapState", BOOTSTRAP_JOB_CREATED)
                 .putBoolean("active", true).putBoolean("paused", false).putBoolean("terminal", false)
+                .putBoolean("userStopped", false)
                 .putBoolean("waitingForUser", false).putBoolean("schedulePreempted", false)
                 .putString("runJobId", generated).putString("jobId", generated)
                 .putString("lastStartedJobId", generated).putStringSet("usedJobIds", used)
@@ -539,7 +552,7 @@ public final class OrchestrationStore {
                 .putString("lastAcceptedSignal", signal.raw).putLong("lastSignalAt", now)
                 .putString("currentStep", signal.step).putString("currentRound", signal.round)
                 .putBoolean("bootstrapSignalPending", false)
-                .putBoolean("waitingForUser", true).putString("actionId", signal.actionId)
+                .putBoolean("active", false).putBoolean("waitingForUser", true).putString("actionId", signal.actionId)
                 .putBoolean("paused", true).putBoolean("terminal", false)
                 .putString("expectedSignal", "사용자 처리 완료 후 일반 Chat 재검증")
                 .putString("status", "사용자 조치 대기").putString("lastErrorCode", "")
@@ -586,9 +599,11 @@ public final class OrchestrationStore {
     }
 
     public void pause(String reason) {
+        String message = clean(reason);
         commit(preferences.edit().putBoolean("active", false).putBoolean("paused", true)
-                .putString("status", "사용자가 중계를 일시정지함")
-                .putString("error", clean(reason)).putBoolean("reconciling", false)
+                .putString("status", message.isEmpty() ? "사용자가 중계를 일시정지함" : message)
+                .putString("lastErrorCode", "").putString("error", "").putLong("errorAt", 0L)
+                .putBoolean("reconciling", false)
                 .putString("recoveryBootstrapState", bootstrapState())
                 .putString("bootstrapState", FLOW_AUTO_BOOTSTRAP.equals(flowMode()) ? BOOTSTRAP_PAUSED : bootstrapState())
                 .putString("reconciliationPhase", RECONCILIATION_NONE));
@@ -596,7 +611,8 @@ public final class OrchestrationStore {
 
     public void fail(String code, String reason) {
         String recovery = deliveryState();
-        commit(preferences.edit().putBoolean("paused", true).putString("recoveryDeliveryState", recovery)
+        commit(preferences.edit().putBoolean("active", false).putBoolean("paused", true)
+                .putString("recoveryDeliveryState", recovery)
                 .putString("deliveryState", DELIVERY_FAILED).putString("status", "오류로 중계 일시정지")
                 .putString("recoveryBootstrapState", bootstrapState())
                 .putString("bootstrapState", FLOW_AUTO_BOOTSTRAP.equals(flowMode()) ? BOOTSTRAP_FAILED : bootstrapState())
@@ -606,7 +622,8 @@ public final class OrchestrationStore {
     }
 
     public void ambiguous(String reason) {
-        commit(preferences.edit().putBoolean("paused", true).putString("deliveryState", DELIVERY_AMBIGUOUS)
+        commit(preferences.edit().putBoolean("active", false).putBoolean("paused", true)
+                .putString("deliveryState", DELIVERY_AMBIGUOUS)
                 .putString("recoveryBootstrapState", bootstrapState())
                 .putString("bootstrapState", FLOW_AUTO_BOOTSTRAP.equals(flowMode()) ? BOOTSTRAP_FAILED : bootstrapState())
                 .putString("status", "전송 결과 불명확 · 사용자 확인 필요")
@@ -812,6 +829,7 @@ public final class OrchestrationStore {
         commit(preferences.edit().putString("lastSignalSource", sourceSide)
                 .putString("lastAcceptedSignal", signal.raw).putLong("lastSignalAt", System.currentTimeMillis())
                 .putBoolean("active", false).putBoolean("paused", paused)
+                .putBoolean("userStopped", false)
                 .putBoolean("waitingForUser", false).putString("actionId", "")
                 .putBoolean("bootstrapSignalPending", false)
                 .putBoolean("terminal", isTerminalSignal(signal.type)).putString("status", nextStatus)
@@ -824,10 +842,31 @@ public final class OrchestrationStore {
 
     public void stop() {
         commit(preferences.edit().putBoolean("active", false).putBoolean("paused", false)
-                .putBoolean("waitingForUser", false).putString("status", "사용자가 중지함")
-                .putString("lastErrorCode", "").putString("error", "")
-                .putString("bootstrapState", FLOW_AUTO_BOOTSTRAP.equals(flowMode()) ? BOOTSTRAP_PAUSED : bootstrapState())
+                .putBoolean("terminal", true).putBoolean("userStopped", true)
+                .putBoolean("waitingForUser", false).putString("actionId", "")
+                .putString("status", "사용자가 중지함")
+                .putString("lastErrorCode", "").putString("error", "").putLong("errorAt", 0L)
+                .putString("bootstrapState", FLOW_AUTO_BOOTSTRAP.equals(flowMode()) ? BOOTSTRAP_STOPPED : bootstrapState())
                 .putBoolean("reconciling", false).putString("reconciliationPhase", RECONCILIATION_NONE));
+    }
+
+    /** Stops an inactive archived workspace without replacing or disturbing the current Job. */
+    public static boolean stopWorkspace(Context context, String jobId) {
+        String requested = clean(jobId);
+        if (context == null || !JOB_ID.matcher(requested).matches()) return false;
+        SharedPreferences workspace = context.getSharedPreferences(WORKSPACE_PREFS_PREFIX + requested,
+                Context.MODE_PRIVATE);
+        if (!requested.equals(workspace.getString("runJobId", ""))) return false;
+        String flow = workspace.getString("flowMode", FLOW_LEGACY_MANUAL);
+        return workspace.edit().putBoolean("active", false).putBoolean("paused", false)
+                .putBoolean("terminal", true).putBoolean("userStopped", true)
+                .putBoolean("waitingForUser", false).putString("actionId", "")
+                .putString("status", "사용자가 중지함")
+                .putString("lastErrorCode", "").putString("error", "").putLong("errorAt", 0L)
+                .putString("bootstrapState", FLOW_AUTO_BOOTSTRAP.equals(flow)
+                        ? BOOTSTRAP_STOPPED : workspace.getString("bootstrapState", BOOTSTRAP_NONE))
+                .putBoolean("reconciling", false)
+                .putString("reconciliationPhase", RECONCILIATION_NONE).commit();
     }
 
     public String projectName() { return preferences.getString("projectName", ""); }
@@ -866,6 +905,7 @@ public final class OrchestrationStore {
     }
     public boolean active() { return preferences.getBoolean("active", false); }
     public boolean paused() { return preferences.getBoolean("paused", false); }
+    public boolean userStopped() { return preferences.getBoolean("userStopped", false); }
     public boolean reconciling() { return preferences.getBoolean("reconciling", false); }
     public String reconciliationPhase() {
         return preferences.getString("reconciliationPhase", RECONCILIATION_NONE);
@@ -923,6 +963,7 @@ public final class OrchestrationStore {
     public String expectedSignal() { return preferences.getString("expectedSignal", ""); }
     public String status() { return preferences.getString("status", "설정 전"); }
     public String statusSummary() {
+        if (userStopped()) return "중지됨";
         if (reconciling()) return "재개 상태 재구성 중";
         if (automaticBootstrap()) {
             return switch (bootstrapState()) {
@@ -935,6 +976,7 @@ public final class OrchestrationStore {
                      BOOTSTRAP_RELAY_READY, BOOTSTRAP_RELAY_ACTIVE -> "Work 실행 중";
                 case BOOTSTRAP_WAITING_USER -> "사용자 조치 필요";
                 case BOOTSTRAP_PAUSED -> "일시정지";
+                case BOOTSTRAP_STOPPED -> "중지됨";
                 case BOOTSTRAP_FAILED -> "오류";
                 case BOOTSTRAP_DONE -> "완료";
                 default -> "오토런 준비 중";

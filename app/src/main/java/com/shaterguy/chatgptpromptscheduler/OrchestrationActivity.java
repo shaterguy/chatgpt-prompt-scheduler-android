@@ -56,6 +56,7 @@ public final class OrchestrationActivity extends Activity {
     private Button deleteButton;
     private Bundle restoredState;
     private boolean newJobMode;
+    private boolean missingJob;
     private String viewedJobId;
     private JSONObject archivedJob;
     private final Handler refreshHandler = new Handler(Looper.getMainLooper());
@@ -71,9 +72,12 @@ public final class OrchestrationActivity extends Activity {
         runLog = new OrchestrationRunLog(this);
         newJobMode = getIntent().getBooleanExtra(EXTRA_NEW_JOB, false);
         viewedJobId = cleanJobId(getIntent().getStringExtra(EXTRA_JOB_ID));
-        if (isArchivedJob(viewedJobId, store.runJobId()))
+        if (isArchivedJob(viewedJobId, store.runJobId())) {
             archivedJob = historyStore.get(viewedJobId);
-        if (!newJobMode && archivedJob == null) runLog.record(store, "UI_OPEN", "source=activity");
+            missingJob = archivedJob == null;
+        }
+        if (!newJobMode && archivedJob == null && !missingJob)
+            runLog.record(store, "UI_OPEN", "source=activity");
         restoredState = savedInstanceState;
         createViews();
         restoredState = null;
@@ -115,10 +119,12 @@ public final class OrchestrationActivity extends Activity {
         suppressCredentialCapture(root);
         root.setPadding(Ui.dp(this, 18), Ui.dp(this, 12), Ui.dp(this, 18), Ui.dp(this, 24));
         String title = newJobMode ? "새 오토런 작업"
+                : missingJob ? "오토런 작업을 찾을 수 없음"
                 : archivedJob == null ? "오토런 · Protocol 3.3" : "오토런 작업 · " + viewedJobId;
         root.addView(Ui.title(this, title));
         root.addView(Ui.button(this, "작업 목록", v -> finish()));
         if (newJobMode) createNewJobViews(root);
+        else if (missingJob) createMissingJobViews(root);
         else if (archivedJob != null) createArchivedJobViews(root, archivedJob);
         else createCurrentJobViews(root);
 
@@ -158,6 +164,12 @@ public final class OrchestrationActivity extends Activity {
         root.addView(Ui.body(this, "새 Job을 시작하기 전에는 이전 Job의 현재 동작·신호·오류·로그를 이 화면에 불러오지 않습니다."));
     }
 
+    private void createMissingJobViews(LinearLayout root) {
+        root.addView(Ui.section(this, "작업 없음"));
+        root.addView(Ui.body(this, "Job ID " + emptyAsDash(viewedJobId)
+                + "은(는) 작업 목록에 없습니다. 이미 앱에서 숨겼거나 오래된 화면 요청일 수 있습니다. 현재 Job의 상태는 대신 표시하지 않습니다."));
+    }
+
     private void createCurrentJobViews(LinearLayout root) {
         root.addView(Ui.body(this, "현재 Job의 영속 실행 상태와 중계 제어만 표시합니다. 새 Job 입력은 작업 목록의 ‘새 작업’에서 시작합니다."));
         root.addView(Ui.section(this, "오토런 요구사항"));
@@ -185,7 +197,7 @@ public final class OrchestrationActivity extends Activity {
         root.addView(Ui.section(this, "중계 제어"));
         resumeButton = Ui.button(this, "재개", v -> resumeRelay());
         pauseButton = Ui.button(this, "일시정지", v -> pauseRelay());
-        stopButton = Ui.button(this, "중지", v -> stopRelay());
+        stopButton = Ui.button(this, "중지", v -> confirmStopCurrentJob());
         deleteButton = Ui.button(this, "작업 삭제", v -> confirmHideJob());
         root.addView(Ui.actionGrid(this,
                 resumeButton,
@@ -200,7 +212,8 @@ public final class OrchestrationActivity extends Activity {
     private void createArchivedJobViews(LinearLayout root, JSONObject job) {
         root.addView(Ui.body(this, "이 Job은 독립 보존된 작업공간입니다. 당시 실행 스냅샷과 작업별 로그를 확인할 수 있으며, 현재 Job의 실행 상태에는 영향을 주지 않습니다."));
         root.addView(Ui.section(this, "오토런 요구사항"));
-        root.addView(Ui.body(this, emptyAsDash(job.optString("requirement"))));
+        root.addView(Ui.body(this, emptyAsDash(historyStore.workspaceRequirement(
+                viewedJobId, job.optString("requirement")))));
         root.addView(Ui.section(this, "보존된 상태"));
         TextView summary = Ui.body(this, "현재 상태: " + job.optString("statusSummary", "상태 확인 필요"));
         summary.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -210,7 +223,8 @@ public final class OrchestrationActivity extends Activity {
                 : job.optString("step") + " / " + job.optString("round");
         root.addView(Ui.body(this,
                 "보존 동작: " + emptyAsDash(job.optString("status"))
-                        + "\n완료 판정: " + completionLabel(job.optBoolean("terminal"), job.optString("lastSignal"))
+                        + "\n완료 판정: " + completionLabel(job.optBoolean("terminal"),
+                        job.optString("lastSignal"), job.optBoolean("userStopped"))
                         + "\nJob ID: " + viewedJobId
                         + "\n프로젝트: " + emptyAsDash(job.optString("projectUrl"))
                         + "\n일반 Chat: " + connectionLabel(job.optString("chatUrl"))
@@ -248,16 +262,16 @@ public final class OrchestrationActivity extends Activity {
                 historyStore.hasWorkspace(viewedJobId));
         Button resume = Ui.button(this, "재개", v -> resumeArchivedJob());
         Button pause = Ui.button(this, "일시정지", v -> { });
-        Button stop = Ui.button(this, "중지", v -> { });
+        Button stop = Ui.button(this, "중지", v -> confirmStopArchivedJob());
         resume.setEnabled(resumable);
         pause.setEnabled(false);
-        stop.setEnabled(false);
+        stop.setEnabled(resumable);
         root.addView(Ui.actionGrid(this, resume, pause, stop,
                 Ui.button(this, "실행 로그", v -> openLogs(OrchestrationLogsActivity.KIND_EXECUTION)),
                 Ui.button(this, "디버그 로그", v -> openLogs(OrchestrationLogsActivity.KIND_DEBUG)),
                 Ui.button(this, "작업 삭제", v -> confirmHideJob())));
         root.addView(Ui.body(this, resumable
-                ? "미완료 Job입니다. 재개할 수 있으며, 다른 Job이 실행 중이면 확인 후 그 Job을 일시정지·저장하고 이 Job으로 전환합니다."
+                ? "미완료 Job입니다. 다른 Job이 실행 중이면 그 작업을 먼저 직접 일시정지하거나 중지한 뒤 재개할 수 있습니다."
                 : job.optBoolean("terminal")
                 ? "검증된 terminal 신호가 영속되어 재개할 수 없습니다. 로그와 실행 스냅샷은 계속 열 수 있습니다."
                 : "이전 버전에서 저장된 요약만 있고 전체 재개 스냅샷이 없어 안전하게 재개할 수 없습니다."));
@@ -296,11 +310,11 @@ public final class OrchestrationActivity extends Activity {
                 : "코드: " + emptyAsDash(store.lastErrorCode()) + "\n내용: " + store.error()
                 + "\n시각: " + time(store.errorAt()));
         if (resumeButton != null)
-            resumeButton.setEnabled(canResumeLive(!store.runJobId().isEmpty(), store.terminal()));
+            resumeButton.setEnabled(canResumeLive(!store.runJobId().isEmpty(), store.active(), store.terminal()));
         if (pauseButton != null)
             pauseButton.setEnabled(canPauseLive(store.active(), store.paused(), store.terminal()));
         if (stopButton != null)
-            stopButton.setEnabled(canStopLive(store.active(), store.terminal()));
+            stopButton.setEnabled(canStopLive(!store.runJobId().isEmpty(), store.terminal()));
         if (deleteButton != null)
             deleteButton.setEnabled(canHideJob(false, store.active(), store.terminal()));
     }
@@ -336,7 +350,9 @@ public final class OrchestrationActivity extends Activity {
 
     private void saveProjectDefault() {
         if (!newJobMode || projectUrl == null) return;
-        store.saveAutomaticProjectDefault(projectUrl.getText().toString());
+        String existing = store.defaultProjectUrl();
+        String next = projectDefaultToPersist(projectUrl.getText().toString(), existing);
+        if (!next.equals(existing)) store.saveAutomaticProjectDefault(next);
     }
 
     private void startNew() {
@@ -346,7 +362,9 @@ public final class OrchestrationActivity extends Activity {
                     .setTitle("실행 중인 작업이 있습니다")
                     .setMessage("Job ID: " + store.runJobId()
                             + "\n\n동시에 하나의 오토런만 실행할 수 있습니다. 현재 작업 화면에서 먼저 일시정지 또는 중지해 주세요.")
-                    .setPositiveButton("확인", null)
+                    .setNegativeButton("취소", null)
+                    .setPositiveButton("현재 작업 열기", (dialog, which) ->
+                            startActivity(jobIntent(this, store.runJobId())))
                     .show();
             return;
         }
@@ -354,9 +372,16 @@ public final class OrchestrationActivity extends Activity {
         String nextRequirement = requirement.getText().toString();
         String error = OrchestrationStore.automaticConfigError(nextProject, nextRequirement);
         if (!error.isEmpty()) { toast(error); return; }
-        stopService(new Intent(this, OrchestrationService.class));
         saveProjectDefault();
-        if (!store.runJobId().isEmpty()) historyStore.sync(store);
+        if (!store.runJobId().isEmpty() && !historyStore.sync(store) && !store.terminal()) {
+            new AlertDialog.Builder(this)
+                    .setTitle("기존 작업 보존 실패")
+                    .setMessage("현재 Job의 전체 재개 스냅샷을 저장하지 못해 새 작업을 시작하지 않았습니다. 앱 저장공간을 확인한 뒤 다시 시도해 주세요.")
+                    .setPositiveButton("확인", null)
+                    .show();
+            return;
+        }
+        stopService(new Intent(this, OrchestrationService.class));
         String generated = store.beginAutomatic(nextProject,
                 MODEL_VALUES[workModel.getSelectedItemPosition()],
                 REASONING_VALUES[reasoningEffort.getSelectedItemPosition()], nextRequirement);
@@ -414,17 +439,12 @@ public final class OrchestrationActivity extends Activity {
         if (hasCompetingActiveJob(store.active(), store.terminal(), viewedJobId, store.runJobId())) {
             String currentJobId = store.runJobId();
             new AlertDialog.Builder(this)
-                    .setTitle("작업 전환")
-                    .setMessage("현재 실행 중인 " + currentJobId + "을(를) 일시정지하고\n"
-                            + viewedJobId + "을(를) 재개합니다.")
+                    .setTitle("다른 작업이 실행 중입니다")
+                    .setMessage("현재 Job: " + currentJobId
+                            + "\n\n동시에 하나의 오토런만 실행할 수 있습니다. 현재 작업 화면에서 직접 일시정지 또는 중지한 뒤 이 Job을 재개해 주세요.")
                     .setNegativeButton("취소", null)
-                    .setPositiveButton("전환 및 재개", (dialog, which) -> {
-                        store.pause("다른 Job으로 전환되어 일시정지했습니다.");
-                        runLog.record(store, "UI_PAUSE", "source=job_switch;target=" + viewedJobId);
-                        historyStore.sync(store);
-                        stopService(new Intent(this, OrchestrationService.class));
-                        restoreAndResumeArchivedJob();
-                    })
+                    .setPositiveButton("현재 작업 열기", (dialog, which) ->
+                            startActivity(jobIntent(this, currentJobId)))
                     .show();
             return;
         }
@@ -432,7 +452,10 @@ public final class OrchestrationActivity extends Activity {
     }
 
     private void restoreAndResumeArchivedJob() {
-        historyStore.sync(store);
+        if (!store.runJobId().isEmpty() && !historyStore.sync(store) && !store.terminal()) {
+            toast("현재 Job의 재개 스냅샷을 저장하지 못해 전환하지 않았습니다.");
+            return;
+        }
         if (!historyStore.restoreWorkspace(viewedJobId, store)) {
             toast("이 Job의 전체 재개 스냅샷을 복원하지 못했습니다.");
             return;
@@ -474,6 +497,39 @@ public final class OrchestrationActivity extends Activity {
         refreshStatus();
     }
 
+    private void confirmStopCurrentJob() {
+        String jobId = store.runJobId();
+        if (!canStopLive(!jobId.isEmpty(), store.terminal())) return;
+        new AlertDialog.Builder(this)
+                .setTitle("작업 중지")
+                .setMessage(jobId + "\n\n중지하면 이 Job은 앱에서 다시 재개할 수 없습니다. 나중에 계속하려면 취소하고 ‘일시정지’를 사용하세요. ChatGPT 대화와 Drive 파일은 삭제하지 않습니다.")
+                .setNegativeButton("취소", null)
+                .setPositiveButton("작업 중지", (dialog, which) -> stopRelay())
+                .show();
+    }
+
+    private void confirmStopArchivedJob() {
+        if (archivedJob == null || !canResumeArchived(archivedJob.optBoolean("terminal"),
+                historyStore.hasWorkspace(viewedJobId))) return;
+        new AlertDialog.Builder(this)
+                .setTitle("작업 중지")
+                .setMessage(viewedJobId + "\n\n중지하면 이 Job은 앱에서 다시 재개할 수 없습니다. ChatGPT 대화와 Drive 파일은 삭제하지 않습니다.")
+                .setNegativeButton("취소", null)
+                .setPositiveButton("작업 중지", (dialog, which) -> {
+                    if (!historyStore.stopWorkspace(viewedJobId)) {
+                        toast("작업 상태를 중지로 저장하지 못했습니다.");
+                        return;
+                    }
+                    runLog.record(viewedJobId, archivedJob.optString("step"),
+                            archivedJob.optString("round"), "UI_STOP", "", "",
+                            OrchestrationStore.BOOTSTRAP_STOPPED, "source=archived");
+                    archivedJob = historyStore.get(viewedJobId);
+                    toast("이 Job을 중지했습니다.");
+                    recreate();
+                })
+                .show();
+    }
+
     private void stopRelay() {
         store.stop();
         runLog.record(store, "UI_STOP", "source=manual");
@@ -490,6 +546,8 @@ public final class OrchestrationActivity extends Activity {
             return true;
         } catch (RuntimeException error) {
             store.fail("SERVICE_START_FAILED", "중계 서비스를 시작하지 못했습니다.");
+            runLog.record(store, "SERVICE_START_FAILED",
+                    "source=activity;exception=" + error.getClass().getSimpleName());
             if (NotificationHelper.orchestrationAlertsEnabled(this))
                 NotificationHelper.orchestrationError(this, store.monitoringSide(), store.runJobId(),
                         store.currentStep(), store.currentRound(), "중계 서비스를 시작하지 못했습니다.");
@@ -547,7 +605,7 @@ public final class OrchestrationActivity extends Activity {
         return url == null || url.isEmpty() ? "준비 전" : "연결됨 · " + url;
     }
 
-    private boolean isLiveJobMode() { return !newJobMode && archivedJob == null; }
+    private boolean isLiveJobMode() { return !newJobMode && archivedJob == null && !missingJob; }
 
     private static String sideOrDash(String side) {
         return side == null || side.isEmpty() ? "-" : OrchestrationStore.sideLabel(side);
@@ -585,16 +643,16 @@ public final class OrchestrationActivity extends Activity {
                 && !currentJobId.equals(viewedJobId);
     }
 
-    static boolean canResumeLive(boolean hasJob, boolean terminal) {
-        return hasJob && !terminal;
+    static boolean canResumeLive(boolean hasJob, boolean active, boolean terminal) {
+        return hasJob && !active && !terminal;
     }
 
     static boolean canPauseLive(boolean active, boolean paused, boolean terminal) {
         return active && !paused && !terminal;
     }
 
-    static boolean canStopLive(boolean active, boolean terminal) {
-        return active && !terminal;
+    static boolean canStopLive(boolean hasJob, boolean terminal) {
+        return hasJob && !terminal;
     }
 
     static boolean canHideJob(boolean archived, boolean active, boolean terminal) {
@@ -602,12 +660,23 @@ public final class OrchestrationActivity extends Activity {
     }
 
     static String completionLabel(boolean terminal, String lastSignal) {
+        return completionLabel(terminal, lastSignal, false);
+    }
+
+    static String completionLabel(boolean terminal, String lastSignal, boolean userStopped) {
         if (!terminal) return "미완료";
+        if (userStopped) return "중지 · 사용자 요청";
         String signal = lastSignal == null ? "" : lastSignal.trim();
         if (signal.startsWith("[AR_DONE ")) return "완료 · AR_DONE";
         if (signal.startsWith("[AR_PAUSE ")) return "일시정지 terminal · AR_PAUSE";
         if (signal.startsWith("[AR_ABORTED ")) return "중단 terminal · AR_ABORTED";
         return "terminal · 보존 상태";
+    }
+
+    static String projectDefaultToPersist(String candidate, String existing) {
+        String cleanExisting = existing == null ? "" : existing.trim();
+        String cleanCandidate = candidate == null ? "" : candidate.trim();
+        return TargetParser.isProjectHome(cleanCandidate) ? cleanCandidate : cleanExisting;
     }
 
     enum ResumePath { USER_ACTION_RESOLVED, RECONCILE, BOOTSTRAP }

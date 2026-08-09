@@ -22,6 +22,8 @@ public class ArchivedJobWorkspaceTest {
                 OrchestrationActivity.completionLabel(true, "[AR_PAUSE JOB S001 R001]"));
         assertEquals("중단 terminal · AR_ABORTED",
                 OrchestrationActivity.completionLabel(true, "[AR_ABORTED JOB S001 R001]"));
+        assertEquals("중지 · 사용자 요청",
+                OrchestrationActivity.completionLabel(true, "", true));
     }
 
     @Test
@@ -52,9 +54,10 @@ public class ArchivedJobWorkspaceTest {
 
     @Test
     public void liveControlsFollowDurableActivePausedAndTerminalState() {
-        assertTrue(OrchestrationActivity.canResumeLive(true, false));
-        assertFalse(OrchestrationActivity.canResumeLive(false, false));
-        assertFalse(OrchestrationActivity.canResumeLive(true, true));
+        assertTrue(OrchestrationActivity.canResumeLive(true, false, false));
+        assertFalse(OrchestrationActivity.canResumeLive(true, true, false));
+        assertFalse(OrchestrationActivity.canResumeLive(false, false, false));
+        assertFalse(OrchestrationActivity.canResumeLive(true, false, true));
 
         assertTrue(OrchestrationActivity.canPauseLive(true, false, false));
         assertFalse(OrchestrationActivity.canPauseLive(true, true, false));
@@ -70,9 +73,37 @@ public class ArchivedJobWorkspaceTest {
         String runningJobId = "AR-20260809-RUNNING-TEST";
 
         assertFalse(OrchestrationActivity.isArchivedJob(runningJobId, runningJobId));
-        assertTrue(OrchestrationActivity.canResumeLive(true, false));
+        assertFalse(OrchestrationActivity.canResumeLive(true, true, false));
         assertTrue(OrchestrationActivity.canPauseLive(true, false, false));
         assertTrue(OrchestrationActivity.canStopLive(true, false));
+    }
+
+    @Test
+    public void pausedFailedOrWaitingJobCanResumeOrStopButRunningJobCannotResumeAgain() {
+        assertTrue(OrchestrationActivity.canResumeLive(true, false, false));
+        assertTrue(OrchestrationActivity.canStopLive(true, false));
+        assertFalse(OrchestrationActivity.canResumeLive(true, true, false));
+        assertFalse(OrchestrationActivity.canPauseLive(false, true, false));
+    }
+
+    @Test
+    public void invalidDraftNeverReplacesLastValidProjectDefault() {
+        String valid = "https://chatgpt.com/g/project-one";
+        assertEquals("https://chatgpt.com/g/project-two", OrchestrationActivity.projectDefaultToPersist(
+                "https://chatgpt.com/g/project-two", valid));
+        assertEquals(valid, OrchestrationActivity.projectDefaultToPersist(
+                "https://chatgpt.com/", valid));
+        assertEquals(valid, OrchestrationActivity.projectDefaultToPersist("", valid));
+    }
+
+    @Test
+    public void historyCardExplainsCurrentRunningResumableAndTerminalRoles() {
+        assertEquals("현재 실행", OrchestrationHistoryActivity.jobRole(true, true, false, true));
+        assertEquals("현재 선택 · 재개 가능",
+                OrchestrationHistoryActivity.jobRole(true, false, false, true));
+        assertEquals("재개 가능", OrchestrationHistoryActivity.jobRole(false, false, false, true));
+        assertEquals("기록 전용", OrchestrationHistoryActivity.jobRole(false, false, false, false));
+        assertEquals("종료", OrchestrationHistoryActivity.jobRole(false, false, true, true));
     }
 
     @Test
