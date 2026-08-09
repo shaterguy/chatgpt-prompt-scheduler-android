@@ -27,6 +27,7 @@ public final class OrchestrationActivity extends Activity {
     private static final String STATE_JOB_ID = "orchestration.jobId";
 
     private OrchestrationStore store;
+    private OrchestrationRunLog runLog;
     private EditText projectName;
     private EditText chatUrl;
     private EditText workUrl;
@@ -48,6 +49,8 @@ public final class OrchestrationActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         store = new OrchestrationStore(this);
+        runLog = new OrchestrationRunLog(this);
+        runLog.record(store, "UI_OPEN", "source=activity");
         restoredState = savedInstanceState;
         createViews();
         restoredState = null;
@@ -123,7 +126,8 @@ public final class OrchestrationActivity extends Activity {
                 Ui.button(this, "재개", v -> resumeRelay()),
                 Ui.button(this, "일시정지", v -> pauseRelay()),
                 Ui.button(this, "중지", v -> stopRelay()),
-                resolvedButton));
+                resolvedButton,
+                Ui.button(this, "실행 로그", v -> startActivity(new Intent(this, OrchestrationLogsActivity.class)))));
         root.addView(Ui.body(this, "‘처리 완료’는 성공 확정이 아닙니다. 일반 Chat에 재검증을 요청하고 검증 응답을 다시 감시합니다."));
         android.widget.ScrollView scroll = Ui.scroll(this);
         suppressCredentialCapture(scroll);
@@ -192,6 +196,7 @@ public final class OrchestrationActivity extends Activity {
         stopService(new Intent(this, OrchestrationService.class));
         saveFields();
         store.begin();
+        runLog.record(store, "UI_START", "source=manual");
         if (startRelayService()) toast("오토런 중계를 시작했습니다.");
         refreshStatus();
     }
@@ -204,13 +209,15 @@ public final class OrchestrationActivity extends Activity {
             return;
         }
         restoreDurableRunConfiguration();
-        if (!store.resume()) {
-            toast(store.resumeBlockReason());
+        if (!store.beginReconciliation()) {
+            toast("재개할 대상 대화와 Job ID를 복구하지 못했습니다.");
             refreshStatus();
             return;
         }
+        runLog.record(store, "UI_RESUME", "source=manual");
+        runLog.record(store, "RESUME_RECONCILE_STARTED", "source=manual");
         if (startRelayService()) {
-            toast("저장된 오토런 상태에서 중계를 재개했습니다. 동일 프롬프트는 자동 재전송하지 않고 상태를 먼저 확인합니다.");
+            toast("두 대화방의 실제 상태를 확인해 오토런 중계를 재구성합니다. 기존 프롬프트는 먼저 중복 여부를 확인합니다.");
         }
         refreshStatus();
     }
@@ -218,12 +225,14 @@ public final class OrchestrationActivity extends Activity {
     private void resolveUserAction() {
         warnNotifications();
         if (!store.resolveUserAction()) { toast(store.userActionBlockReason()); return; }
+        runLog.record(store, "UI_USER_RESOLVED", "source=manual");
         if (startRelayService()) toast("일반 Chat에 사용자 조치 재검증을 요청합니다.");
         refreshStatus();
     }
 
     private void pauseRelay() {
         store.pause("사용자가 일시정지했습니다.");
+        runLog.record(store, "UI_PAUSE", "source=manual");
         stopService(new Intent(this, OrchestrationService.class));
         toast("오토런 중계를 일시정지했습니다.");
         refreshStatus();
@@ -231,6 +240,7 @@ public final class OrchestrationActivity extends Activity {
 
     private void stopRelay() {
         store.stop();
+        runLog.record(store, "UI_STOP", "source=manual");
         stopService(new Intent(this, OrchestrationService.class));
         toast("오토런 중계를 중지했습니다.");
         refreshStatus();
