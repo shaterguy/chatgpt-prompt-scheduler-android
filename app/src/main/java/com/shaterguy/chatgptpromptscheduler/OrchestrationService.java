@@ -52,6 +52,7 @@ public final class OrchestrationService extends Service implements AutomationRun
     private int generation;
     private boolean evaluationInFlight;
     private boolean commitAuthorized;
+    private long provisioningRecoveryStartedAt;
     private String loadedTarget = "";
     private PowerManager.WakeLock wakeLock;
     private int consecutiveEngineFailures;
@@ -145,6 +146,9 @@ public final class OrchestrationService extends Service implements AutomationRun
             ensureReconciliationEngine();
             return;
         }
+        if (OrchestrationStore.BOOTSTRAP_JOB_CREATED.equals(store.bootstrapState())) {
+            store.startChatProvisioning();
+        }
         String configError = store.runtimeConfigError();
         if (!configError.isEmpty()) {
             pauseWithError("CONFIG_INVALID", configError);
@@ -232,7 +236,7 @@ public final class OrchestrationService extends Service implements AutomationRun
             settings.setAllowUniversalAccessFromFileURLs(false);
             settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
             String userAgent = settings.getUserAgentString();
-            settings.setUserAgentString(userAgent + " ChatGPTPromptScheduler/0.1.18 Orchestration/3.2.4");
+            settings.setUserAgentString(userAgent + " ChatGPTPromptScheduler/0.1.19 Orchestration/3.3.0");
             CookieManager.getInstance().setAcceptCookie(true);
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false);
             webView.setWebViewClient(new WebViewClient() {
@@ -355,6 +359,10 @@ public final class OrchestrationService extends Service implements AutomationRun
             runReconciliationStep();
             return;
         }
+        if (store.bootstrapProvisioning()) {
+            runProvisioningStep();
+            return;
+        }
         String actualUrl = webView.getUrl();
         if (!matchesExpectedTarget(actualUrl)) {
             if (store.initialStartPending()) reloadInitialStartTarget("step_guard");
@@ -445,6 +453,119 @@ public final class OrchestrationService extends Service implements AutomationRun
             else if (OrchestrationStore.DELIVERY_SUBMITTED.equals(evaluatedState)) handleConfirmation(result);
             else if (evaluatedStopGeneration) handleStopGeneration(result);
             else handleObservation(result);
+        });
+    }
+
+    private void runProvisioningStep() {
+        String actualUrl = webView.getUrl();
+        if (!TargetParser.matchesProjectIdentity(store.runProjectUrl(), actualUrl)) {
+            pauseWithError("PROJECT_ENTRY_FAILED", "지정한 ChatGPT 프로젝트에 진입하지 못했습니다.");
+            return;
+        }
+        String side = store.runChatUrl().isEmpty() ? OrchestrationStore.SIDE_CHAT : OrchestrationStore.SIDE_WORK;
+        String state = store.bootstrapState();
+        String prompt = store.stampedPrompt();
+        if (prompt.isEmpty()) prompt = store.ensureStampedPrompt();
+        if (prompt.isEmpty()) {
+            pauseWithError("BOOTSTRAP_PROMPT_MISSING", "영속 bootstrap 프롬프트를 복구하지 못했습니다.");
+            return;
+        }
+        boolean submitting = OrchestrationStore.BOOTSTRAP_CHAT_SUBMITTING.equals(state)
+                || OrchestrationStore.BOOTSTRAP_WORK_SUBMITTING.equals(state);
+        boolean clickAttempt = !submitting && commitAuthorized;
+        if (clickAttempt) {
+            if (scheduleHasPriority()) { yieldForSchedule(); return; }
+            commitAuthorized = false;
+            store.markBootstrapSubmitting(side);
+            submitting = true;
+            state = store.bootstrapState();
+        }
+        if (OrchestrationStore.SIDE_WORK.equals(side)
+                && OrchestrationStore.BOOTSTRAP_WORK_PROVISIONING.equals(state)) {
+            store.markWorkPreferencesSetting();
+            state = store.bootstrapState();
+        }
+        String script;
+        if (submitting && !clickAttempt) {
+            script = ProvisioningScript.observe(store.runProjectUrl(), prompt);
+            if (provisioningRecoveryStartedAt == 0L) provisioningRecoveryStartedAt = SystemClock.elapsedRealtime();
+        } else if (clickAttempt) {
+            script = ProvisioningScript.commit(store.runProjectUrl(), prompt, store.runJobId(), side);
+        } else {
+            script = ProvisioningScript.prepare(side, store.runProjectUrl(), prompt, store.runJobId(),
+                    store.runWorkModel(), store.runReasoningEffort());
+        }
+        WebView active = webView;
+        int activeGeneration = generation;
+        long activeEpoch = store.epoch();
+        boolean evaluatedClick = clickAttempt;
+        boolean evaluatedSubmitting = submitting;
+        evaluationInFlight = true;
+        active.evaluateJavascript(script, raw -> {
+            evaluationInFlight = false;
+            if (active != webView || activeGeneration != generation || activeEpoch != store.epoch()) return;
+            if (scheduleHasPriority()) { yieldForSchedule(); return; }
+            JSONObject result = parseObject(raw);
+            String status = result.optString("status", "");
+            String url = result.optString("url", active.getUrl());
+            if ("CONFIRMED".equals(status)) {
+                try {
+                    store.confirmBootstrapSubmission(side, url);
+                } catch (IllegalArgumentException error) {
+                    pauseWithError("CONVERSATION_IDENTITY_INVALID", error.getMessage());
+                    return;
+                }
+                provisioningRecoveryStartedAt = 0L;
+                log("BOOTSTRAP_URL_CAPTURED", "side=" + safeCode(side));
+                cleanupWebView();
+                handler.post(this::ensureEngine);
+                return;
+            }
+            if ("READY".equals(status)) {
+                if (OrchestrationStore.SIDE_WORK.equals(side)) store.markWorkPreferencesVerified();
+                commitAuthorized = true;
+                provisioningRecoveryStartedAt = 0L;
+                scheduleStep(0L);
+                return;
+            }
+            if ("SUBMITTED".equals(status)) {
+                provisioningRecoveryStartedAt = SystemClock.elapsedRealtime();
+                scheduleStep(900L);
+                return;
+            }
+            if ("RETRY".equals(status)) {
+                if (evaluatedSubmitting && !evaluatedClick && provisioningRecoveryStartedAt > 0L
+                        && SystemClock.elapsedRealtime() - provisioningRecoveryStartedAt >= 20_000L) {
+                    pauseAmbiguous(OrchestrationStore.SIDE_WORK.equals(side)
+                            ? "Work 첫 요청의 제출 여부를 확인할 수 없어 자동 재전송하지 않습니다."
+                            : "일반 Chat 첫 요청의 제출 여부를 확인할 수 없어 자동 재전송하지 않습니다.");
+                    return;
+                }
+                if (!evaluatedSubmitting && System.currentTimeMillis() - store.phaseStartedAt() >= 120_000L) {
+                    String retryDetail = result.optString("detail", "");
+                    String code;
+                    if (!OrchestrationStore.SIDE_WORK.equals(side)) code = "CHAT_CREATE_FAILED";
+                    else if (retryDetail.contains("모드")) code = "WORK_MODE_SELECT_FAILED";
+                    else if (retryDetail.contains("모델")) code = "WORK_MODEL_SELECT_FAILED";
+                    else if (retryDetail.contains("추론")) code = "WORK_REASONING_SELECT_FAILED";
+                    else code = "WORK_PREFERENCES_NOT_VERIFIED";
+                    pauseWithError(code, OrchestrationStore.SIDE_WORK.equals(side)
+                            ? "지정한 Work 모드/모델/추론 정도의 실제 적용을 확인하지 못했습니다."
+                            : "프로젝트 새 일반 Chat 입력 화면을 확인하지 못했습니다.");
+                    return;
+                }
+                retry(result.optString("detail", "bootstrap 준비 대기"), 900L);
+                return;
+            }
+            String code = switch (status) {
+                case "AUTH_REQUIRED" -> "AUTH_REQUIRED";
+                case "PROJECT_MISMATCH", "TARGET_CONTEXT_MISMATCH" -> "PROJECT_MISMATCH";
+                case "EXISTING_CONVERSATION", "WRONG_CONVERSATION" -> "CONVERSATION_NOT_NEW";
+                case "DRAFT_CHANGED" -> "BOOTSTRAP_DRAFT_CHANGED";
+                case "SEND_UNAVAILABLE", "DOM_STRUCTURE_ERROR" -> "DOM_STRUCTURE_ERROR";
+                default -> "BOOTSTRAP_SCRIPT_ERROR";
+            };
+            pauseWithError(code, result.optString("detail", "bootstrap 화면 상태를 확인하지 못했습니다."));
         });
     }
 
@@ -1240,6 +1361,7 @@ public final class OrchestrationService extends Service implements AutomationRun
         }
         if (OrchestrationStore.DELIVERY_PREPARING.equals(store.deliveryState())) store.resetPreparing();
         commitAuthorized = false;
+        provisioningRecoveryStartedAt = 0L;
         cleanupWebView();
         store.setSchedulePreempted(true);
         store.setStatus("예약 실행 우선 · 오토런 중계 일시 양보");
@@ -1276,6 +1398,9 @@ public final class OrchestrationService extends Service implements AutomationRun
     }
 
     private boolean matchesExpectedTarget(String actualUrl) {
+        if (store.bootstrapProvisioning()) {
+            return TargetParser.matchesProjectIdentity(store.runProjectUrl(), actualUrl);
+        }
         if (!store.reconciling() && store.initialStartPending()) {
             return TargetParser.matchesConversationIdentity(currentRelayTargetUrl(), actualUrl);
         }
@@ -1334,6 +1459,9 @@ public final class OrchestrationService extends Service implements AutomationRun
 
     private String activeTargetSide() {
         if (store.reconciling()) return store.reconciliationSide();
+        if (store.bootstrapProvisioning()) {
+            return store.runChatUrl().isEmpty() ? OrchestrationStore.SIDE_CHAT : OrchestrationStore.SIDE_WORK;
+        }
         return OrchestrationStore.DELIVERY_WAITING_RESPONSE.equals(store.deliveryState())
                 ? store.monitoringSide() : store.deliveryTarget();
     }
@@ -1382,6 +1510,7 @@ public final class OrchestrationService extends Service implements AutomationRun
         generation++;
         evaluationInFlight = false;
         commitAuthorized = false;
+        provisioningRecoveryStartedAt = 0L;
         recoveryProbeStartedAt = 0L;
         missingUserTurnProbes = 0;
         loadedTarget = "";

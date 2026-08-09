@@ -351,7 +351,10 @@ public class OrchestrationSignalTest {
         assertFalse(activity.contains("store.newRunError"));
         assertFalse(activity.contains("실행 설정이 변경되었습니다"));
         assertFalse(activity.contains("store.pendingPrompt().isEmpty()"));
-        assertTrue(activity.contains("restoreDurableRunConfiguration"));
+        assertTrue(activity.contains("store.beginAutomatic"));
+        assertFalse(activity.contains("일반 Chat 대화 URL"));
+        assertFalse(activity.contains("Work 대화 URL"));
+        assertFalse(activity.contains("Job ID\", store.jobId"));
         assertTrue(activity.contains("store.beginReconciliation"));
         assertTrue(activity.contains("RESUME_RECONCILE_STARTED"));
         assertTrue(activity.contains("NonCredentialEditText"));

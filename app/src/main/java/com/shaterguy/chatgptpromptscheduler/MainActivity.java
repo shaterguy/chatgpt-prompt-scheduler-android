@@ -57,10 +57,10 @@ public final class MainActivity extends Activity {
         root.setPadding(Ui.dp(this, 18), Ui.dp(this, 12), Ui.dp(this, 18), Ui.dp(this, 24));
         scroll.addView(root);
         root.addView(Ui.title(this, "ChatGPT Prompt Scheduler"));
-        root.addView(Ui.body(this, "v0.1.18 · 화면을 열지 않고 예약 프롬프트를 실행하는 Android 앱"));
+        root.addView(Ui.body(this, "v0.1.19 · 화면을 열지 않고 예약 프롬프트를 실행하는 Android 앱"));
 
         root.addView(Ui.section(this, "선택 기능 · 오토런 중계"));
-        root.addView(Ui.body(this, "예약 실행과 분리된 Protocol 3.x 중계입니다. 예약 작업이 항상 우선합니다."));
+        root.addView(Ui.body(this, "요구사항만 입력하면 프로젝트 대화를 자동 준비하는 Protocol 3.3 중계입니다. 예약 작업이 항상 우선합니다."));
         root.addView(Ui.button(this, "오토런 중계 열기", v -> startActivity(new Intent(this, OrchestrationActivity.class))));
 
         root.addView(Ui.section(this, "실행 준비 상태"));

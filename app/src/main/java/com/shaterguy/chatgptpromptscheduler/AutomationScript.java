@@ -78,7 +78,7 @@ public final class AutomationScript {
                 "if(!targetOk)return result('TARGET_CONTEXT_MISMATCH','expected='+expectedUrl+' actual='+location.href,routeDiagnostics);";
     }
 
-    private static String preferenceScript(Schedule schedule, String run) {
+    static String preferenceScript(Schedule schedule, String run) {
         if ("existing".equals(schedule.targetType)) {
             return "const modeDiagnostics={requested:'inherit',ready:true,action:'',skipped:true};" +
                     "const modelDiagnostics={requested:'inherit',ready:true,action:'',skipped:true};" +
@@ -99,6 +99,9 @@ public final class AutomationScript {
                 "const modeDiagnostics={requested:" + jsQuote(requestedMode) + ",candidateFound:!!mode,candidateLabel:mode?clip(exactText((mode.innerText||'')+' '+(mode.getAttribute('aria-label')||'')),120):'',selected:modeSelected,clicked:false,priorClick:!!modePrior};" +
                 "if(mode&&!modeSelected&&!modePrior){const value=JSON.stringify({at:Date.now(),label:modeDiagnostics.candidateLabel});try{sessionStorage.setItem(modeKey,value);}catch(_){}window[modeKey]=value;mode.click();modeDiagnostics.clicked=true;}" +
                 "if(modeDiagnostics.clicked)return result('RETRY','모드 전환 반영 대기',{...routeDiagnostics,mode:modeDiagnostics});" +
+                ("work".equals(schedule.experience)
+                        ? "if(!modeSelected)return result('RETRY','Work 모드 실제 적용 상태 대기',{...routeDiagnostics,mode:modeDiagnostics});"
+                        : "") +
                 "const elementLabel=e=>exactText(e?.innerText||'')||exactText(e?.getAttribute?.('aria-label')||'');" +
                 "const visible=e=>!!e&&e.isConnected&&e.offsetParent!==null;" +
                 "const composerInput=document.querySelector('#prompt-textarea')||[...document.querySelectorAll('textarea,[contenteditable=\"true\"]')].filter(visible).sort((a,b)=>b.getBoundingClientRect().bottom-a.getBoundingClientRect().bottom)[0]||null;" +
@@ -159,7 +162,7 @@ public final class AutomationScript {
         return value == null ? "" : value;
     }
 
-    private static String jsQuote(String value) {
+    static String jsQuote(String value) {
         StringBuilder out = new StringBuilder(value.length() + 16).append('"');
         for (int i = 0; i < value.length(); i++) {
             char c = value.charAt(i);

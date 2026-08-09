@@ -12,8 +12,10 @@ import android.graphics.Typeface;
 import android.view.View;
 import android.view.autofill.AutofillValue;
 import android.widget.Button;
+import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -21,17 +23,19 @@ import java.text.DateFormat;
 import java.util.Date;
 
 public final class OrchestrationActivity extends Activity {
-    private static final String STATE_PROJECT_NAME = "orchestration.projectName";
-    private static final String STATE_CHAT_URL = "orchestration.chatUrl";
-    private static final String STATE_WORK_URL = "orchestration.workUrl";
-    private static final String STATE_JOB_ID = "orchestration.jobId";
+    private static final String STATE_PROJECT_URL = "orchestration.projectUrl";
+    private static final String STATE_REQUIREMENT = "orchestration.requirement";
+    private static final String[] MODEL_VALUES = {"inherit", "sol", "terra", "luna"};
+    private static final String[] MODEL_LABELS = {"inherit (현재값 유지)", "sol", "terra", "luna"};
+    private static final String[] REASONING_VALUES = {"inherit", "light", "medium", "high", "xhigh", "max", "ultra"};
+    private static final String[] REASONING_LABELS = {"inherit (현재값 유지)", "light", "medium", "high", "xhigh", "max", "ultra"};
 
     private OrchestrationStore store;
     private OrchestrationRunLog runLog;
-    private EditText projectName;
-    private EditText chatUrl;
-    private EditText workUrl;
-    private EditText jobId;
+    private EditText projectUrl;
+    private EditText requirement;
+    private Spinner workModel;
+    private Spinner reasoningEffort;
     private TextView statusSummary;
     private TextView currentStatus;
     private TextView lastReceive;
@@ -69,15 +73,14 @@ public final class OrchestrationActivity extends Activity {
     @Override
     protected void onPause() {
         refreshHandler.removeCallbacks(refreshRunnable);
+        saveDefaults();
         super.onPause();
     }
 
     @Override
     protected void onSaveInstanceState(Bundle outState) {
-        if (projectName != null) outState.putString(STATE_PROJECT_NAME, projectName.getText().toString());
-        if (chatUrl != null) outState.putString(STATE_CHAT_URL, chatUrl.getText().toString());
-        if (workUrl != null) outState.putString(STATE_WORK_URL, workUrl.getText().toString());
-        if (jobId != null) outState.putString(STATE_JOB_ID, jobId.getText().toString());
+        if (projectUrl != null) outState.putString(STATE_PROJECT_URL, projectUrl.getText().toString());
+        if (requirement != null) outState.putString(STATE_REQUIREMENT, requirement.getText().toString());
         super.onSaveInstanceState(outState);
     }
 
@@ -86,18 +89,29 @@ public final class OrchestrationActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         suppressCredentialCapture(root);
         root.setPadding(Ui.dp(this, 18), Ui.dp(this, 12), Ui.dp(this, 18), Ui.dp(this, 24));
-        root.addView(Ui.title(this, "오토런 중계 · Protocol 3.x"));
-        root.addView(Ui.body(this, "예약 실행과 분리된 선택 기능입니다. 예약 실행이 항상 우선하며 화면 이동은 중계 상태를 바꾸지 않습니다."));
+        root.addView(Ui.title(this, "오토런 · Protocol 3.3"));
+        root.addView(Ui.body(this, "확정된 요구사항만 붙여넣으면 Job과 프로젝트의 일반 Chat/Work 대화를 앱이 자동으로 준비합니다. 예약 실행은 항상 우선합니다."));
 
-        root.addView(Ui.section(this, "연결 설정"));
-        projectName = field("프로젝트 이름(선택)", store.projectName(), false, STATE_PROJECT_NAME);
-        chatUrl = field("일반 Chat 대화 URL", store.chatUrl(), true, STATE_CHAT_URL);
-        workUrl = field("Work 대화 URL", store.workUrl(), true, STATE_WORK_URL);
-        jobId = field("Job ID", store.jobId(), false, STATE_JOB_ID);
-        root.addView(projectName);
-        root.addView(chatUrl);
-        root.addView(workUrl);
-        root.addView(jobId);
+        root.addView(Ui.section(this, "새 Job 설정"));
+        projectUrl = field("ChatGPT 프로젝트 주소 · https://chatgpt.com/g/<project-id>",
+                store.defaultProjectUrl(), true, STATE_PROJECT_URL);
+        root.addView(projectUrl);
+        root.addView(Ui.body(this, "프로젝트 기본값 변경은 이미 실행 중인 Job에 영향을 주지 않습니다."));
+        root.addView(Ui.section(this, "Work 모델"));
+        workModel = spinner(MODEL_LABELS, indexOf(MODEL_VALUES, store.defaultWorkModel()));
+        root.addView(workModel);
+        root.addView(Ui.section(this, "Work 추론 정도"));
+        reasoningEffort = spinner(REASONING_LABELS, indexOf(REASONING_VALUES, store.defaultReasoningEffort()));
+        root.addView(reasoningEffort);
+        root.addView(Ui.section(this, "오토런 요구사항"));
+        requirement = field("(오토런)\n확정된 작업 요구사항", store.requirementDraft(), false, STATE_REQUIREMENT);
+        requirement.setSingleLine(false);
+        requirement.setMinLines(8);
+        requirement.setMaxLines(30);
+        requirement.setGravity(android.view.Gravity.TOP | android.view.Gravity.START);
+        requirement.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        root.addView(requirement);
 
         root.addView(Ui.section(this, "현재 동작"));
         statusSummary = Ui.body(this, "");
@@ -122,7 +136,7 @@ public final class OrchestrationActivity extends Activity {
         root.addView(Ui.section(this, "중계 제어"));
         resolvedButton = Ui.button(this, "처리 완료", v -> resolveUserAction());
         root.addView(Ui.actionGrid(this,
-                Ui.button(this, "새로 시작", v -> startNew()),
+                Ui.button(this, "오토런 시작", v -> startNew()),
                 Ui.button(this, "재개", v -> resumeRelay()),
                 Ui.button(this, "일시정지", v -> pauseRelay()),
                 Ui.button(this, "중지", v -> stopRelay()),
@@ -141,6 +155,12 @@ public final class OrchestrationActivity extends Activity {
         String stepRound = store.currentStep().isEmpty() ? "-" : store.currentStep() + " / " + store.currentRound();
         currentStatus.setText("모니터링 대화방: " + OrchestrationStore.sideLabel(store.monitoringSide())
                 + "\n현재 동작: " + store.status()
+                + "\nJob ID: " + emptyAsDash(store.runJobId())
+                + "\n프로젝트: " + emptyAsDash(store.runProjectUrl())
+                + "\n일반 Chat: " + connectionLabel(store.runChatUrl())
+                + "\nWork: " + connectionLabel(store.runWorkUrl())
+                + "\nWork 모델/추론: " + store.runWorkModel() + " / " + store.runReasoningEffort()
+                + "\nBootstrap: " + store.bootstrapState()
                 + "\n다음 전달 대상: " + OrchestrationStore.sideLabel(store.deliveryTarget())
                 + " · " + deliveryLabel(store.deliveryState())
                 + "\n현재 Step/Round: " + stepRound
@@ -181,23 +201,37 @@ public final class OrchestrationActivity extends Activity {
         return value == null ? "" : value;
     }
 
-    private void saveFields() {
-        store.saveConfig(projectName.getText().toString(), chatUrl.getText().toString(),
-                workUrl.getText().toString(), jobId.getText().toString());
+    private Spinner spinner(String[] labels, int selected) {
+        Spinner spinner = new Spinner(this);
+        spinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels));
+        spinner.setSelection(Math.max(0, selected));
+        return spinner;
+    }
+
+    private void saveDefaults() {
+        if (projectUrl == null || requirement == null || workModel == null || reasoningEffort == null) return;
+        store.saveAutomaticDefaults(projectUrl.getText().toString(),
+                MODEL_VALUES[workModel.getSelectedItemPosition()],
+                REASONING_VALUES[reasoningEffort.getSelectedItemPosition()], requirement.getText().toString());
     }
 
     private void startNew() {
         warnNotifications();
-        String nextChatUrl = chatUrl.getText().toString().trim();
-        String nextWorkUrl = workUrl.getText().toString().trim();
-        String nextJobId = jobId.getText().toString().trim();
-        String error = OrchestrationStore.configError(nextChatUrl, nextWorkUrl, nextJobId);
+        if (store.active() && !store.terminal() && !store.runJobId().isEmpty()) {
+            toast("현재 Job이 실행 중입니다. 먼저 일시정지 또는 중지해 주세요. Job ID: " + store.runJobId());
+            return;
+        }
+        String nextProject = projectUrl.getText().toString().trim();
+        String nextRequirement = requirement.getText().toString();
+        String error = OrchestrationStore.automaticConfigError(nextProject, nextRequirement);
         if (!error.isEmpty()) { toast(error); return; }
         stopService(new Intent(this, OrchestrationService.class));
-        saveFields();
-        store.begin();
-        runLog.record(store, "UI_START", "source=manual");
-        if (startRelayService()) toast("오토런 중계를 시작했습니다.");
+        saveDefaults();
+        String generated = store.beginAutomatic(nextProject,
+                MODEL_VALUES[workModel.getSelectedItemPosition()],
+                REASONING_VALUES[reasoningEffort.getSelectedItemPosition()], nextRequirement);
+        runLog.record(store, "UI_START", "source=automatic_bootstrap");
+        if (startRelayService()) toast("오토런을 시작했습니다. Job ID: " + generated);
         refreshStatus();
     }
 
@@ -208,16 +242,14 @@ public final class OrchestrationActivity extends Activity {
             refreshStatus();
             return;
         }
-        restoreDurableRunConfiguration();
-        if (!store.beginReconciliation()) {
-            toast("재개할 대상 대화와 Job ID를 복구하지 못했습니다.");
-            refreshStatus();
-            return;
-        }
+        boolean fullRelay = !store.runChatUrl().isEmpty() && !store.runWorkUrl().isEmpty();
+        boolean resumed = fullRelay ? store.beginReconciliation() : store.resume();
+        if (!resumed) { toast(store.resumeBlockReason()); refreshStatus(); return; }
         runLog.record(store, "UI_RESUME", "source=manual");
-        runLog.record(store, "RESUME_RECONCILE_STARTED", "source=manual");
+        if (fullRelay) runLog.record(store, "RESUME_RECONCILE_STARTED", "source=manual");
         if (startRelayService()) {
-            toast("두 대화방의 실제 상태를 확인해 오토런 중계를 재구성합니다. 기존 프롬프트는 먼저 중복 여부를 확인합니다.");
+            toast(fullRelay ? "두 대화방의 실제 상태를 확인해 오토런 중계를 재구성합니다."
+                    : "마지막으로 확인된 bootstrap 상태에서 관찰 전용으로 재개합니다.");
         }
         refreshStatus();
     }
@@ -293,11 +325,13 @@ public final class OrchestrationActivity extends Activity {
         }
     }
 
-    private void restoreDurableRunConfiguration() {
-        if (!store.projectName().isEmpty()) projectName.setText(store.projectName());
-        chatUrl.setText(store.runChatUrl());
-        workUrl.setText(store.runWorkUrl());
-        jobId.setText(store.runJobId());
+    private static int indexOf(String[] values, String value) {
+        for (int i = 0; i < values.length; i++) if (values[i].equals(value)) return i;
+        return 0;
+    }
+
+    private static String connectionLabel(String url) {
+        return url == null || url.isEmpty() ? "준비 전" : "연결됨 · " + url;
     }
 
     private void toast(String message) { Toast.makeText(this, message, Toast.LENGTH_LONG).show(); }
