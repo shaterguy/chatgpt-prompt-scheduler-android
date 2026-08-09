@@ -43,6 +43,10 @@ public final class OrchestrationLogsActivity extends Activity {
 
     private void render() {
         ScrollView scroll = Ui.scroll(this);
+        // Log pages may be shorter than the viewport. Let their content keep its natural height;
+        // otherwise the trailing filler cell in the three-button grid can consume the viewport
+        // and visually push a short execution log below the screen on some Android layouts.
+        scroll.setFillViewport(false);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(Ui.dp(this, 18), Ui.dp(this, 12), Ui.dp(this, 18), Ui.dp(this, 24));
