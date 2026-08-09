@@ -586,7 +586,8 @@ public final class OrchestrationStore {
     }
 
     public void pause(String reason) {
-        commit(preferences.edit().putBoolean("paused", true).putString("status", "사용자가 중계를 일시정지함")
+        commit(preferences.edit().putBoolean("active", false).putBoolean("paused", true)
+                .putString("status", "사용자가 중계를 일시정지함")
                 .putString("error", clean(reason)).putBoolean("reconciling", false)
                 .putString("recoveryBootstrapState", bootstrapState())
                 .putString("bootstrapState", FLOW_AUTO_BOOTSTRAP.equals(flowMode()) ? BOOTSTRAP_PAUSED : bootstrapState())

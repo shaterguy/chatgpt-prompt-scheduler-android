@@ -257,7 +257,7 @@ public final class OrchestrationActivity extends Activity {
                 Ui.button(this, "디버그 로그", v -> openLogs(OrchestrationLogsActivity.KIND_DEBUG)),
                 Ui.button(this, "작업 삭제", v -> confirmHideJob())));
         root.addView(Ui.body(this, resumable
-                ? "미완료 Job입니다. 현재 다른 Job이 실행 중이 아니면 재개할 수 있습니다."
+                ? "미완료 Job입니다. 재개할 수 있으며, 다른 Job이 실행 중이면 확인 후 그 Job을 일시정지·저장하고 이 Job으로 전환합니다."
                 : job.optBoolean("terminal")
                 ? "검증된 terminal 신호가 영속되어 재개할 수 없습니다. 로그와 실행 스냅샷은 계속 열 수 있습니다."
                 : "이전 버전에서 저장된 요약만 있고 전체 재개 스냅샷이 없어 안전하게 재개할 수 없습니다."));
@@ -341,8 +341,13 @@ public final class OrchestrationActivity extends Activity {
 
     private void startNew() {
         warnNotifications();
-        if (store.active() && !store.terminal() && !store.runJobId().isEmpty()) {
-            toast("현재 Job이 실행 중입니다. 먼저 일시정지 또는 중지해 주세요. Job ID: " + store.runJobId());
+        if (!canStartNewJob(store.active(), store.terminal(), !store.runJobId().isEmpty())) {
+            new AlertDialog.Builder(this)
+                    .setTitle("실행 중인 작업이 있습니다")
+                    .setMessage("Job ID: " + store.runJobId()
+                            + "\n\n동시에 하나의 오토런만 실행할 수 있습니다. 현재 작업 화면에서 먼저 일시정지 또는 중지해 주세요.")
+                    .setPositiveButton("확인", null)
+                    .show();
             return;
         }
         String nextProject = projectUrl.getText().toString().trim();
@@ -351,6 +356,7 @@ public final class OrchestrationActivity extends Activity {
         if (!error.isEmpty()) { toast(error); return; }
         stopService(new Intent(this, OrchestrationService.class));
         saveProjectDefault();
+        if (!store.runJobId().isEmpty()) historyStore.sync(store);
         String generated = store.beginAutomatic(nextProject,
                 MODEL_VALUES[workModel.getSelectedItemPosition()],
                 REASONING_VALUES[reasoningEffort.getSelectedItemPosition()], nextRequirement);
@@ -401,10 +407,31 @@ public final class OrchestrationActivity extends Activity {
             toast("terminal Job은 재개할 수 없습니다.");
             return;
         }
-        if (store.active() && !store.terminal() && !viewedJobId.equals(store.runJobId())) {
-            toast("다른 Job이 실행 중입니다. 먼저 현재 Job을 일시정지 또는 중지해 주세요.");
+        if (!historyStore.hasWorkspace(viewedJobId)) {
+            toast("이 Job의 전체 재개 스냅샷이 없습니다.");
             return;
         }
+        if (hasCompetingActiveJob(store.active(), store.terminal(), viewedJobId, store.runJobId())) {
+            String currentJobId = store.runJobId();
+            new AlertDialog.Builder(this)
+                    .setTitle("작업 전환")
+                    .setMessage("현재 실행 중인 " + currentJobId + "을(를) 일시정지하고\n"
+                            + viewedJobId + "을(를) 재개합니다.")
+                    .setNegativeButton("취소", null)
+                    .setPositiveButton("전환 및 재개", (dialog, which) -> {
+                        store.pause("다른 Job으로 전환되어 일시정지했습니다.");
+                        runLog.record(store, "UI_PAUSE", "source=job_switch;target=" + viewedJobId);
+                        historyStore.sync(store);
+                        stopService(new Intent(this, OrchestrationService.class));
+                        restoreAndResumeArchivedJob();
+                    })
+                    .show();
+            return;
+        }
+        restoreAndResumeArchivedJob();
+    }
+
+    private void restoreAndResumeArchivedJob() {
         historyStore.sync(store);
         if (!historyStore.restoreWorkspace(viewedJobId, store)) {
             toast("이 Job의 전체 재개 스냅샷을 복원하지 못했습니다.");
@@ -441,14 +468,16 @@ public final class OrchestrationActivity extends Activity {
     private void pauseRelay() {
         store.pause("사용자가 일시정지했습니다.");
         runLog.record(store, "UI_PAUSE", "source=manual");
+        historyStore.sync(store);
         stopService(new Intent(this, OrchestrationService.class));
-        toast("오토런 중계를 일시정지했습니다.");
+        toast("오토런 중계를 일시정지했습니다. 다른 작업을 시작하거나 이 Job을 나중에 재개할 수 있습니다.");
         refreshStatus();
     }
 
     private void stopRelay() {
         store.stop();
         runLog.record(store, "UI_STOP", "source=manual");
+        historyStore.sync(store);
         stopService(new Intent(this, OrchestrationService.class));
         toast("오토런 중계를 중지했습니다.");
         refreshStatus();
@@ -544,6 +573,16 @@ public final class OrchestrationActivity extends Activity {
 
     static boolean canResumeArchived(boolean terminal, boolean hasWorkspace) {
         return !terminal && hasWorkspace;
+    }
+
+    static boolean canStartNewJob(boolean active, boolean terminal, boolean hasJob) {
+        return !hasJob || terminal || !active;
+    }
+
+    static boolean hasCompetingActiveJob(boolean active, boolean terminal,
+                                         String viewedJobId, String currentJobId) {
+        return active && !terminal && currentJobId != null && !currentJobId.isEmpty()
+                && !currentJobId.equals(viewedJobId);
     }
 
     static boolean canResumeLive(boolean hasJob, boolean terminal) {

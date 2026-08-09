@@ -32,6 +32,25 @@ public class ArchivedJobWorkspaceTest {
     }
 
     @Test
+    public void archivedResumeStaysAvailableAndDetectsWhenAJobSwitchNeedsConfirmation() {
+        assertTrue(OrchestrationActivity.canResumeArchived(false, true));
+        assertTrue(OrchestrationActivity.hasCompetingActiveJob(
+                true, false, "JOB-PAUSED-A", "JOB-RUNNING-B"));
+        assertFalse(OrchestrationActivity.hasCompetingActiveJob(
+                false, false, "JOB-PAUSED-A", "JOB-PAUSED-B"));
+        assertFalse(OrchestrationActivity.hasCompetingActiveJob(
+                true, false, "JOB-RUNNING-A", "JOB-RUNNING-A"));
+    }
+
+    @Test
+    public void newJobIsBlockedOnlyWhileAnotherNonterminalJobIsActivelyRunning() {
+        assertFalse(OrchestrationActivity.canStartNewJob(true, false, true));
+        assertTrue(OrchestrationActivity.canStartNewJob(false, false, true));
+        assertTrue(OrchestrationActivity.canStartNewJob(false, true, true));
+        assertTrue(OrchestrationActivity.canStartNewJob(false, false, false));
+    }
+
+    @Test
     public void liveControlsFollowDurableActivePausedAndTerminalState() {
         assertTrue(OrchestrationActivity.canResumeLive(true, false));
         assertFalse(OrchestrationActivity.canResumeLive(false, false));
@@ -44,6 +63,16 @@ public class ArchivedJobWorkspaceTest {
         assertTrue(OrchestrationActivity.canStopLive(true, false));
         assertFalse(OrchestrationActivity.canStopLive(false, false));
         assertFalse(OrchestrationActivity.canStopLive(true, true));
+    }
+
+    @Test
+    public void runningJobRemainsLiveAfterLeavingAndReopeningItsHistoryCard() {
+        String runningJobId = "AR-20260809-RUNNING-TEST";
+
+        assertFalse(OrchestrationActivity.isArchivedJob(runningJobId, runningJobId));
+        assertTrue(OrchestrationActivity.canResumeLive(true, false));
+        assertTrue(OrchestrationActivity.canPauseLive(true, false, false));
+        assertTrue(OrchestrationActivity.canStopLive(true, false));
     }
 
     @Test

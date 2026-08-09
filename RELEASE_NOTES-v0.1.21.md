@@ -8,6 +8,7 @@
 - 완료되었거나 현재 실행 대상이 아닌 Job의 재개·일시정지·중지 버튼은 같은 위치에 안전하게 비활성 표시하며, 실행·디버그 로그 버튼은 계속 동작합니다.
 - `AR_DONE`만 성공 완료로 판정하고 `AR_PAUSE`·`AR_ABORTED` terminal을 구분합니다. 미완료 과거 Job은 전체 복구 스냅샷이 있을 때만 재개합니다.
 - 작업 삭제는 `취소`/`작업 삭제` 확인 대화상자를 거쳐 앱에서만 숨깁니다. ChatGPT 대화·Drive 파일·Job ID 재사용 방지 기록은 그대로 유지합니다.
+- 수동 일시정지는 현재 Job 스냅샷을 저장하고 중계 실행 슬롯을 양보하므로 다른 새 Job을 시작할 수 있습니다. 일시정지된 Job의 `재개`는 유지되며, 다른 Job 실행 중에는 `취소`/`전환 및 재개` 확인 후 현재 Job을 일시정지·저장하고 선택한 Job으로 안전하게 전환합니다.
 - 기존 예약 실행 우선권, AlarmEngine, QueueStore, ExecutionService, 예약 데이터와 알림 경로는 변경하지 않았습니다.
 
 패키지명은 `com.shaterguy.chatgptpromptscheduler`, versionCode는 22, versionName은 0.1.21입니다. 공개 서명 인증서는 기존 릴리즈와 동일하게 유지됩니다.
