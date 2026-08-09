@@ -160,7 +160,7 @@ public final class OrchestrationScript {
     private static String common() {
         return "const norm=s=>String(s??'').replace(/[\\u200B-\\u200D\\uFEFF]/g,'').replace(/\\u00a0/g,' ').replace(/\\r\\n?/g,'\\n').trim();" +
                 "const out=(status,detail='',data={})=>JSON.stringify({status,detail,...data});" +
-                "const visible=e=>{if(!e||!e.isConnected)return false;const r=e.getBoundingClientRect();const s=getComputedStyle(e);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden';}" +
+                "const visible=e=>{if(!e||!e.isConnected)return false;const r=e.getBoundingClientRect();const s=getComputedStyle(e);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden';};" +
                 "const authLabel=e=>norm(e?.innerText||e?.textContent||e?.value||e?.getAttribute('aria-label')||'').toLowerCase();" +
                 "const exactAuthLabel=t=>/^(log in|login|sign up|signup|로그인|회원가입|가입하기|로그인하기)$/.test(t);" +
                 "const visibleAuthGate=()=>{const main=document.querySelector('main');if(!main)return false;const hasConversation=!!main.querySelector('[data-message-author-role=user],[data-message-author-role=assistant],article[data-turn=user],article[data-turn=assistant]');const authRoot=[...main.querySelectorAll('form,[role=dialog],[data-testid*=auth i],[data-testid*=login i],[data-testid*=signup i],[id*=login i],[id*=signup i]')].some(e=>visible(e)&&(/login|sign.?up|auth|로그인|회원가입/i.test(authLabel(e))||!!e.querySelector('input[type=password],input[type=email]')));const authCta=[...main.querySelectorAll('button,a,[role=button],input[type=submit]')].some(e=>visible(e)&&exactAuthLabel(authLabel(e)));return authRoot||(!hasConversation&&authCta);};" +
