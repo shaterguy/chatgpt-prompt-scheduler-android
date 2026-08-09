@@ -6,6 +6,7 @@ import android.content.SharedPreferences;
 import java.net.URI;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -41,6 +42,7 @@ public final class OrchestrationStore {
     public static final String BOOTSTRAP_RELAY_ACTIVE = "RELAY_ACTIVE";
     public static final String BOOTSTRAP_WAITING_USER = "WAITING_USER";
     public static final String BOOTSTRAP_PAUSED = "PAUSED";
+    public static final String BOOTSTRAP_STOPPED = "STOPPED";
     public static final String BOOTSTRAP_FAILED = "FAILED";
     public static final String BOOTSTRAP_DONE = "DONE";
 
@@ -64,6 +66,10 @@ public final class OrchestrationStore {
 
     private static final int SCHEMA_VERSION = 6;
     private static final String PREFS = "orchestration_protocol_3";
+    private static final String WORKSPACE_PREFS_PREFIX = "orchestration_workspace_";
+    private static final Set<String> GLOBAL_KEYS = Set.of(
+            "defaultProjectUrl", "defaultWorkModel", "defaultReasoningEffort",
+            "requirementDraft", "usedJobIds");
     private static final Pattern JOB_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,63}");
     private final SharedPreferences preferences;
 
@@ -84,6 +90,77 @@ public final class OrchestrationStore {
                 .putString("defaultWorkModel", Schedule.normalizedWorkModel("work", workModel))
                 .putString("defaultReasoningEffort", Schedule.normalizedReasoningEffort("work", reasoningEffort))
                 .putString("requirementDraft", requirementDraft == null ? "" : requirementDraft));
+    }
+
+    /** The new-Job screen deliberately persists only its reusable project address. */
+    public void saveAutomaticProjectDefault(String projectUrl) {
+        commit(preferences.edit().putString("defaultProjectUrl", clean(projectUrl)));
+    }
+
+    /** Saves the complete active Job state without copying mutable app-wide defaults. */
+    public boolean saveWorkspace(Context context) {
+        String jobId = runJobId();
+        if (!JOB_ID.matcher(jobId).matches()) return false;
+        SharedPreferences target = context.getSharedPreferences(WORKSPACE_PREFS_PREFIX + jobId,
+                Context.MODE_PRIVATE);
+        SharedPreferences.Editor editor = target.edit().clear();
+        for (Map.Entry<String, ?> entry : preferences.getAll().entrySet()) {
+            if (!GLOBAL_KEYS.contains(entry.getKey())) putPreference(editor, entry.getKey(), entry.getValue());
+        }
+        return editor.commit();
+    }
+
+    public boolean hasWorkspace(Context context, String jobId) {
+        if (!JOB_ID.matcher(clean(jobId)).matches()) return false;
+        SharedPreferences source = context.getSharedPreferences(WORKSPACE_PREFS_PREFIX + clean(jobId),
+                Context.MODE_PRIVATE);
+        return clean(jobId).equals(source.getString("runJobId", ""));
+    }
+
+    /** Reads the original requirement without replacing the currently selected Job workspace. */
+    public static String workspaceRequirement(Context context, String jobId, String fallback) {
+        String requested = clean(jobId);
+        if (context == null || !JOB_ID.matcher(requested).matches()) return fallback == null ? "" : fallback;
+        SharedPreferences source = context.getSharedPreferences(WORKSPACE_PREFS_PREFIX + requested,
+                Context.MODE_PRIVATE);
+        if (!requested.equals(source.getString("runJobId", ""))) return fallback == null ? "" : fallback;
+        return source.getString("runRequirement", fallback == null ? "" : fallback);
+    }
+
+    /** Restores one inactive Job as the sole relay workspace while preserving global defaults. */
+    public boolean restoreWorkspace(Context context, String jobId) {
+        String requested = clean(jobId);
+        if (!hasWorkspace(context, requested)) return false;
+        SharedPreferences source = context.getSharedPreferences(WORKSPACE_PREFS_PREFIX + requested,
+                Context.MODE_PRIVATE);
+        String flow = source.getString("flowMode", FLOW_LEGACY_MANUAL);
+        String project = source.getString("runProjectUrl", "");
+        String chat = source.getString("runChatUrl", "");
+        String work = source.getString("runWorkUrl", "");
+        if (FLOW_AUTO_BOOTSTRAP.equals(flow)) {
+            if (!TargetParser.isProjectHome(project)) return false;
+            if (!chat.isEmpty() && !TargetParser.isProjectConversation(project, chat)) return false;
+            if (!work.isEmpty() && !TargetParser.isProjectConversation(project, work)) return false;
+            if (!chat.isEmpty() && !work.isEmpty()
+                    && TargetParser.conversationId(chat).equals(TargetParser.conversationId(work))) return false;
+        } else if ((!chat.isEmpty() || !work.isEmpty()) && !configError(chat, work, requested).isEmpty()) {
+            return false;
+        }
+        SharedPreferences.Editor editor = preferences.edit();
+        for (String key : preferences.getAll().keySet()) if (!GLOBAL_KEYS.contains(key)) editor.remove(key);
+        for (Map.Entry<String, ?> entry : source.getAll().entrySet())
+            putPreference(editor, entry.getKey(), entry.getValue());
+        return editor.commit();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void putPreference(SharedPreferences.Editor editor, String key, Object value) {
+        if (value instanceof String string) editor.putString(key, string);
+        else if (value instanceof Boolean bool) editor.putBoolean(key, bool);
+        else if (value instanceof Integer integer) editor.putInt(key, integer);
+        else if (value instanceof Long number) editor.putLong(key, number);
+        else if (value instanceof Float number) editor.putFloat(key, number);
+        else if (value instanceof Set<?>) editor.putStringSet(key, new HashSet<>((Set<String>) value));
     }
 
     public static String automaticConfigError(String projectUrl, String requirement) {
@@ -135,6 +212,7 @@ public final class OrchestrationStore {
         commit(preferences.edit().putInt("schemaVersion", SCHEMA_VERSION)
                 .putString("flowMode", FLOW_LEGACY_MANUAL).putString("bootstrapState", BOOTSTRAP_NONE)
                 .putBoolean("active", true).putBoolean("paused", false).putBoolean("terminal", false)
+                .putBoolean("userStopped", false)
                 .putString("monitoringSide", SIDE_CHAT).putString("deliveryTarget", SIDE_CHAT)
                 .putString("deliveryState", DELIVERY_PENDING)
                 .putString("pendingPrompt", startPrompt)
@@ -182,6 +260,7 @@ public final class OrchestrationStore {
         commit(preferences.edit().putInt("schemaVersion", SCHEMA_VERSION)
                 .putString("flowMode", FLOW_AUTO_BOOTSTRAP).putString("bootstrapState", BOOTSTRAP_JOB_CREATED)
                 .putBoolean("active", true).putBoolean("paused", false).putBoolean("terminal", false)
+                .putBoolean("userStopped", false)
                 .putBoolean("waitingForUser", false).putBoolean("schedulePreempted", false)
                 .putString("runJobId", generated).putString("jobId", generated)
                 .putString("lastStartedJobId", generated).putStringSet("usedJobIds", used)
@@ -217,7 +296,7 @@ public final class OrchestrationStore {
     public static String bootstrapPrompt(String jobId, String projectId, String requirement) {
         String request = requirement == null ? "" : requirement.trim();
         if (!request.startsWith("(오토런)")) request = "(오토런)\n" + request;
-        return request + "\n\n[AUTOMATION_BOOTSTRAP 3.3.0 " + clean(jobId) + "]\n"
+        return request + "\n\n[AUTOMATION_BOOTSTRAP 3.3.2 " + clean(jobId) + "]\n"
                 + "app_created=true\nproject_id=" + clean(projectId)
                 + "\nprovisioning_owner=android_app\nmanual_identifiers_required=false";
     }
@@ -473,7 +552,7 @@ public final class OrchestrationStore {
                 .putString("lastAcceptedSignal", signal.raw).putLong("lastSignalAt", now)
                 .putString("currentStep", signal.step).putString("currentRound", signal.round)
                 .putBoolean("bootstrapSignalPending", false)
-                .putBoolean("waitingForUser", true).putString("actionId", signal.actionId)
+                .putBoolean("active", false).putBoolean("waitingForUser", true).putString("actionId", signal.actionId)
                 .putBoolean("paused", true).putBoolean("terminal", false)
                 .putString("expectedSignal", "사용자 처리 완료 후 일반 Chat 재검증")
                 .putString("status", "사용자 조치 대기").putString("lastErrorCode", "")
@@ -520,8 +599,11 @@ public final class OrchestrationStore {
     }
 
     public void pause(String reason) {
-        commit(preferences.edit().putBoolean("paused", true).putString("status", "사용자가 중계를 일시정지함")
-                .putString("error", clean(reason)).putBoolean("reconciling", false)
+        String message = clean(reason);
+        commit(preferences.edit().putBoolean("active", false).putBoolean("paused", true)
+                .putString("status", message.isEmpty() ? "사용자가 중계를 일시정지함" : message)
+                .putString("lastErrorCode", "").putString("error", "").putLong("errorAt", 0L)
+                .putBoolean("reconciling", false)
                 .putString("recoveryBootstrapState", bootstrapState())
                 .putString("bootstrapState", FLOW_AUTO_BOOTSTRAP.equals(flowMode()) ? BOOTSTRAP_PAUSED : bootstrapState())
                 .putString("reconciliationPhase", RECONCILIATION_NONE));
@@ -529,7 +611,8 @@ public final class OrchestrationStore {
 
     public void fail(String code, String reason) {
         String recovery = deliveryState();
-        commit(preferences.edit().putBoolean("paused", true).putString("recoveryDeliveryState", recovery)
+        commit(preferences.edit().putBoolean("active", false).putBoolean("paused", true)
+                .putString("recoveryDeliveryState", recovery)
                 .putString("deliveryState", DELIVERY_FAILED).putString("status", "오류로 중계 일시정지")
                 .putString("recoveryBootstrapState", bootstrapState())
                 .putString("bootstrapState", FLOW_AUTO_BOOTSTRAP.equals(flowMode()) ? BOOTSTRAP_FAILED : bootstrapState())
@@ -539,7 +622,8 @@ public final class OrchestrationStore {
     }
 
     public void ambiguous(String reason) {
-        commit(preferences.edit().putBoolean("paused", true).putString("deliveryState", DELIVERY_AMBIGUOUS)
+        commit(preferences.edit().putBoolean("active", false).putBoolean("paused", true)
+                .putString("deliveryState", DELIVERY_AMBIGUOUS)
                 .putString("recoveryBootstrapState", bootstrapState())
                 .putString("bootstrapState", FLOW_AUTO_BOOTSTRAP.equals(flowMode()) ? BOOTSTRAP_FAILED : bootstrapState())
                 .putString("status", "전송 결과 불명확 · 사용자 확인 필요")
@@ -745,6 +829,7 @@ public final class OrchestrationStore {
         commit(preferences.edit().putString("lastSignalSource", sourceSide)
                 .putString("lastAcceptedSignal", signal.raw).putLong("lastSignalAt", System.currentTimeMillis())
                 .putBoolean("active", false).putBoolean("paused", paused)
+                .putBoolean("userStopped", false)
                 .putBoolean("waitingForUser", false).putString("actionId", "")
                 .putBoolean("bootstrapSignalPending", false)
                 .putBoolean("terminal", isTerminalSignal(signal.type)).putString("status", nextStatus)
@@ -757,10 +842,31 @@ public final class OrchestrationStore {
 
     public void stop() {
         commit(preferences.edit().putBoolean("active", false).putBoolean("paused", false)
-                .putBoolean("waitingForUser", false).putString("status", "사용자가 중지함")
-                .putString("lastErrorCode", "").putString("error", "")
-                .putString("bootstrapState", FLOW_AUTO_BOOTSTRAP.equals(flowMode()) ? BOOTSTRAP_PAUSED : bootstrapState())
+                .putBoolean("terminal", true).putBoolean("userStopped", true)
+                .putBoolean("waitingForUser", false).putString("actionId", "")
+                .putString("status", "사용자가 중지함")
+                .putString("lastErrorCode", "").putString("error", "").putLong("errorAt", 0L)
+                .putString("bootstrapState", FLOW_AUTO_BOOTSTRAP.equals(flowMode()) ? BOOTSTRAP_STOPPED : bootstrapState())
                 .putBoolean("reconciling", false).putString("reconciliationPhase", RECONCILIATION_NONE));
+    }
+
+    /** Stops an inactive archived workspace without replacing or disturbing the current Job. */
+    public static boolean stopWorkspace(Context context, String jobId) {
+        String requested = clean(jobId);
+        if (context == null || !JOB_ID.matcher(requested).matches()) return false;
+        SharedPreferences workspace = context.getSharedPreferences(WORKSPACE_PREFS_PREFIX + requested,
+                Context.MODE_PRIVATE);
+        if (!requested.equals(workspace.getString("runJobId", ""))) return false;
+        String flow = workspace.getString("flowMode", FLOW_LEGACY_MANUAL);
+        return workspace.edit().putBoolean("active", false).putBoolean("paused", false)
+                .putBoolean("terminal", true).putBoolean("userStopped", true)
+                .putBoolean("waitingForUser", false).putString("actionId", "")
+                .putString("status", "사용자가 중지함")
+                .putString("lastErrorCode", "").putString("error", "").putLong("errorAt", 0L)
+                .putString("bootstrapState", FLOW_AUTO_BOOTSTRAP.equals(flow)
+                        ? BOOTSTRAP_STOPPED : workspace.getString("bootstrapState", BOOTSTRAP_NONE))
+                .putBoolean("reconciling", false)
+                .putString("reconciliationPhase", RECONCILIATION_NONE).commit();
     }
 
     public String projectName() { return preferences.getString("projectName", ""); }
@@ -799,6 +905,7 @@ public final class OrchestrationStore {
     }
     public boolean active() { return preferences.getBoolean("active", false); }
     public boolean paused() { return preferences.getBoolean("paused", false); }
+    public boolean userStopped() { return preferences.getBoolean("userStopped", false); }
     public boolean reconciling() { return preferences.getBoolean("reconciling", false); }
     public String reconciliationPhase() {
         return preferences.getString("reconciliationPhase", RECONCILIATION_NONE);
@@ -856,6 +963,7 @@ public final class OrchestrationStore {
     public String expectedSignal() { return preferences.getString("expectedSignal", ""); }
     public String status() { return preferences.getString("status", "설정 전"); }
     public String statusSummary() {
+        if (userStopped()) return "중지됨";
         if (reconciling()) return "재개 상태 재구성 중";
         if (automaticBootstrap()) {
             return switch (bootstrapState()) {
@@ -868,6 +976,7 @@ public final class OrchestrationStore {
                      BOOTSTRAP_RELAY_READY, BOOTSTRAP_RELAY_ACTIVE -> "Work 실행 중";
                 case BOOTSTRAP_WAITING_USER -> "사용자 조치 필요";
                 case BOOTSTRAP_PAUSED -> "일시정지";
+                case BOOTSTRAP_STOPPED -> "중지됨";
                 case BOOTSTRAP_FAILED -> "오류";
                 case BOOTSTRAP_DONE -> "완료";
                 default -> "오토런 준비 중";
@@ -1042,7 +1151,7 @@ public final class OrchestrationStore {
 
     public String resumeBlockReason() {
         if (terminal()) return "이미 완료·일시정지·중단된 terminal 상태라 자동 재개할 수 없습니다.";
-        if (waitingForUser()) return "사용자 조치 대기 상태입니다. ‘처리 완료’를 눌러 일반 Chat 재검증을 요청해 주세요.";
+        if (waitingForUser()) return "사용자 조치 대기 상태입니다. 조치를 마친 뒤 ‘재개’를 눌러 일반 Chat 재검증을 요청해 주세요.";
         return "현재 영속 상태에서 중계를 재개할 수 없습니다.";
     }
 

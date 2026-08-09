@@ -31,7 +31,7 @@ public final class AutomaticBootstrapTest {
         String prompt = OrchestrationStore.bootstrapPrompt("AR-20260809-010203-ABC234", "project-one",
                 "(오토런)\n기능을 구현한다.");
         assertTrue(prompt.startsWith("(오토런)"));
-        assertTrue(prompt.contains("[AUTOMATION_BOOTSTRAP 3.3.0 AR-20260809-010203-ABC234]"));
+        assertTrue(prompt.contains("[AUTOMATION_BOOTSTRAP 3.3.2 AR-20260809-010203-ABC234]"));
         assertTrue(prompt.contains("provisioning_owner=android_app"));
         assertTrue(prompt.contains("manual_identifiers_required=false"));
     }
@@ -50,5 +50,9 @@ public final class AutomaticBootstrapTest {
         assertTrue(prepared.contains("desiredEffort=\"ultra\""));
         assertTrue(prepared.contains("main form [contenteditable=\"true\"][data-lexical-editor=\"true\"]"));
         assertFalse(prepared.contains("','[contenteditable=\"true\"][data-lexical-editor=\"true\"]'"));
+        assertTrue(observed.contains("대화 URL 생성 후 첫 요청 DOM 확인 대기"));
+        assertFalse(observed.contains("WRONG_CONVERSATION"));
+        assertTrue(observed.contains("AUTOMATION_BOOTSTRAP|AUTOMATION_WORK_STEP"));
+        assertTrue(observed.contains("markerPresent||"));
     }
 }

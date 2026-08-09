@@ -206,6 +206,8 @@ public class OrchestrationSignalTest {
         assertTrue(observe.contains("65536"));
         assertTrue(observe.contains("Math.imul"));
         assertTrue(observe.contains(OrchestrationScript.jsQuote(prompt)));
+        assertTrue(observe.contains("automationMarker(expected)"));
+        assertTrue(observe.contains("norm(text).includes(marker)"));
         assertTrue(stopGeneration.contains("STOP_GENERATION_CLICKED"));
         assertTrue(stopGeneration.contains("STOP_GENERATION_AMBIGUOUS"));
         assertTrue(stopGeneration.contains("stop-button"));

@@ -45,7 +45,7 @@ public final class OrchestrationHistoryActivity extends Activity {
         root.addView(Ui.title(this, "오토런 작업"));
         root.addView(Ui.body(this, "새 작업을 시작하거나 이전 작업의 수행 항목, 실행 로그, 디버그 로그를 확인합니다."));
         root.addView(Ui.actionGrid(this,
-                Ui.button(this, "새 작업", v -> startActivity(new Intent(this, OrchestrationActivity.class))),
+                Ui.button(this, "새 작업", v -> startActivity(OrchestrationActivity.newJobIntent(this))),
                 Ui.button(this, "새로고침", v -> { history.sync(current); render(); })));
 
         JSONArray jobs = history.read();
@@ -65,6 +65,8 @@ public final class OrchestrationHistoryActivity extends Activity {
     private LinearLayout jobCard(JSONObject job) {
         String jobId = job.optString("jobId", "-");
         boolean isCurrent = jobId.equals(current.runJobId());
+        String role = jobRole(isCurrent, job.optBoolean("active"), job.optBoolean("terminal"),
+                history.hasWorkspace(jobId));
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setBackgroundResource(R.drawable.panel_background);
@@ -75,7 +77,7 @@ public final class OrchestrationHistoryActivity extends Activity {
         card.setLayoutParams(cardParams);
 
         TextView title = Ui.body(this, job.optString("statusSummary", "상태 확인 필요")
-                + (isCurrent ? " · 현재 작업" : "") + "\n" + jobId);
+                + " · " + role + "\n" + jobId);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         title.setTextSize(Ui.isTablet(this) ? 18 : 16);
         card.addView(title);
@@ -93,7 +95,7 @@ public final class OrchestrationHistoryActivity extends Activity {
                         + " · Work: " + connected(job.optString("workUrl"))
                         + "\n마지막 갱신: " + time(job.optLong("updatedAt"))));
 
-        List<String> performed = logs.readExecutionLines(jobId, 8);
+        List<String> performed = logs.readExecutionLines(jobId, 4);
         card.addView(Ui.section(this, "수행 항목"));
         card.addView(Ui.body(this, performed.isEmpty() ? "아직 기록된 수행 항목이 없습니다."
                 : String.join("\n", performed)));
@@ -103,14 +105,11 @@ public final class OrchestrationHistoryActivity extends Activity {
                     + " · " + job.optString("error")));
         }
 
-        LinearLayout actions = isCurrent
-                ? Ui.actionGrid(this,
-                    Ui.button(this, "현재 작업 열기", v -> startActivity(new Intent(this, OrchestrationActivity.class))),
-                    Ui.button(this, "실행 로그", v -> openLogs(jobId, OrchestrationLogsActivity.KIND_EXECUTION)),
-                    Ui.button(this, "디버그 로그", v -> openLogs(jobId, OrchestrationLogsActivity.KIND_DEBUG)))
-                : Ui.actionGrid(this,
-                    Ui.button(this, "실행 로그", v -> openLogs(jobId, OrchestrationLogsActivity.KIND_EXECUTION)),
-                    Ui.button(this, "디버그 로그", v -> openLogs(jobId, OrchestrationLogsActivity.KIND_DEBUG)));
+        LinearLayout actions = Ui.actionGrid(this,
+                Ui.button(this, isCurrent ? "현재 작업 열기" : "작업 열기",
+                        v -> startActivity(OrchestrationActivity.jobIntent(this, jobId))),
+                Ui.button(this, "실행 로그", v -> openLogs(jobId, OrchestrationLogsActivity.KIND_EXECUTION)),
+                Ui.button(this, "디버그 로그", v -> openLogs(jobId, OrchestrationLogsActivity.KIND_DEBUG)));
         card.addView(actions);
         return card;
     }
@@ -122,6 +121,14 @@ public final class OrchestrationHistoryActivity extends Activity {
     }
 
     private static String connected(String url) { return url == null || url.isEmpty() ? "준비 전" : "연결됨"; }
+    static String jobRole(boolean current, boolean active, boolean terminal, boolean hasWorkspace) {
+        if (current && active && !terminal) return "현재 실행";
+        if (current && terminal) return "현재 선택 · 종료";
+        if (current && hasWorkspace) return "현재 선택 · 재개 가능";
+        if (current) return "현재 선택 · 기록 전용";
+        if (terminal) return "종료";
+        return hasWorkspace ? "재개 가능" : "기록 전용";
+    }
     private static String empty(String value) { return value == null || value.isEmpty() ? "-" : value; }
     private static String compact(String value, int max) {
         String clean = value == null ? "" : value.trim().replaceAll("\\s+", " ");

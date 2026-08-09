@@ -236,7 +236,7 @@ public final class OrchestrationService extends Service implements AutomationRun
             settings.setAllowUniversalAccessFromFileURLs(false);
             settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
             String userAgent = settings.getUserAgentString();
-            settings.setUserAgentString(userAgent + " ChatGPTPromptScheduler/0.1.19 Orchestration/3.3.0");
+            settings.setUserAgentString(userAgent + " ChatGPTPromptScheduler/0.1.21 Orchestration/3.3.2");
             CookieManager.getInstance().setAcceptCookie(true);
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false);
             webView.setWebViewClient(new WebViewClient() {
@@ -522,7 +522,10 @@ public final class OrchestrationService extends Service implements AutomationRun
                 return;
             }
             if ("READY".equals(status)) {
-                if (OrchestrationStore.SIDE_WORK.equals(side)) store.markWorkPreferencesVerified();
+                if (OrchestrationStore.SIDE_WORK.equals(side)) {
+                    store.markWorkPreferencesVerified();
+                    logWorkPreferencesVerified(result);
+                }
                 commitAuthorized = true;
                 provisioningRecoveryStartedAt = 0L;
                 scheduleStep(0L);
@@ -1497,6 +1500,11 @@ public final class OrchestrationService extends Service implements AutomationRun
         return code;
     }
 
+    private static String safeDiagnosticValue(String value) {
+        if (value == null || !value.matches("[A-Za-z0-9_.-]{1,64}")) return "UNKNOWN";
+        return value;
+    }
+
     private static String fixedScriptMessage(String status) {
         return switch (status) {
             case "AUTH_REQUIRED" -> "ChatGPT 로그인 세션을 확인해야 합니다.";
@@ -1609,6 +1617,35 @@ public final class OrchestrationService extends Service implements AutomationRun
 
     private void logStateTransition(String previous) {
         log("STATE_TRANSITION", "from=" + safeCode(previous) + ";to=" + safeCode(store.deliveryState()));
+    }
+
+    private void logWorkPreferencesVerified(JSONObject result) {
+        JSONObject diagnostics = result == null ? null : result.optJSONObject("diagnostics");
+        JSONObject model = diagnostics == null ? null : diagnostics.optJSONObject("model");
+        JSONObject reasoning = diagnostics == null ? null : diagnostics.optJSONObject("reasoning");
+        String requestedModel = store.runWorkModel();
+        String requestedReasoning = store.runReasoningEffort();
+        String currentModel = "inherit".equals(requestedModel) ? "inherit"
+                : model == null ? "" : model.optString("current", "");
+        String currentReasoning = "inherit".equals(requestedReasoning) ? "inherit"
+                : reasoning == null ? "" : reasoning.optString("current", "");
+        String modelEvidence = "inherit".equals(requestedModel) ? "inherit"
+                : model != null && !currentModel.isEmpty() ? "trigger_readback"
+                : model != null && model.optBoolean("ready", false) ? "selected_option_readback" : "";
+        String reasoningEvidence = "inherit".equals(requestedReasoning) ? "inherit"
+                : reasoning != null && !currentReasoning.isEmpty() ? "trigger_readback"
+                : reasoning != null && reasoning.optBoolean("ready", false) ? "selected_option_readback" : "";
+        if (currentModel.isEmpty() && "selected_option_readback".equals(modelEvidence))
+            currentModel = requestedModel;
+        if (currentReasoning.isEmpty() && "selected_option_readback".equals(reasoningEvidence))
+            currentReasoning = requestedReasoning;
+        log("WORK_PREFERENCES_VERIFIED", "mode.current=work");
+        log("WORK_MODEL_VERIFIED", "requested=" + safeDiagnosticValue(requestedModel)
+                + ";current=" + safeDiagnosticValue(currentModel)
+                + ";readback=" + safeDiagnosticValue(modelEvidence));
+        log("WORK_REASONING_VERIFIED", "requested=" + safeDiagnosticValue(requestedReasoning)
+                + ";current=" + safeDiagnosticValue(currentReasoning)
+                + ";readback=" + safeDiagnosticValue(reasoningEvidence));
     }
 
     private void log(String event, String detail) {

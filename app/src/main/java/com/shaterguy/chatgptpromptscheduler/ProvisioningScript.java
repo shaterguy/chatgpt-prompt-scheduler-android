@@ -48,7 +48,12 @@ public final class ProvisioningScript {
         String project = AutomationScript.jsQuote(TargetParser.projectId(projectUrl));
         return "(() => {" + base(expected, project)
                 + "if(actualConversation&&promptAlreadyPresent)return result('CONFIRMED','첫 요청과 대화 URL 확인',{...routeDiagnostics,conversationId:actualConversation});"
-                + "if(actualConversation&&!promptAlreadyPresent)return result('WRONG_CONVERSATION','요청과 일치하지 않는 프로젝트 대화입니다.',routeDiagnostics);"
+                // ChatGPT can replace the project-home route with the new conversation URL before
+                // the submitted user turn is mounted in the DOM.  Treat that short window as an
+                // unconfirmed submission: the service waits up to its ambiguity deadline and never
+                // clicks Send again.  A stable mismatch therefore pauses fail-closed instead of
+                // falsely reporting that the app opened an existing conversation.
+                + "if(actualConversation&&!promptAlreadyPresent)return result('RETRY','대화 URL 생성 후 첫 요청 DOM 확인 대기',routeDiagnostics);"
                 + "return result('RETRY','생성된 대화와 첫 요청 확인 대기',routeDiagnostics);"
                 + "})()";
     }
@@ -58,12 +63,12 @@ public final class ProvisioningScript {
                 + "if(location.hostname!=='chatgpt.com'&&location.hostname!=='www.chatgpt.com')return result('TARGET_CONTEXT_MISMATCH','호스트 불일치');"
                 + "const norm=s=>String(s??'').replace(/[\\u200B-\\u200D\\uFEFF]/g,'').replace(/\\u00a0/g,' ').replace(/\\r\\n?/g,'\\n').trim();"
                 + "const canonical=s=>norm(s).replace(/[ \\t]+/g,' ').replace(/ *\\n+ */g,'\\n');"
-                + "const expected=norm(" + expected + "),expectedProject=" + project + ";"
+                + "const expected=norm(" + expected + "),expectedProject=" + project + ";const expectedMarker=(expected.match(/\\[(?:AUTOMATION_BOOTSTRAP|AUTOMATION_WORK_STEP)[^\\]]+\\]/)||[])[0]||'';"
                 + "const parts=location.pathname.split('/').filter(Boolean);const after=k=>{const i=parts.indexOf(k);return i>=0&&i+1<parts.length?parts[i+1]:'';};"
                 + "const actualProject=after('g'),actualConversation=after('c');"
                 + "const users=[...document.querySelectorAll('[data-message-author-role=\"user\"],article[data-turn=\"user\"]')];"
-                + "const promptAlreadyPresent=users.some(e=>canonical(e.innerText||e.textContent||'')===canonical(expected));"
-                + "const routeDiagnostics={expectedProject,actualProject,actualConversation,userMessages:users.length,promptAlreadyPresent};"
+                + "const userTexts=users.map(e=>canonical(e.innerText||e.textContent||''));const markerPresent=!!expectedMarker&&userTexts.some(t=>t.includes(expectedMarker));const promptAlreadyPresent=markerPresent||userTexts.some(t=>t===canonical(expected));"
+                + "const routeDiagnostics={expectedProject,actualProject,actualConversation,userMessages:users.length,promptAlreadyPresent,markerPresent};"
                 + "if(actualProject!==expectedProject)return result('PROJECT_MISMATCH','지정 프로젝트가 아닙니다.',routeDiagnostics);"
                 + "const authVisible=e=>!!e&&e.isConnected&&e.offsetParent!==null;const visibleAuthGate=[...document.querySelectorAll('[data-testid*=login],a[href*=\"/auth/login\"],button')].filter(authVisible).some(e=>/^(log in|sign up|로그인|가입)$/i.test(String(e.innerText||e.getAttribute('aria-label')||'').trim()));if(visibleAuthGate)return result('AUTH_REQUIRED','ChatGPT 로그인이 필요합니다.',routeDiagnostics);"
                 + "const clip=(s,n=700)=>{s=String(s??'');return s.length>n?s.slice(0,n):s};";
