@@ -1,0 +1,41 @@
+{
+  "manifest_version": "1.0",
+  "repository": "shaterguy/chatgpt-prompt-scheduler-android",
+  "branch": "automation/ar-20260808-215800-ryfx",
+  "base_remote_head": "21fdbae2856b1f4a36a492258103c8f63686e2e9",
+  "parent_sha": "5564ea7f313d35922efc47f1f691b837e5b7724f",
+  "final_candidate_sha": "01e1b66e330746727c9817f8de213177eea5445a",
+  "target_version": {
+    "versionName": "0.1.16",
+    "versionCode": 17
+  },
+  "workflow_path": ".github/workflows/android-build.yml",
+  "changed_files": [
+    {"path":".github/workflows/android-build.yml","change":"M","sha256":"0198b39901c40294940e557ed1f297f66a0a336a340ae856aa4f12c5e7c7a01d"},
+    {"path":"README.md","change":"M","sha256":"c98609591b0728aad2b1dfaddc1849f84da8f5f54ec8f43c78fea9775d849410"},
+    {"path":"RELEASE_NOTES-v0.1.16.md","change":"A","sha256":"3c36b124ea3ea2d55a558dff5b279314d13ee5a0420224f4031589e8589c8b85"},
+    {"path":"app/build.gradle","change":"M","sha256":"67ea903e15228da48cdb6914c70f8a39503be451fffa7409ad597467f2f8519d"},
+    {"path":"app/src/main/AndroidManifest.xml","change":"M","sha256":"eec6ca12d72179b3f25ec1e6017678a7f8d0828d707efdf20402ace507fd372f"},
+    {"path":"app/src/main/java/com/shaterguy/chatgptpromptscheduler/AdaptivePolling.java","change":"A","sha256":"b4ffddc2f0343f2bbe46f264c1ef44d83b8a8f9b4cbc2f34ab9a059694b3777c"},
+    {"path":"app/src/main/java/com/shaterguy/chatgptpromptscheduler/BootReceiver.java","change":"M","sha256":"9ef6c11e1fc7f9b951188b14687cbf316fceb57549355620a0cbe960efd835ff"},
+    {"path":"app/src/main/java/com/shaterguy/chatgptpromptscheduler/MainActivity.java","change":"M","sha256":"f568ffe1769a73f2415ed20f8b6ae82c8e74556402c62f185bb54b8e8a073755"},
+    {"path":"app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationActivity.java","change":"M","sha256":"0dc9d1ce38e3eb3d171cf4f248cda027e43571130800113d68a76700ddcd24e6"},
+    {"path":"app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationLogsActivity.java","change":"A","sha256":"aec523da6195f8cca9cc14b1899d946683f01d0fff77cc42d34983e6a55d5b56"},
+    {"path":"app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationRunLog.java","change":"A","sha256":"47b88e628bc585ebe650928ca7222b73048591e32c07e78d6f99a997b0dc81a7"},
+    {"path":"app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationScript.java","change":"M","sha256":"c616f63904da8c89c1b2cb3e17aabccf7cfb9c3578162a78384f2f2c7b1cb643"},
+    {"path":"app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationService.java","change":"M","sha256":"5059f09fac0cf182c8d21fb1648aa4c9f82d330846aa1eb98edb821ed615fd49"},
+    {"path":"app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationSignal.java","change":"M","sha256":"fb197028ee6abffea39f4be091efe890ca9e67056105da2da8c2d7dd42281989"},
+    {"path":"app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationStore.java","change":"M","sha256":"1392d870ca818e8cc0396fc3d4990b53f6f9050ecc6c520b364bd43151e8900b"},
+    {"path":"app/src/main/java/com/shaterguy/chatgptpromptscheduler/ResponseTimingPolicy.java","change":"A","sha256":"0adcd038da27184b4cb1daa92bd61c02249e40788323df9f102bcf11c713a4d4"},
+    {"path":"app/src/main/java/com/shaterguy/chatgptpromptscheduler/ResumeReconciliation.java","change":"A","sha256":"1598ccbf8650241e35d483da1b5c9c72c1bf3ac431be893f4e3ba0e47d8d05ed"},
+    {"path":"app/src/test/java/com/shaterguy/chatgptpromptscheduler/AdaptivePollingTest.java","change":"A","sha256":"9d45b43d8a3591a3053225a2b39efdc5ee6683ed01b9c13df740d54e86586d38"},
+    {"path":"app/src/test/java/com/shaterguy/chatgptpromptscheduler/OrchestrationRunLogTest.java","change":"A","sha256":"a01206a3496e31831b917c5ecebc787399978c17600807f204f0d1987c20564c"},
+    {"path":"app/src/test/java/com/shaterguy/chatgptpromptscheduler/OrchestrationSignalTest.java","change":"M","sha256":"bcc9d013b3e8ece49548358874251a625d1c4953fdb90c03910e0367d387bee6"},
+    {"path":"app/src/test/java/com/shaterguy/chatgptpromptscheduler/ResponseTimingPolicyTest.java","change":"A","sha256":"b624fa73252d1d69f386084001e1514dcaadce28f185baddf7aa27027f5d7eb7"},
+    {"path":"app/src/test/java/com/shaterguy/chatgptpromptscheduler/ResumeReconciliationTest.java","change":"A","sha256":"973d0ab6e906ca99bdee4684d04da566a6ae51c023e1496c4d93e17e629df4b7"}
+  ],
+  "packet_file": "PUBLISH_PACKET_S004_R004.zip",
+  "packet_member_count": 22,
+  "packet_sha256": "81cd68b4826da934a58b3379109d2e0ae30cbeebaba84d326a571c1f1508b441",
+  "generated_at_kst": "2026-08-09T11:06:27+09:00"
+}
