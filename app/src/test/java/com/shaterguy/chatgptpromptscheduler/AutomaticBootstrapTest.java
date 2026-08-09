@@ -52,5 +52,7 @@ public final class AutomaticBootstrapTest {
         assertFalse(prepared.contains("','[contenteditable=\"true\"][data-lexical-editor=\"true\"]'"));
         assertTrue(observed.contains("대화 URL 생성 후 첫 요청 DOM 확인 대기"));
         assertFalse(observed.contains("WRONG_CONVERSATION"));
+        assertTrue(observed.contains("AUTOMATION_BOOTSTRAP|AUTOMATION_WORK_STEP"));
+        assertTrue(observed.contains("markerPresent||"));
     }
 }
