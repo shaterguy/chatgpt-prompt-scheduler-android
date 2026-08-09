@@ -1,16 +1,16 @@
 package com.shaterguy.chatgptpromptscheduler;
 
-import android.Manifest;
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
-import android.content.pm.PackageManager;
-import android.provider.Settings;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
+import android.graphics.Typeface;
 import android.view.View;
+import android.view.autofill.AutofillValue;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -27,10 +27,12 @@ public final class OrchestrationActivity extends Activity {
     private static final String STATE_JOB_ID = "orchestration.jobId";
 
     private OrchestrationStore store;
+    private OrchestrationRunLog runLog;
     private EditText projectName;
     private EditText chatUrl;
     private EditText workUrl;
     private EditText jobId;
+    private TextView statusSummary;
     private TextView currentStatus;
     private TextView lastReceive;
     private TextView lastDelivery;
@@ -47,6 +49,8 @@ public final class OrchestrationActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         store = new OrchestrationStore(this);
+        runLog = new OrchestrationRunLog(this);
+        runLog.record(store, "UI_OPEN", "source=activity");
         restoredState = savedInstanceState;
         createViews();
         restoredState = null;
@@ -80,7 +84,7 @@ public final class OrchestrationActivity extends Activity {
     private void createViews() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
+        suppressCredentialCapture(root);
         root.setPadding(Ui.dp(this, 18), Ui.dp(this, 12), Ui.dp(this, 18), Ui.dp(this, 24));
         root.addView(Ui.title(this, "오토런 중계 · Protocol 3.x"));
         root.addView(Ui.body(this, "예약 실행과 분리된 선택 기능입니다. 예약 실행이 항상 우선하며 화면 이동은 중계 상태를 바꾸지 않습니다."));
@@ -96,6 +100,10 @@ public final class OrchestrationActivity extends Activity {
         root.addView(jobId);
 
         root.addView(Ui.section(this, "현재 동작"));
+        statusSummary = Ui.body(this, "");
+        statusSummary.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        statusSummary.setTextSize(Ui.isTablet(this) ? 18 : 16);
+        root.addView(statusSummary);
         currentStatus = Ui.body(this, "");
         root.addView(currentStatus);
         root.addView(Ui.section(this, "마지막 수신"));
@@ -118,16 +126,18 @@ public final class OrchestrationActivity extends Activity {
                 Ui.button(this, "재개", v -> resumeRelay()),
                 Ui.button(this, "일시정지", v -> pauseRelay()),
                 Ui.button(this, "중지", v -> stopRelay()),
-                resolvedButton));
+                resolvedButton,
+                Ui.button(this, "실행 로그", v -> startActivity(new Intent(this, OrchestrationLogsActivity.class)))));
         root.addView(Ui.body(this, "‘처리 완료’는 성공 확정이 아닙니다. 일반 Chat에 재검증을 요청하고 검증 응답을 다시 감시합니다."));
         android.widget.ScrollView scroll = Ui.scroll(this);
-        scroll.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
+        suppressCredentialCapture(scroll);
         scroll.addView(root);
         Ui.setContent(this, scroll);
     }
 
     private void refreshStatus() {
         if (currentStatus == null) return;
+        statusSummary.setText("현재 상태: " + store.statusSummary());
         String stepRound = store.currentStep().isEmpty() ? "-" : store.currentStep() + " / " + store.currentRound();
         currentStatus.setText("모니터링 대화방: " + OrchestrationStore.sideLabel(store.monitoringSide())
                 + "\n현재 동작: " + store.status()
@@ -155,14 +165,13 @@ public final class OrchestrationActivity extends Activity {
     }
 
     private EditText field(String hint, String value, boolean url, String stateKey) {
-        EditText input = new EditText(this);
+        EditText input = new NonCredentialEditText(this);
         input.setHint(hint);
         input.setText(restoredValue(stateKey, value));
         input.setSingleLine(true);
         input.setMinHeight(Ui.dp(this, 52));
         input.setInputType(url ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
                 : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_NORMAL);
-        input.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
         return input;
     }
 
@@ -178,50 +187,52 @@ public final class OrchestrationActivity extends Activity {
     }
 
     private void startNew() {
-        if (!ensureNotifications()) return;
+        warnNotifications();
         String nextChatUrl = chatUrl.getText().toString().trim();
         String nextWorkUrl = workUrl.getText().toString().trim();
         String nextJobId = jobId.getText().toString().trim();
         String error = OrchestrationStore.configError(nextChatUrl, nextWorkUrl, nextJobId);
         if (!error.isEmpty()) { toast(error); return; }
-        error = store.newRunError(nextJobId);
-        if (!error.isEmpty()) { toast(error); return; }
         stopService(new Intent(this, OrchestrationService.class));
         saveFields();
         store.begin();
+        runLog.record(store, "UI_START", "source=manual");
         if (startRelayService()) toast("오토런 중계를 시작했습니다.");
         refreshStatus();
     }
 
     private void resumeRelay() {
-        if (!ensureNotifications()) return;
-        if (!chatUrl.getText().toString().trim().equals(store.runChatUrl())
-                || !workUrl.getText().toString().trim().equals(store.runWorkUrl())
-                || !jobId.getText().toString().trim().equals(store.runJobId())) {
-            toast("실행 설정이 변경되었습니다. 기존 값으로 되돌리거나 새 Job ID로 새로 시작해 주세요.");
+        warnNotifications();
+        if (store.runJobId().isEmpty()) {
+            toast("복구할 영속 오토런 상태가 없습니다. 새 Job으로 시작해 주세요.");
+            refreshStatus();
             return;
         }
-        if (store.waitingForUser()) { toast("사용자 조치 후 ‘처리 완료’를 눌러 재검증해 주세요."); return; }
-        String error = store.runtimeConfigError();
-        if (!error.isEmpty()) { toast(error); return; }
-        if (store.pendingPrompt().isEmpty()) { toast("먼저 새로 시작을 눌러 주세요."); return; }
-        if (!store.resume()) {
-            toast("완료·중단 또는 결과 불명확 상태입니다. 화면 상태를 확인해 주세요.");
+        restoreDurableRunConfiguration();
+        if (!store.beginReconciliation()) {
+            toast("재개할 대상 대화와 Job ID를 복구하지 못했습니다.");
+            refreshStatus();
             return;
         }
-        if (startRelayService()) toast("저장된 상태에서 중계를 재개했습니다.");
+        runLog.record(store, "UI_RESUME", "source=manual");
+        runLog.record(store, "RESUME_RECONCILE_STARTED", "source=manual");
+        if (startRelayService()) {
+            toast("두 대화방의 실제 상태를 확인해 오토런 중계를 재구성합니다. 기존 프롬프트는 먼저 중복 여부를 확인합니다.");
+        }
         refreshStatus();
     }
 
     private void resolveUserAction() {
-        if (!ensureNotifications()) return;
-        if (!store.resolveUserAction()) { toast("현재 사용자 조치 대기 상태가 아닙니다."); return; }
+        warnNotifications();
+        if (!store.resolveUserAction()) { toast(store.userActionBlockReason()); return; }
+        runLog.record(store, "UI_USER_RESOLVED", "source=manual");
         if (startRelayService()) toast("일반 Chat에 사용자 조치 재검증을 요청합니다.");
         refreshStatus();
     }
 
     private void pauseRelay() {
         store.pause("사용자가 일시정지했습니다.");
+        runLog.record(store, "UI_PAUSE", "source=manual");
         stopService(new Intent(this, OrchestrationService.class));
         toast("오토런 중계를 일시정지했습니다.");
         refreshStatus();
@@ -229,6 +240,7 @@ public final class OrchestrationActivity extends Activity {
 
     private void stopRelay() {
         store.stop();
+        runLog.record(store, "UI_STOP", "source=manual");
         stopService(new Intent(this, OrchestrationService.class));
         toast("오토런 중계를 중지했습니다.");
         refreshStatus();
@@ -268,23 +280,51 @@ public final class OrchestrationActivity extends Activity {
     }
 
     private static String emptyAsDash(String value) { return value == null || value.isEmpty() ? "-" : value; }
-    private boolean ensureNotifications() {
-        if (NotificationHelper.orchestrationAlertsEnabled(this)) return true;
-        if (Build.VERSION.SDK_INT >= 33
-                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 403);
-            toast("오토런 오류 알림 권한을 허용한 뒤 다시 눌러 주세요.");
-            return false;
+    private static void suppressCredentialCapture(View view) {
+        view.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            view.setImportantForContentCapture(View.IMPORTANT_FOR_CONTENT_CAPTURE_NO_EXCLUDE_DESCENDANTS);
         }
-        toast("오토런 오류 알림 권한과 ‘오토런 오류 및 사용자 조치’ 채널을 켜 주세요.");
-        try {
-            startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                    .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName()));
-        } catch (RuntimeException ignored) {
-            startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-                    .setData(android.net.Uri.parse("package:" + getPackageName())));
-        }
-        return false;
     }
+
+    private void warnNotifications() {
+        if (!NotificationHelper.orchestrationAlertsEnabled(this)) {
+            toast("오토런은 계속 진행되지만 오류·완료 알림이 꺼져 있습니다.");
+        }
+    }
+
+    private void restoreDurableRunConfiguration() {
+        if (!store.projectName().isEmpty()) projectName.setText(store.projectName());
+        chatUrl.setText(store.runChatUrl());
+        workUrl.setText(store.runWorkUrl());
+        jobId.setText(store.runJobId());
+    }
+
     private void toast(String message) { Toast.makeText(this, message, Toast.LENGTH_LONG).show(); }
+
+    private static final class NonCredentialEditText extends EditText {
+        NonCredentialEditText(Context context) {
+            super(context);
+            setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
+            setAutofillHints((String[]) null);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                setImportantForContentCapture(View.IMPORTANT_FOR_CONTENT_CAPTURE_NO);
+            }
+        }
+
+        @Override
+        public int getAutofillType() {
+            return View.AUTOFILL_TYPE_NONE;
+        }
+
+        @Override
+        public android.view.autofill.AutofillValue getAutofillValue() {
+            return null;
+        }
+
+        @Override
+        public void autofill(AutofillValue value) {
+            // URL, Job ID, and project inputs are never credential/autofill targets.
+        }
+    }
 }

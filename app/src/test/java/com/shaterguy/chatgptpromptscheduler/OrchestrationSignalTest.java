@@ -85,11 +85,34 @@ public class OrchestrationSignalTest {
     }
 
     @Test
+    public void validatesSameSideContinuationWithoutChangingSequence() {
+        OrchestrationSignal same = OrchestrationSignal.parse(
+                "[AR_CONTINUE_SAME JOB-7 S002 R003]", "JOB-7");
+        assertEquals(OrchestrationSignal.Type.CONTINUE_SAME, same.type);
+        assertTrue(same.routesFrom(OrchestrationStore.SIDE_CHAT));
+        assertTrue(same.routesFrom(OrchestrationStore.SIDE_WORK));
+        assertTrue(same.isValidNextRoute(OrchestrationStore.SIDE_CHAT, "S002", "R003"));
+        assertFalse(same.isValidNextRoute(OrchestrationStore.SIDE_CHAT, "S002", "R004"));
+        assertEquals(OrchestrationSignal.ErrorCode.WRONG_DIRECTION,
+                OrchestrationSignal.validate("[AR_CONTINUE_SAME JOB-7 S002 R003]", "JOB-7",
+                        "INVALID", "S002", "R003", "").errorCode);
+        assertEquals(OrchestrationSignal.ErrorCode.DUPLICATE,
+                OrchestrationSignal.validate("[AR_CONTINUE_SAME JOB-7 S002 R003]", "JOB-7",
+                        OrchestrationStore.SIDE_WORK, "S002", "R003",
+                        "[AR_CONTINUE_SAME JOB-7 S002 R003]", 4L, 4L).errorCode);
+        assertTrue(OrchestrationSignal.validate("[AR_CONTINUE_SAME JOB-7 S002 R003]", "JOB-7",
+                OrchestrationStore.SIDE_WORK, "S002", "R003",
+                "[AR_CONTINUE_SAME JOB-7 S002 R003]", 5L, 4L).isValid());
+    }
+
+    @Test
     public void routeSignalsProduceExactOppositeConversationPrompts() {
         OrchestrationSignal toWork = OrchestrationSignal.parse("[AR_SEND_WORK JOB S001 R001]", "JOB");
         OrchestrationSignal toChat = OrchestrationSignal.parse("[AR_SEND_CHAT JOB S001 R001]", "JOB");
+        OrchestrationSignal same = OrchestrationSignal.parse("[AR_CONTINUE_SAME JOB S001 R001]", "JOB");
         assertEquals("[AUTOMATION_WORK_STEP JOB S001 R001]", OrchestrationStore.promptFor(toWork));
         assertEquals("[AUTOMATION_CHAT_REVIEW JOB S001 R001]", OrchestrationStore.promptFor(toChat));
+        assertEquals("[AUTOMATION_CONTINUE_SAME JOB S001 R001]", OrchestrationStore.promptFor(same));
     }
 
     @Test
@@ -124,6 +147,7 @@ public class OrchestrationSignalTest {
         String commit = OrchestrationScript.commit(prompt);
         String recovery = OrchestrationScript.recoverSubmission(prompt);
         String confirmation = OrchestrationScript.confirmSubmission(prompt);
+        String stopGeneration = OrchestrationScript.stopGeneration();
         String observe = OrchestrationScript.observe(prompt);
         assertTrue(prepare.contains("validHost"));
         assertTrue(prepare.contains("ALREADY_SUBMITTED"));
@@ -143,6 +167,30 @@ public class OrchestrationSignalTest {
         assertTrue(observe.contains("65536"));
         assertTrue(observe.contains("Math.imul"));
         assertTrue(observe.contains(OrchestrationScript.jsQuote(prompt)));
+        assertTrue(stopGeneration.contains("STOP_GENERATION_CLICKED"));
+        assertTrue(stopGeneration.contains("STOP_GENERATION_AMBIGUOUS"));
+        assertTrue(stopGeneration.contains("stop-button"));
+        assertTrue(observe.contains("assistant_present"));
+        assertTrue(observe.contains("stop_available"));
+    }
+
+    @Test
+    public void resumeScriptsScanBothRoomsAndNeverSubmitDuringReconciliation() {
+        String scan = OrchestrationScript.reconcileScan("JOB-7");
+        String target = OrchestrationScript.reconcileTarget(
+                "[AUTOMATION_WORK_STEP JOB-7 S004 R002]", "JOB-7");
+        assertTrue(scan.contains("candidates"));
+        assertTrue(scan.contains("predecessor_index"));
+        assertTrue(scan.contains("AUTOMATION_CHAT_REVIEW"));
+        assertTrue(scan.contains("predecessor_signal"));
+        assertTrue(scan.contains("querySelectorAll('pre,code,blockquote')"));
+        assertTrue(scan.contains("generating"));
+        assertFalse(scan.contains("send.click()"));
+        assertTrue(target.contains("TARGET_PROMPT_ABSENT"));
+        assertTrue(target.contains("TARGET_PROMPT_PRESENT_NO_RESPONSE"));
+        assertTrue(target.contains("TARGET_PROMPT_PRESENT_WITH_RESPONSE"));
+        assertTrue(target.contains("TARGET_PROMPT_MULTIPLE"));
+        assertFalse(target.contains("send.click()"));
     }
 
     @Test
@@ -166,11 +214,80 @@ public class OrchestrationSignalTest {
         assertTrue(service.contains("Elapsed time is telemetry only"));
         assertTrue(service.contains("scheduleHasPriority()"));
         assertTrue(service.contains("store.markSubmitting()"));
+        assertTrue(service.contains("store.ensureStampedPrompt()"));
+        assertTrue(service.contains("store.deliveryPrompt()"));
+        assertFalse(service.contains("OrchestrationScript.prepare(store.pendingPrompt())"));
+        assertFalse(service.contains("OrchestrationScript.observe(store.pendingPrompt())"));
         assertTrue(service.contains("recoverSubmission"));
         assertTrue(service.contains("confirmSubmission"));
         assertTrue(service.contains("DOM_COMPOSER_NOT_FOUND"));
         assertTrue(service.contains("recoveryProbeStartedAt"));
         assertTrue(service.contains("fingerprint.matches"));
         assertTrue(service.contains("store.observeCandidate(fingerprint) < 3"));
+        assertTrue(service.contains("SystemClock.elapsedRealtime()"));
+        assertTrue(service.contains("ResponseTimingPolicy.HARD_FALLBACK_MS"));
+        assertTrue(service.contains("STOP_GENERATION_CONFIRMED"));
+        assertTrue(service.contains("REBOOT_TIMEBASE_RESET"));
+        assertTrue(service.contains("CONTINUE_SAME_DELIVERY"));
     }
+    @Test
+    public void authRequiredUsesVisibleStructuralGateInsteadOfPageText() {
+        String prepare = OrchestrationScript.prepare("[AUTOMATION_START JOB-7]");
+        String observe = OrchestrationScript.observe("[AUTOMATION_START JOB-7]");
+        assertTrue(prepare.contains("visibleAuthGate"));
+        assertTrue(prepare.contains("hasConversation"));
+        assertTrue(prepare.contains("AUTH_REQUIRED"));
+        assertTrue(observe.contains("visibleAuthGate"));
+        assertFalse(prepare.contains("document.body?.innerText"));
+        assertFalse(prepare.contains("body.includes('log in')"));
+        assertFalse(observe.contains("pageBody.includes"));
+    }
+
+    @Test
+    public void startAndResumePreferDurableStateAndDoNotFailClosedOnAlerts() throws Exception {
+        Path activityPath = Path.of("src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationActivity.java");
+        Path storePath = Path.of("src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationStore.java");
+        Path servicePath = Path.of("src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationService.java");
+        if (!Files.exists(activityPath)) activityPath = Path.of("app").resolve(activityPath);
+        if (!Files.exists(storePath)) storePath = Path.of("app").resolve(storePath);
+        if (!Files.exists(servicePath)) servicePath = Path.of("app").resolve(servicePath);
+        String activity = new String(Files.readAllBytes(activityPath), StandardCharsets.UTF_8);
+        String store = new String(Files.readAllBytes(storePath), StandardCharsets.UTF_8);
+        String service = new String(Files.readAllBytes(servicePath), StandardCharsets.UTF_8);
+
+        assertFalse(activity.contains("ensureNotifications"));
+        assertFalse(activity.contains("store.newRunError"));
+        assertFalse(activity.contains("실행 설정이 변경되었습니다"));
+        assertFalse(activity.contains("store.pendingPrompt().isEmpty()"));
+        assertTrue(activity.contains("restoreDurableRunConfiguration"));
+        assertTrue(activity.contains("store.beginReconciliation"));
+        assertTrue(activity.contains("RESUME_RECONCILE_STARTED"));
+        assertTrue(activity.contains("NonCredentialEditText"));
+        assertTrue(activity.contains("getAutofillType"));
+        assertTrue(activity.contains("AUTOFILL_TYPE_NONE"));
+        assertTrue(activity.contains("setImportantForContentCapture"));
+        assertFalse(service.contains("NOTIFICATION_DISABLED"));
+        assertTrue(service.contains("오류 알림 꺼짐"));
+        assertFalse(store.contains("usedJobIds.contains(candidate)"));
+        assertTrue(store.contains("restored = DELIVERY_SUBMITTING"));
+        assertTrue(store.contains("reconciling()"));
+        assertTrue(store.contains("자동 재전송 없음"));
+        assertTrue(service.contains("reconcileScan"));
+        assertTrue(service.contains("reconcileTarget"));
+        assertTrue(service.contains("SIGNAL_SELECTED"));
+        assertTrue(service.contains("TARGET_PROMPT_ALREADY_PRESENT"));
+        assertTrue(service.contains("RESUME_ROOM_SCAN_CHAT"));
+        assertTrue(service.contains("RESUME_ROOM_SCAN_WORK"));
+        assertTrue(service.contains("RESUME_RECONCILE_AMBIGUOUS"));
+        assertTrue(service.contains("RECONCILIATION_CONFIRM_ROOMS"));
+        assertTrue(service.contains("RESUME_STABLE_IDLE_CONFIRMED"));
+        assertTrue(service.contains("RESUME_SOURCE_FRESHNESS_CONFIRMED"));
+        assertTrue(service.contains("rebuildForExistingPrompt"));
+        assertTrue(service.contains("scheduleReconciliationRetry"));
+        assertTrue(service.indexOf("RESUME_SOURCE_FRESHNESS_CHECK")
+                < service.indexOf("rebuildForExistingPrompt"));
+        assertFalse(service.contains("scheduleStep(1200L)"));
+        assertFalse(service.contains("postDelayed(this::ensureEngine, 1800L)"));
+    }
+
 }
