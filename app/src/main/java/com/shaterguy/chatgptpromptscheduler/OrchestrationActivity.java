@@ -693,8 +693,10 @@ public final class OrchestrationActivity extends Activity {
     enum ResumePath { USER_ACTION_RESOLVED, RECONCILE, BOOTSTRAP }
 
     static ResumePath resumePath(boolean waitingForUser, boolean fullRelay) {
-        if (fullRelay) return ResumePath.RECONCILE;
+        // WAITING_USER is an explicit user-confirmation transition, not an observational recovery.
+        // It must bypass generic reconciliation even after both relay rooms are provisioned.
         if (waitingForUser) return ResumePath.USER_ACTION_RESOLVED;
+        if (fullRelay) return ResumePath.RECONCILE;
         return ResumePath.BOOTSTRAP;
     }
 
