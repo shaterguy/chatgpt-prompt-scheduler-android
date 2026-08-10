@@ -35,12 +35,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class ExecutionService extends Service {
     private static final int NOTIFICATION_ID = 7010;
-    private static final int MAX_ROUTE_RECOVERIES = 3;
+    private static final int MAX_ROUTE_RECOVERIES = CanonicalTargetRecoveryPolicy.MAX_REENTRIES;
     private static final int MAX_TRACE_EVENTS = 120;
+    private static final long MAX_RATE_LIMIT_WAIT_MS = 45_000L;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final AtomicBoolean processing = new AtomicBoolean(false);
     private final Runnable automationRunnable = this::runAutomationStep;
     private final Runnable watchdogRunnable = this::watchdog;
+    private final Runnable rateLimitRecoveryRunnable = this::performRateLimitRecovery;
+    private final Runnable targetRecoveryRunnable = this::performTargetRouteRecovery;
+    private final RecoveryBackoff rateLimitBackoff = new RecoveryBackoff();
+    private final RecoveryBackoff canonicalReentryBackoff = new RecoveryBackoff();
     private QueueStore queueStore;
     private ConfigStore configStore;
     private RunLogStore logStore;
@@ -54,6 +59,7 @@ public final class ExecutionService extends Service {
     private int pageAttempts;
     private int engineAttempt;
     private int routeRecoveryAttempts;
+    private int uiWaitAttempts;
     private int navigationGeneration;
     private int traceDropped;
     private boolean submitted;
@@ -61,6 +67,13 @@ public final class ExecutionService extends Service {
     private String stampedPrompt;
     private String lastObservedUrl = "";
     private String lastRetryDetail = "";
+    private long rateLimitStartedAt;
+    private long uiWaitStartedAt;
+    private long targetRecoveryStartedAt;
+    private boolean rateLimitWaiting;
+    private boolean rateLimitRecoveryScheduled;
+    private boolean targetRecoveryScheduled;
+    private boolean canonicalReentryForced;
     private JSONArray traceEvents = new JSONArray();
 
     @Override
@@ -140,13 +153,29 @@ public final class ExecutionService extends Service {
         engineAttempt = 0;
         routeRecoveryAttempts = 0;
         navigationGeneration = 0;
-        submitted = false;
+        boolean recoveredSubmission = currentItem.optLong("submitAttemptedAt", 0L) > 0L;
+        String persistedPrompt = currentItem.optString("submitPrompt", "");
+        if (recoveredSubmission && persistedPrompt.isBlank()) {
+            finish(false, "SUBMIT_RECONCILIATION_REQUIRED", "전송 경계는 남았지만 재확인할 프롬프트가 없습니다.");
+            return;
+        }
+        submitted = recoveredSubmission;
         stepInFlight = false;
         lastObservedUrl = "";
         lastRetryDetail = "";
-        stampedPrompt = TimestampUtil.prefix(startedAt, currentSchedule.prompt);
+        uiWaitAttempts = 0;
+        rateLimitStartedAt = 0L;
+        uiWaitStartedAt = 0L;
+        targetRecoveryStartedAt = 0L;
+        rateLimitWaiting = false;
+        rateLimitRecoveryScheduled = false;
+        targetRecoveryScheduled = false;
+        canonicalReentryForced = false;
+        rateLimitBackoff.reset();
+        canonicalReentryBackoff.reset();
+        stampedPrompt = recoveredSubmission ? persistedPrompt : TimestampUtil.prefix(startedAt, currentSchedule.prompt);
         trace("RUN_STARTED", object("timeoutSeconds", Math.max(1L, (deadline - startedAt) / 1000L),
-                "promptLength", stampedPrompt.length()));
+                "promptLength", stampedPrompt.length(), "recoveredSubmission", recoveredSubmission));
         acquireWakeLock();
         startAsForeground(currentSchedule.name + " 실행 중");
         launchEngine();
@@ -225,7 +254,7 @@ public final class ExecutionService extends Service {
                     trace("PAGE_FINISHED", object("url", url, "progress", view.getProgress(),
                             "windowAttached", view.isAttachedToWindow(), "viewFocused", view.isFocused(),
                             "windowFocused", view.hasWindowFocus()));
-                    scheduleAutomationStep(2500L);
+                    if (!rateLimitWaiting && !targetRecoveryScheduled) scheduleAutomationStep(2500L);
                 }
 
                 @Override
@@ -233,23 +262,38 @@ public final class ExecutionService extends Service {
                     if (!valueOrEmpty(url).equals(lastObservedUrl)) {
                         trace("HISTORY_UPDATED", object("url", url, "reload", isReload));
                         recordNavigation(url);
-                        scheduleAutomationStep(1800L);
+                        if (!rateLimitWaiting && !targetRecoveryScheduled) scheduleAutomationStep(1800L);
                     }
                 }
 
                 @Override
                 public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                     if (!request.isForMainFrame()) return;
-                    trace("PAGE_LOAD_ERROR", object("url", String.valueOf(request.getUrl()), "code", error.getErrorCode(),
-                            "description", String.valueOf(error.getDescription())));
-                    recoverEngine("PAGE_LOAD_FAILED", String.valueOf(error.getDescription()));
+                    if (error != null && RecoveryDecisionPolicy.isRateLimitWebViewError(error.getErrorCode())) {
+                        trace("RATE_LIMIT_DETECTED", object("source", "WEBVIEW_ERROR_TOO_MANY_REQUESTS",
+                                "url", String.valueOf(request.getUrl()), "code", error.getErrorCode()));
+                        recoverFromRateLimit("WEBVIEW_ERROR_TOO_MANY_REQUESTS", String.valueOf(error.getDescription()));
+                        return;
+                    }
+                    int errorCode = error == null ? 0 : error.getErrorCode();
+                    String description = error == null ? "" : String.valueOf(error.getDescription());
+                    trace("PAGE_LOAD_ERROR", object("url", String.valueOf(request.getUrl()), "code", errorCode,
+                            "description", description));
+                    recoverEngine("PAGE_LOAD_FAILED", description);
                 }
 
                 @Override
                 public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
                     if (!request.isForMainFrame()) return;
-                    trace("HTTP_ERROR", object("url", String.valueOf(request.getUrl()), "statusCode", response.getStatusCode(),
-                            "reason", response.getReasonPhrase()));
+                    int statusCode = response == null ? 0 : response.getStatusCode();
+                    String reason = response == null ? "" : response.getReasonPhrase();
+                    trace("HTTP_ERROR", object("url", String.valueOf(request.getUrl()), "statusCode", statusCode,
+                            "reason", reason));
+                    if (RecoveryDecisionPolicy.isRateLimitHttp(statusCode)) {
+                        trace("RATE_LIMIT_DETECTED", object("source", "HTTP_429",
+                                "url", String.valueOf(request.getUrl()), "statusCode", statusCode));
+                        recoverFromRateLimit("HTTP_429", reason);
+                    }
                 }
 
                 @Override
@@ -287,7 +331,7 @@ public final class ExecutionService extends Service {
     }
 
     private void scheduleAutomationStep(long delayMs) {
-        if (currentItem == null || webView == null) return;
+        if (currentItem == null || webView == null || rateLimitWaiting || targetRecoveryScheduled) return;
         handler.removeCallbacks(automationRunnable);
         handler.postDelayed(automationRunnable, delayMs);
     }
@@ -310,6 +354,7 @@ public final class ExecutionService extends Service {
 
     private void runAutomationStep() {
         if (webView == null || currentItem == null || stepInFlight) return;
+        if (rateLimitWaiting) return;
         if (System.currentTimeMillis() >= deadline) {
             finish(false, "EXECUTION_TIMEOUT", timeoutDetail());
             return;
@@ -323,6 +368,11 @@ public final class ExecutionService extends Service {
         String script = submitted
                 ? AutomationScript.verify(currentSchedule, stampedPrompt)
                 : AutomationScript.build(currentSchedule, stampedPrompt, currentItem.optString("runId"), pageAttempts);
+        if (!submitted && !markSubmissionBoundary()) {
+            stepInFlight = false;
+            finish(false, "SUBMIT_BOUNDARY_SAVE_FAILED", "전송 직전 영속 실행 경계를 저장하지 못했습니다.");
+            return;
+        }
         activeWebView.evaluateJavascript(script, raw -> {
             stepInFlight = false;
             if (currentItem == null || activeWebView != webView || generation != navigationGeneration) {
@@ -334,33 +384,110 @@ public final class ExecutionService extends Service {
         });
     }
 
+    private boolean markSubmissionBoundary() {
+        if (currentItem == null || queueStore == null) return false;
+        if (currentItem.optLong("submitAttemptedAt", 0L) > 0L) return true;
+        long attemptedAt = System.currentTimeMillis();
+        boolean saved = queueStore.markSubmissionAttempted(currentItem.optString("runId"), attemptedAt, stampedPrompt);
+        if (!saved) return false;
+        try {
+            currentItem.put("submitAttemptedAt", attemptedAt);
+            currentItem.put("submitPrompt", stampedPrompt);
+        } catch (JSONException error) {
+            return false;
+        }
+        trace("SUBMIT_BOUNDARY_MARKED", object("attemptedAt", attemptedAt, "promptLength", stampedPrompt.length()));
+        return true;
+    }
+
+    private void clearSubmissionBoundaryIfUnclicked(String reason) {
+        if (currentItem == null || submitted) return;
+        queueStore.clearSubmissionAttempted(currentItem.optString("runId"));
+        currentItem.remove("submitAttemptedAt");
+        currentItem.remove("submitPrompt");
+        trace("SUBMIT_BOUNDARY_CLEARED", object("reason", reason));
+    }
+
     private void handleAutomationResult(String raw) {
         JSONObject result = parseObject(raw);
         String status = result.optString("status", "SCRIPT_RESULT_INVALID");
         String detail = result.optString("detail", "");
         String resultUrl = result.optString("url", "");
         if (!resultUrl.isBlank()) lastObservedUrl = resultUrl;
+        RecoveryDecisionPolicy.Decision policyDecision = recoveryDecision(status, detail, resultUrl);
         trace("SCRIPT_RESULT", object("status", status, "detail", detail, "url", resultUrl,
-                "diagnostics", result.optJSONObject("diagnostics"), "raw", clip(raw, 12_000)));
+                "decision", policyDecision.name(), "diagnostics", result.optJSONObject("diagnostics"), "raw", clip(raw, 12_000)));
         switch (status) {
             case "SUBMITTED" -> {
                 submitted = true;
                 pageAttempts = 0;
+                clearUiWaitRecovery("submitted");
+                clearRateLimitRecovery("submitted");
+                clearTargetRecovery("submitted");
                 lastRetryDetail = detail;
                 scheduleAutomationStep(2500L);
             }
+            case "RATE_LIMIT" -> recoverFromRateLimit("SCRIPT_RATE_LIMIT", detail);
+            case "UI_WAIT" -> {
+                clearSubmissionBoundaryIfUnclicked("ui_wait");
+                handleUiWait(detail);
+            }
+            case "RECONCILE_SEND" -> {
+                submitted = true;
+                clearUiWaitRecovery("reconcile_send");
+                trace("SUBMIT_RECONCILE", object("detail", detail,
+                        "diagnostics", result.optJSONObject("diagnostics")));
+                scheduleAutomationStep(1_000L);
+            }
             case "RETRY" -> {
+                clearSubmissionBoundaryIfUnclicked("action_retry");
+                clearUiWaitRecovery("action_retry");
+                clearRateLimitRecovery("action_retry");
                 pageAttempts++;
                 lastRetryDetail = detail;
                 if (pageAttempts > 48) finish(false, retryFailureStatus(detail), contextualDetail(detail));
                 else scheduleAutomationStep(1200L);
             }
-            case "TARGET_CONTEXT_MISMATCH" -> recoverTargetRoute(detail);
+            case "TARGET_TRANSIENT" -> {
+                clearSubmissionBoundaryIfUnclicked("target_transient");
+                recoverTargetRoute(detail);
+            }
+            case "TARGET_CONTEXT_MISMATCH" -> {
+                if (policyDecision == RecoveryDecisionPolicy.Decision.TARGET_CHANGED
+                        || !isRecoverableTarget(resultUrl)) finish(false, "TARGET_CHANGED", contextualDetail(detail));
+                else recoverTargetRoute(detail);
+            }
             case "MODE_SELECTION_FAILED", "MODE_SELECTION_AMBIGUOUS" ->
                     finish(false, "WORK_MODE_SELECT_FAILED", contextualDetail(detail));
             case "AUTH_REQUIRED", "DRAFT_PRESENT" -> finish(false, status, contextualDetail(detail));
             default -> finish(false, status, contextualDetail(detail.isBlank() ? "자동화 스크립트가 실패했습니다." : detail));
         }
+    }
+
+    private RecoveryDecisionPolicy.Decision recoveryDecision(String status, String detail, String resultUrl) {
+        if (currentSchedule == null) return RecoveryDecisionPolicy.Decision.FAIL;
+        String actual = resultUrl == null || resultUrl.isBlank() ? lastObservedUrl : resultUrl;
+        RecoveryDecisionPolicy.NetworkState network = "RATE_LIMIT".equals(status)
+                ? RecoveryDecisionPolicy.NetworkState.RATE_LIMIT
+                : RecoveryDecisionPolicy.NetworkState.OK;
+        RecoveryDecisionPolicy.UiReadiness readiness = RecoveryDecisionPolicy.UiReadiness.READY;
+        if (RecoveryDecisionPolicy.isUiWaitStatus(status)) {
+            String value = detail == null ? "" : detail.toLowerCase();
+            if (value.contains("로딩") || value.contains("loading")) readiness = RecoveryDecisionPolicy.UiReadiness.LOADING;
+            else if (value.contains("모드")) readiness = RecoveryDecisionPolicy.UiReadiness.MODE_PENDING;
+            else if (value.contains("모델")) readiness = RecoveryDecisionPolicy.UiReadiness.MODEL_PENDING;
+            else if (value.contains("추론")) readiness = RecoveryDecisionPolicy.UiReadiness.REASONING_PENDING;
+            else readiness = RecoveryDecisionPolicy.UiReadiness.COMPOSER_MISSING;
+        }
+        RecoveryDecisionPolicy.SendState sendState = submitted
+                ? RecoveryDecisionPolicy.SendState.DOM_CONFIRMED
+                : "RECONCILE_SEND".equals(status)
+                ? RecoveryDecisionPolicy.SendState.AMBIGUOUS
+                : RecoveryDecisionPolicy.SendState.NOT_STARTED;
+        return RecoveryDecisionPolicy.decide(
+                RecoveryDecisionPolicy.targetIntent(currentSchedule.targetType, false, ""),
+                RecoveryDecisionPolicy.classify(currentSchedule.targetType, currentSchedule.targetUrl, actual),
+                network, readiness, sendState);
     }
 
     private void handleVerification(String raw) {
@@ -372,36 +499,256 @@ public final class ExecutionService extends Service {
         trace("VERIFY_RESULT", object("status", status, "detail", detail, "url", resultUrl,
                 "diagnostics", result.optJSONObject("diagnostics"), "raw", clip(raw, 12_000)));
         switch (status) {
-            case "VERIFIED" -> finish(true, "VERIFIED", "프롬프트 전송을 확인했습니다.");
+            case "VERIFIED" -> {
+                clearUiWaitRecovery("verified");
+                clearRateLimitRecovery("verified");
+                clearTargetRecovery("verified");
+                finish(true, "VERIFIED", "프롬프트 전송을 확인했습니다.");
+            }
+            case "RATE_LIMIT" -> recoverFromRateLimit("VERIFY_RATE_LIMIT", detail);
+            case "UI_WAIT" -> handleUiWait(detail);
             case "RETRY" -> {
+                clearUiWaitRecovery("verify_retry");
+                clearRateLimitRecovery("verify_retry");
                 pageAttempts++;
                 lastRetryDetail = detail;
                 if (pageAttempts > 45) finish(false, "SUBMIT_VERIFICATION_FAILED", contextualDetail("전송된 사용자 메시지를 확인하지 못했습니다."));
                 else scheduleAutomationStep(1400L);
             }
-            case "TARGET_CONTEXT_MISMATCH" -> finish(false, "SUBMIT_CONTEXT_LOST", contextualDetail(detail));
+            case "TARGET_TRANSIENT" -> recoverTargetRoute(detail);
+            case "TARGET_CONTEXT_MISMATCH" -> {
+                if (isRecoverableTarget(resultUrl)) recoverTargetRoute(detail);
+                else finish(false, "TARGET_CHANGED", contextualDetail(detail));
+            }
             default -> finish(false, status, contextualDetail(detail.isBlank() ? "전송 검증 스크립트가 실패했습니다." : detail));
         }
     }
 
-    private void recoverTargetRoute(String detail) {
+    private void handleUiWait(String detail) {
+        long now = System.currentTimeMillis();
+        if (uiWaitStartedAt == 0L) uiWaitStartedAt = now;
+        uiWaitAttempts++;
         lastRetryDetail = detail;
+        trace("UI_WAIT", object("detail", detail, "attempt", uiWaitAttempts,
+                "elapsedMs", Math.max(0L, now - uiWaitStartedAt)));
+        if (now >= deadline) {
+            finish(false, "UI_NOT_READY", contextualDetail(detail));
+            return;
+        }
+        CanonicalTargetRecoveryPolicy.Decision decision = CanonicalTargetRecoveryPolicy.decide(
+                now, uiWaitStartedAt, true, true, false, false, routeRecoveryAttempts);
+        if (decision == CanonicalTargetRecoveryPolicy.Decision.REENTER) {
+            recoverTargetRoute("UI readiness grace exceeded: " + valueOrEmpty(detail), true);
+            return;
+        }
+        if (decision == CanonicalTargetRecoveryPolicy.Decision.EXHAUSTED) {
+            finish(false, "TARGET_ROUTE_RECOVERY_FAILED", contextualDetail("canonical target re-entry budget exhausted"));
+            return;
+        }
+        scheduleAutomationStep(Math.min(1_500L, RecoveryBackoff.delayForAttempt(uiWaitAttempts)));
+    }
+
+    private void recoverFromRateLimit(String source, String detail) {
+        if (currentItem == null) return;
+        suspendTargetRecoveryForRateLimit();
+        long now = System.currentTimeMillis();
+        if (rateLimitStartedAt == 0L) {
+            rateLimitStartedAt = now;
+            rateLimitBackoff.reset();
+        }
+        if (now - rateLimitStartedAt >= MAX_RATE_LIMIT_WAIT_MS || now >= deadline) {
+            finish(false, "RATE_LIMIT_TIMEOUT", contextualDetail(detail == null ? source : detail));
+            return;
+        }
+        rateLimitWaiting = true;
+        lastRetryDetail = detail == null || detail.isBlank() ? source : detail;
+        if (rateLimitRecoveryScheduled) return;
+        RecoveryBackoff.Decision decision = rateLimitBackoff.next();
+        rateLimitRecoveryScheduled = true;
+        cancelAutomationStep();
+        trace("RATE_LIMIT_RECOVERY_WAIT", object("source", source, "detail", valueOrEmpty(detail),
+                "attempt", decision.attempt, "delayMs", decision.delayMs,
+                "elapsedMs", Math.max(0L, now - rateLimitStartedAt)));
+        handler.postDelayed(rateLimitRecoveryRunnable, decision.delayMs);
+    }
+
+    private void performRateLimitRecovery() {
+        rateLimitRecoveryScheduled = false;
+        if (currentItem == null || !rateLimitWaiting) return;
+        long now = System.currentTimeMillis();
+        if (now >= deadline || now - rateLimitStartedAt >= MAX_RATE_LIMIT_WAIT_MS) {
+            finish(false, "RATE_LIMIT_TIMEOUT", timeoutDetail());
+            return;
+        }
+        if (webView == null) {
+            clearRateLimitRecovery("webview_missing");
+            recoverEngine("RATE_LIMIT_WEBVIEW_MISSING", "rate-limit recovery lost the WebView");
+            return;
+        }
+        String actual = valueOrEmpty(webView.getUrl());
+        lastObservedUrl = actual;
+        boolean pageFinished = webView.getProgress() >= 100;
+        boolean targetReady = matchesCurrentTarget(actual);
+        if (targetReady && pageFinished) {
+            clearRateLimitRecovery("target_reobserved");
+            clearTargetRecovery("rate_limit_target_reobserved");
+            trace("RATE_LIMIT_REOBSERVED", object("url", actual, "progress", webView.getProgress()));
+            scheduleAutomationStep(0L);
+            return;
+        }
+        boolean recoverable = isRecoverableTarget(actual);
+        clearRateLimitRecovery(recoverable ? "target_restore_after_wait" : "target_changed_after_wait");
+        if (recoverable) {
+            recoverTargetRoute("rate-limit recovery target reobserve", !pageFinished);
+        }
+        else finish(false, "TARGET_CHANGED", contextualDetail("rate-limit recovery observed a different conversation"));
+    }
+
+    private void clearRateLimitRecovery(String reason) {
+        if (rateLimitWaiting || rateLimitRecoveryScheduled) {
+            trace("RATE_LIMIT_RECOVERY_CLEAR", object("reason", reason,
+                    "attempt", rateLimitBackoff.attempt()));
+        }
+        handler.removeCallbacks(rateLimitRecoveryRunnable);
+        rateLimitWaiting = false;
+        rateLimitRecoveryScheduled = false;
+        rateLimitStartedAt = 0L;
+        rateLimitBackoff.reset();
+    }
+
+    private void clearUiWaitRecovery(String reason) {
+        if (uiWaitStartedAt != 0L) {
+            trace("UI_WAIT_CLEAR", object("reason", reason, "attempt", uiWaitAttempts));
+        }
+        uiWaitStartedAt = 0L;
+        uiWaitAttempts = 0;
+    }
+
+    private void clearTargetRecovery(String reason) {
+        if (targetRecoveryStartedAt != 0L || targetRecoveryScheduled) {
+            trace("TARGET_RECOVERY_CLEAR", object("reason", reason, "attempt", canonicalReentryBackoff.attempt(),
+                    "reentries", routeRecoveryAttempts));
+        }
+        handler.removeCallbacks(targetRecoveryRunnable);
+        targetRecoveryScheduled = false;
+        targetRecoveryStartedAt = 0L;
+        canonicalReentryBackoff.reset();
+        routeRecoveryAttempts = 0;
+        canonicalReentryForced = false;
+    }
+
+    /** Cancel only the pending target callback; preserve the shared re-entry budget. */
+    private void suspendTargetRecoveryForRateLimit() {
+        if (targetRecoveryScheduled || targetRecoveryStartedAt != 0L) {
+            trace("TARGET_RECOVERY_SUSPEND", object("reason", "rate_limit",
+                    "reentries", routeRecoveryAttempts,
+                    "backoffAttempt", canonicalReentryBackoff.attempt()));
+        }
+        handler.removeCallbacks(targetRecoveryRunnable);
+        targetRecoveryScheduled = false;
+        targetRecoveryStartedAt = 0L;
+        canonicalReentryForced = false;
+    }
+
+    private boolean matchesCurrentTarget(String actualUrl) {
+        if (currentSchedule == null) return false;
+        if ("existing".equals(currentSchedule.targetType)) {
+            return TargetParser.matchesConversationIdentity(currentSchedule.targetUrl, actualUrl);
+        }
+        return TargetParser.matchesTarget(currentSchedule.targetType, currentSchedule.targetUrl, actualUrl);
+    }
+
+    private boolean isRecoverableTarget(String actualUrl) {
+        if (actualUrl == null || actualUrl.isBlank() || "about:blank".equalsIgnoreCase(actualUrl)) return true;
+        if (!TargetParser.isSupported(actualUrl) || currentSchedule == null) return false;
+        RecoveryDecisionPolicy.ObservedLocation location = RecoveryDecisionPolicy.classify(
+                currentSchedule.targetType, currentSchedule.targetUrl, actualUrl);
+        return location != RecoveryDecisionPolicy.ObservedLocation.DIFFERENT_CONVERSATION;
+    }
+
+    private void recoverTargetRoute(String detail) {
+        recoverTargetRoute(detail, false);
+    }
+
+    private void recoverTargetRoute(String detail, boolean forceReentry) {
+        lastRetryDetail = detail;
+        canonicalReentryForced = canonicalReentryForced || forceReentry;
         trace("TARGET_ROUTE_MISMATCH", object("detail", detail, "attempt", routeRecoveryAttempts,
                 "requested", currentSchedule == null ? "" : currentSchedule.targetUrl, "actual", lastObservedUrl));
-        if (routeRecoveryAttempts >= MAX_ROUTE_RECOVERIES || System.currentTimeMillis() >= deadline) {
+        if (currentSchedule == null || !isRecoverableTarget(lastObservedUrl)) {
+            finish(false, "TARGET_CHANGED", contextualDetail(detail));
+            return;
+        }
+        if (!CanonicalTargetRecoveryPolicy.canReenter(routeRecoveryAttempts)
+                || System.currentTimeMillis() >= deadline) {
             finish(false, "TARGET_ROUTE_RECOVERY_FAILED", contextualDetail(detail));
             return;
         }
-        routeRecoveryAttempts++;
+        if (targetRecoveryStartedAt == 0L) targetRecoveryStartedAt = System.currentTimeMillis();
+        if (System.currentTimeMillis() - targetRecoveryStartedAt >= MAX_RATE_LIMIT_WAIT_MS) {
+            finish(false, "TARGET_ROUTE_RECOVERY_FAILED", contextualDetail(detail));
+            return;
+        }
+        if (targetRecoveryScheduled) return;
         pageAttempts = 0;
-        startAsForeground(currentSchedule.name + " 대상 대화 복구 중 " + routeRecoveryAttempts + "/" + MAX_ROUTE_RECOVERIES);
+        clearUiWaitRecovery("target_restore");
+        int nextAttempt = routeRecoveryAttempts + 1;
+        startAsForeground(currentSchedule.name + " 대상 대화 복구 중 " + nextAttempt + "/" + MAX_ROUTE_RECOVERIES);
         cancelAutomationStep();
         stepInFlight = false;
-        navigationGeneration++;
-        if (webView != null) {
-            webView.stopLoading();
-            webView.loadUrl(currentSchedule.targetUrl);
+        RecoveryBackoff.Decision decision = canonicalReentryBackoff.next();
+        targetRecoveryScheduled = true;
+        trace("TARGET_ROUTE_RECOVERY_WAIT", object("attempt", nextAttempt,
+                "backoffAttempt", decision.attempt, "delayMs", decision.delayMs,
+                "requested", currentSchedule.targetUrl, "actual", lastObservedUrl));
+        handler.postDelayed(targetRecoveryRunnable, decision.delayMs);
+    }
+
+    private void performTargetRouteRecovery() {
+        targetRecoveryScheduled = false;
+        if (currentItem == null || currentSchedule == null || webView == null) return;
+        long now = System.currentTimeMillis();
+        if (now >= deadline || targetRecoveryStartedAt == 0L
+                || now - targetRecoveryStartedAt >= MAX_RATE_LIMIT_WAIT_MS) {
+            finish(false, "TARGET_ROUTE_RECOVERY_FAILED", timeoutDetail());
+            return;
         }
+        String actual = valueOrEmpty(webView.getUrl());
+        lastObservedUrl = actual;
+        if (matchesCurrentTarget(actual) && !canonicalReentryForced) {
+            clearTargetRecovery("target_reobserved");
+            trace("TARGET_ROUTE_REOBSERVED", object("url", actual, "progress", webView.getProgress()));
+            scheduleAutomationStep(0L);
+            return;
+        }
+        if (!isRecoverableTarget(actual)) {
+            clearTargetRecovery("target_changed_before_reentry");
+            finish(false, "TARGET_CHANGED", contextualDetail("target restoration observed a different conversation"));
+            return;
+        }
+        clearRateLimitRecovery("target_restore_navigation");
+        reenterCanonicalTargetUrl("target_restore", actual);
+    }
+
+    /** The only recovery navigation side effect for scheduled execution. */
+    private void reenterCanonicalTargetUrl(String reason, String actualUrl) {
+        if (webView == null || currentSchedule == null) return;
+        if (!CanonicalTargetRecoveryPolicy.canReenter(routeRecoveryAttempts)) {
+            finish(false, "TARGET_ROUTE_RECOVERY_FAILED", contextualDetail("canonical target re-entry budget exhausted"));
+            return;
+        }
+        String canonicalUrl = currentSchedule.targetUrl;
+        if (canonicalUrl == null || canonicalUrl.isBlank()) {
+            finish(false, "TARGET_URL_INVALID", "복구할 canonical target URL이 없습니다.");
+            return;
+        }
+        routeRecoveryAttempts++;
+        navigationGeneration++;
+        stepInFlight = false;
+        canonicalReentryForced = false;
+        trace("CANONICAL_TARGET_REENTRY", object("reason", reason, "attempt", routeRecoveryAttempts,
+                "requested", canonicalUrl, "actual", actualUrl, "progress", webView.getProgress()));
+        webView.loadUrl(canonicalUrl);
     }
 
     private String retryFailureStatus(String detail) {
@@ -553,6 +900,16 @@ public final class ExecutionService extends Service {
 
     private void cleanupWebViewOnly() {
         cancelAutomationStep();
+        handler.removeCallbacks(rateLimitRecoveryRunnable);
+        handler.removeCallbacks(targetRecoveryRunnable);
+        rateLimitWaiting = false;
+        rateLimitRecoveryScheduled = false;
+        targetRecoveryScheduled = false;
+        rateLimitStartedAt = 0L;
+        targetRecoveryStartedAt = 0L;
+        rateLimitBackoff.reset();
+        canonicalReentryBackoff.reset();
+        canonicalReentryForced = false;
         navigationGeneration++;
         stepInFlight = false;
         if (webViewHost != null) {
