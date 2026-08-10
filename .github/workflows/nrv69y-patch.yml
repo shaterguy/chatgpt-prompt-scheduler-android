@@ -31,7 +31,9 @@ jobs:
       - name: Apply NRV69Y recovery patch
         run: |
           set -euo pipefail
-          cat tools/nrv69y_patch_parts/*.b64 | tr -d '\n' | base64 -d > /tmp/nrv69y_patch.py
+          cat tools/nrv69y_patch_parts/[0-9][0-9].b64 | tr -d '\n' | base64 -d > /tmp/nrv69y_patch.py
+          test "$(wc -c < /tmp/nrv69y_patch.py)" -gt 60000
+          echo 'a86607e5a0459cb7dd272f8f7f393fa6fd377ddf619345bb01917f0c20876dec  /tmp/nrv69y_patch.py' | sha256sum -c -
           python /tmp/nrv69y_patch.py
       - name: Diff check
         run: git diff --check
