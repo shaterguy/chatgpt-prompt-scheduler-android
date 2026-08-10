@@ -45,8 +45,8 @@ public final class OrchestrationService extends Service implements AutomationRun
     private final Runnable resumeRunnable = this::ensureEngine;
     private final AdaptivePolling responsePolling = new AdaptivePolling();
     private final AdaptivePolling reconciliationPolling = new AdaptivePolling();
-    private final AdaptivePolling initialTargetPolling = new AdaptivePolling();
     private final RecoveryBackoff rateLimitBackoff = new RecoveryBackoff();
+    private final RecoveryBackoff canonicalReentryBackoff = new RecoveryBackoff();
     private final Runnable rateLimitRecoveryRunnable = this::performRateLimitRecovery;
     private final Runnable initialTargetReloadRunnable = this::performInitialTargetReload;
     private OrchestrationStore store;
@@ -83,6 +83,9 @@ public final class OrchestrationService extends Service implements AutomationRun
     private boolean rateLimitWaiting;
     private boolean rateLimitRecoveryScheduled;
     private long targetRecoveryStartedAt;
+    private long uiWaitStartedAt;
+    private int canonicalReentryAttempts;
+    private boolean canonicalReentryForced;
 
     @Override
     public void onCreate() {
@@ -984,6 +987,7 @@ public final class OrchestrationService extends Service implements AutomationRun
         }
         switch (status) {
             case "READY" -> {
+                uiWaitStartedAt = 0L;
                 if (store.initialStartPending()) {
                     store.setInitialStartBaselineCount(result.optInt("matching_user_turns", 0));
                     log("INITIAL_START_READY", "existing_turns=" + store.initialStartBaselineCount());
@@ -1320,7 +1324,20 @@ public final class OrchestrationService extends Service implements AutomationRun
     private void uiWait(String detail, long delayMs) {
         if (!canRun()) return;
         String safe = safeDetail(detail);
+        long now = System.currentTimeMillis();
+        if (uiWaitStartedAt == 0L) uiWaitStartedAt = now;
+        CanonicalTargetRecoveryPolicy.Decision decision = CanonicalTargetRecoveryPolicy.decide(
+                now, uiWaitStartedAt, true, true, false, false, canonicalReentryAttempts);
         log("UI_WAIT", "detail=" + safe + ";delay_ms=" + Math.max(0L, delayMs));
+        if (decision == CanonicalTargetRecoveryPolicy.Decision.REENTER) {
+            canonicalReentryForced = true;
+            reloadInitialStartTarget("ui_wait", true);
+            return;
+        }
+        if (decision == CanonicalTargetRecoveryPolicy.Decision.EXHAUSTED) {
+            pauseWithError("TARGET_ROUTE_RECOVERY_FAILED", "UI 준비가 장기 정체되어 canonical target 재진입 한도를 초과했습니다.");
+            return;
+        }
         store.setStatus(OrchestrationStore.sideLabel(activeTargetSide()) + " · UI 준비 대기");
         scheduleStep(Math.max(250L, delayMs));
     }
@@ -1345,7 +1362,7 @@ public final class OrchestrationService extends Service implements AutomationRun
             pauseWithError("RATE_LIMIT_TIMEOUT", safeDetail(detail == null ? source : detail));
             return;
         }
-        resetInitialTargetRetry();
+        suspendCanonicalTargetRecoveryForRateLimit();
         rateLimitWaiting = true;
         evaluationInFlight = false;
         handler.removeCallbacks(stepRunnable);
@@ -1391,20 +1408,19 @@ public final class OrchestrationService extends Service implements AutomationRun
             handler.post(this::ensureEngine);
             return;
         }
-        if (webView.getProgress() < 100) {
-            handleRateLimit("REOBSERVE_LOADING", "rate-limit recovery is still observing page load");
-            return;
-        }
         String actualUrl = webView.getUrl();
-        if (matchesExpectedTarget(actualUrl)) {
+        boolean pageFinished = webView.getProgress() >= 100;
+        boolean targetReady = matchesExpectedTarget(actualUrl);
+        if (targetReady && pageFinished) {
             clearRateLimitRecovery("target_reobserved");
+            resetInitialTargetRetry();
             log("RATE_LIMIT_REOBSERVED", "url=" + safeDetail(actualUrl));
             scheduleStep(0L);
             return;
         }
         boolean recoverable = isTransientExpectedTarget(actualUrl);
         clearRateLimitRecovery(recoverable ? "target_restore_after_wait" : "target_changed_after_wait");
-        if (recoverable) reloadInitialStartTarget("rate_limit_target");
+        if (recoverable) reloadInitialStartTarget("rate_limit_target", !pageFinished);
         else pauseTargetChanged(actualUrl, "rate-limit 복구 후 다른 대화 ID가 확인되었습니다.");
     }
 
@@ -1417,6 +1433,18 @@ public final class OrchestrationService extends Service implements AutomationRun
         rateLimitRecoveryScheduled = false;
         rateLimitStartedAt = 0L;
         rateLimitBackoff.reset();
+    }
+
+    /** Cancel only the pending target callback; preserve the shared re-entry budget. */
+    private void suspendCanonicalTargetRecoveryForRateLimit() {
+        if (initialTargetReloadScheduled || targetRecoveryStartedAt != 0L) {
+            log("TARGET_RECOVERY_SUSPEND", "reason=rate_limit;reentries=" + canonicalReentryAttempts
+                    + ";backoff_attempt=" + canonicalReentryBackoff.attempt());
+        }
+        handler.removeCallbacks(initialTargetReloadRunnable);
+        initialTargetReloadScheduled = false;
+        targetRecoveryStartedAt = 0L;
+        canonicalReentryForced = false;
     }
 
     /** Elapsed time is telemetry only; a normal response wait never times out. */
@@ -1547,20 +1575,42 @@ public final class OrchestrationService extends Service implements AutomationRun
      * wait until its conversation identity is visible instead of failing on transient SPA routes.
      */
     private void reloadInitialStartTarget(String reason) {
+        reloadInitialStartTarget(reason, false);
+    }
+
+    private void reloadInitialStartTarget(String reason, boolean forceReentry) {
         if (webView == null || scheduleHasPriority() || rateLimitWaiting || initialTargetReloadScheduled) return;
         long now = System.currentTimeMillis();
-        if (targetRecoveryStartedAt == 0L) targetRecoveryStartedAt = now;
+        canonicalReentryForced = canonicalReentryForced || forceReentry;
+        boolean graceAlreadySatisfied = forceReentry || "RATE_LIMIT_TARGET".equals(safeCode(reason.toUpperCase()));
+        if (targetRecoveryStartedAt == 0L)
+            targetRecoveryStartedAt = graceAlreadySatisfied
+                    ? now - CanonicalTargetRecoveryPolicy.INITIAL_GRACE_MS : now;
         if (now - targetRecoveryStartedAt >= MAX_TARGET_RECOVERY_WAIT_MS) {
             pauseWithError("TARGET_ROUTE_RECOVERY_FAILED", "transient target restoration deadline exceeded");
             return;
         }
-        AdaptivePolling.Decision decision = initialTargetPolling.onRetry(store.epoch());
+        long elapsed = Math.max(0L, now - targetRecoveryStartedAt);
+        long delayMs;
+        int backoffAttempt = canonicalReentryBackoff.attempt();
+        if (elapsed < CanonicalTargetRecoveryPolicy.INITIAL_GRACE_MS) {
+            delayMs = Math.max(250L, CanonicalTargetRecoveryPolicy.delayUntilGrace(now, targetRecoveryStartedAt));
+        } else {
+            if (!CanonicalTargetRecoveryPolicy.canReenter(canonicalReentryAttempts)) {
+                pauseWithError("TARGET_ROUTE_RECOVERY_FAILED", "canonical target 재진입 한도를 초과했습니다.");
+                return;
+            }
+            RecoveryBackoff.Decision decision = canonicalReentryBackoff.next();
+            delayMs = decision.delayMs;
+            backoffAttempt = decision.attempt;
+        }
         initialTargetReloadScheduled = true;
         initialTargetReloadReason = safeCode(reason.toUpperCase());
         log("TARGET_RETRY", "reason=" + initialTargetReloadReason
-                + ";retry=" + decision.retryCount + ";tier=" + decision.tier
-                + ";delay_ms=" + decision.delayMs);
-        handler.postDelayed(initialTargetReloadRunnable, decision.delayMs);
+                + ";reentries=" + canonicalReentryAttempts + ";backoff_attempt=" + backoffAttempt
+                + ";grace_ms=" + CanonicalTargetRecoveryPolicy.INITIAL_GRACE_MS
+                + ";delay_ms=" + delayMs);
+        handler.postDelayed(initialTargetReloadRunnable, delayMs);
     }
 
     private void performInitialTargetReload() {
@@ -1570,29 +1620,38 @@ public final class OrchestrationService extends Service implements AutomationRun
             yieldForSchedule();
             return;
         }
-        if (matchesExpectedTarget(webView.getUrl())) {
+        String actual = webView.getUrl();
+        boolean targetReady = matchesExpectedTarget(actual);
+        boolean transientTarget = targetReady || isTransientExpectedTarget(actual);
+        CanonicalTargetRecoveryPolicy.Decision decision = CanonicalTargetRecoveryPolicy.decide(
+                System.currentTimeMillis(), targetRecoveryStartedAt, targetReady, transientTarget,
+                !canonicalReentryForced, webView.getProgress() >= 100, canonicalReentryAttempts);
+        if (decision == CanonicalTargetRecoveryPolicy.Decision.READY) {
             resetInitialTargetRetry();
             scheduleStep(500L);
             return;
         }
-        if (!isTransientExpectedTarget(webView.getUrl())) {
-            pauseTargetChanged(webView.getUrl(), "중계 대상 대화가 바뀌었습니다.");
+        if (decision == CanonicalTargetRecoveryPolicy.Decision.TARGET_CHANGED) {
+            pauseTargetChanged(actual, "중계 대상 대화가 바뀌었습니다.");
             return;
         }
-        if (webView.getProgress() < 100) {
+        if (decision == CanonicalTargetRecoveryPolicy.Decision.WAIT) {
             log("TARGET_REOBSERVE_LOADING", "reason=" + initialTargetReloadReason
                     + ";progress=" + webView.getProgress());
-            reloadInitialStartTarget("loading");
+            reloadInitialStartTarget("loading", canonicalReentryForced);
             return;
         }
-        String expected = currentRelayTargetUrl();
+        if (decision == CanonicalTargetRecoveryPolicy.Decision.EXHAUSTED) {
+            pauseWithError("TARGET_ROUTE_RECOVERY_FAILED", "canonical target 재진입 한도를 초과했습니다.");
+            return;
+        }
+        String expected = canonicalTargetUrl();
         if (expected.isEmpty()) {
             pauseWithError("TARGET_URL_MISSING", "복구할 중계 대화 URL이 없습니다.");
             return;
         }
         store.setStatus(OrchestrationStore.sideLabel(activeTargetSide()) + " 대화 다시 여는 중");
-        log("TARGET_RELOAD", "reason=" + initialTargetReloadReason);
-        webView.loadUrl(expected);
+        reenterCanonicalTargetUrl(initialTargetReloadReason, actual);
     }
 
     private void resetInitialTargetRetry() {
@@ -1600,7 +1659,37 @@ public final class OrchestrationService extends Service implements AutomationRun
         initialTargetReloadScheduled = false;
         initialTargetReloadReason = "";
         targetRecoveryStartedAt = 0L;
-        initialTargetPolling.reset(store.epoch());
+        uiWaitStartedAt = 0L;
+        canonicalReentryAttempts = 0;
+        canonicalReentryForced = false;
+        canonicalReentryBackoff.reset();
+    }
+
+    /** The only recovery navigation side effect for the relay. */
+    private void reenterCanonicalTargetUrl(String reason, String actualUrl) {
+        if (webView == null) return;
+        if (!CanonicalTargetRecoveryPolicy.canReenter(canonicalReentryAttempts)) {
+            pauseWithError("TARGET_ROUTE_RECOVERY_FAILED", "canonical target 재진입 한도를 초과했습니다.");
+            return;
+        }
+        String canonicalUrl = canonicalTargetUrl();
+        if (canonicalUrl.isEmpty()) {
+            pauseWithError("TARGET_URL_MISSING", "복구할 canonical target URL이 없습니다.");
+            return;
+        }
+        canonicalReentryAttempts++;
+        canonicalReentryForced = false;
+        generation++;
+        evaluationInFlight = false;
+        log("CANONICAL_TARGET_REENTRY", "reason=" + safeCode(reason)
+                + ";attempt=" + canonicalReentryAttempts + ";progress=" + webView.getProgress()
+                + ";actual=" + safeDetail(actualUrl));
+        webView.loadUrl(canonicalUrl);
+    }
+
+    private String canonicalTargetUrl() {
+        if (store.bootstrapProvisioning()) return store.runProjectUrl();
+        return currentRelayTargetUrl();
     }
 
     private boolean isTransientExpectedTarget(String actualUrl) {
@@ -1690,11 +1779,16 @@ public final class OrchestrationService extends Service implements AutomationRun
         handler.removeCallbacks(rateLimitRecoveryRunnable);
         handler.removeCallbacks(initialTargetReloadRunnable);
         initialTargetReloadScheduled = false;
+        initialTargetReloadReason = "";
         rateLimitWaiting = false;
         rateLimitRecoveryScheduled = false;
         rateLimitStartedAt = 0L;
         rateLimitBackoff.reset();
         targetRecoveryStartedAt = 0L;
+        uiWaitStartedAt = 0L;
+        canonicalReentryAttempts = 0;
+        canonicalReentryForced = false;
+        canonicalReentryBackoff.reset();
         generation++;
         evaluationInFlight = false;
         commitAuthorized = false;
