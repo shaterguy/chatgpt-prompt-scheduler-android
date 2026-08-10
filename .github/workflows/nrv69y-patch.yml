@@ -30,6 +30,7 @@ jobs:
           gradle-version: '9.5.0'
       - name: Apply NRV69Y recovery patch
         run: |
+          set +e
           set -u
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -38,7 +39,7 @@ jobs:
           if [ "$decode_rc" -ne 0 ]; then
             { echo "BASE64_DECODE_FAILED rc=$decode_rc"; cat /tmp/decode-error.txt; } > tools/nrv69y_patch_error.txt
             git add tools/nrv69y_patch_error.txt
-            if ! git diff --cached --quiet; then git commit -m 'Record NRV69Y patch decode failure' && git push origin HEAD:${{ github.head_ref }}; fi
+            if ! git diff --cached --quiet; then git commit -m 'Record NRV69Y patch decode failure'; git push origin HEAD:${{ github.head_ref }}; fi
             exit 0
           fi
           {
@@ -50,7 +51,7 @@ jobs:
           if [ "$patch_rc" -ne 0 ]; then
             { cat /tmp/patch-meta.txt; echo "PATCH_FAILED rc=$patch_rc"; cat /tmp/patch-log.txt; } > tools/nrv69y_patch_error.txt
             git add tools/nrv69y_patch_error.txt
-            if ! git diff --cached --quiet; then git commit -m 'Record NRV69Y patch failure' && git push origin HEAD:${{ github.head_ref }}; fi
+            if ! git diff --cached --quiet; then git commit -m 'Record NRV69Y patch failure'; git push origin HEAD:${{ github.head_ref }}; fi
             exit 0
           fi
           rm -f tools/nrv69y_patch_error.txt
