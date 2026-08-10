@@ -1,0 +1,2 @@
+BASE64_DECODE_FAILED rc=1
+base64: invalid input
