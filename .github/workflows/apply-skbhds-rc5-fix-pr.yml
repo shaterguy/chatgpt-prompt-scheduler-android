@@ -52,8 +52,8 @@ jobs:
           raise_expr = body[i + 1].lstrip()
           body[i:i + 2] = [
               indent + 'if actual != count:',
-              indent + "    if 'RESUME_ROOM_SCAN_META' in old:",
-              indent + "        print('SKIP_RESUME_ROOM_SCAN_META_EXACT_REPLACE')",
+              indent + "    if 'RESUME_ROOM_SCAN_META' in old or 'case WAIT_FOR_IDLE' in old:",
+              indent + "        print('SKIP_APPROVED_EXACT_REPLACE')",
               indent + '        return',
               indent + '    ' + raise_expr,
           ]
@@ -63,6 +63,42 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           path = Path('app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationService.java')
+          text = path.read_text()
+
+          old_wait = '''            case WAIT_FOR_IDLE -> {
+                log("RESUME_WAITING_FOR_IDLE", "side=both;reason=" + safeCode(decision.reason)
+                        + ";retry=" + store.pollCountLong());
+                if ("NO_VALID_SIGNAL".equals(decision.reason)
+                        && store.pollCountLong() >= MAX_NO_SIGNAL_RECONCILIATION_RETRIES) {
+                    pauseReconciliationError("RESUME_NO_VALID_SIGNAL",
+                            "두 대화방을 반복 확인했지만 최신 Protocol 제어 신호를 찾지 못했습니다.");
+                    return;
+                }
+                restartReconciliation(decision.reason, true);
+                scheduleReconciliationRetry(decision.reason);
+            }'''
+          new_wait = '''            case WAIT_FOR_IDLE -> {
+                log("RESUME_WAITING_FOR_IDLE", "side=both;reason=" + safeCode(decision.reason)
+                        + ";retry=" + store.pollCountLong());
+                if ("NO_VALID_SIGNAL".equals(decision.reason)) {
+                    reconciliationRescanAttempts++;
+                    log("RESUME_NO_SIGNAL_RETRY", "attempt=" + reconciliationRescanAttempts);
+                    if (reconciliationRescanAttempts >= MAX_NO_SIGNAL_RECONCILIATION_RETRIES) {
+                        pauseReconciliationError("RESUME_NO_VALID_SIGNAL",
+                                "대화 이력 로딩이 확인된 뒤에도 두 대화방에서 최신 Protocol 제어 신호를 찾지 못했습니다.");
+                        return;
+                    }
+                } else {
+                    reconciliationRescanAttempts = 0;
+                }
+                restartReconciliation(decision.reason, true);
+                scheduleReconciliationRetry(decision.reason);
+            }'''
+          if old_wait not in text:
+              raise SystemExit('actual WAIT_FOR_IDLE block changed')
+          text = text.replace(old_wait, new_wait, 1)
+          path.write_text(text)
+
           lines = path.read_text().splitlines()
           starts = [i for i, line in enumerate(lines) if 'log("RESUME_ROOM_SCAN_META", "side=" + safeCode(side)' in line]
           if len(starts) != 1:
@@ -87,6 +123,7 @@ jobs:
           grep -q 'SIGNAL_RETRY_EXHAUSTED' app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationService.java
           grep -q 'history_ready:false' app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationScript.java
           grep -q 'history_ready=' app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationService.java
+          grep -q 'reconciliationRescanAttempts++' app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationService.java
       - name: Unit tests
         run: gradle --no-daemon --console=plain --stacktrace :app:testDebugUnitTest
       - name: Unsigned release build
