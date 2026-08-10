@@ -20,6 +20,7 @@ jobs:
           fetch-depth: 0
       - name: Apply source patch
         run: |
+          sed -i 's/Files\.readString(path, StandardCharsets\.UTF_8)/new String(Files.readAllBytes(path), StandardCharsets.UTF_8)/' .github/rc5_patch.py
           python3 -m py_compile .github/rc5_patch.py
           python3 .github/rc5_patch.py
           git diff --check
