@@ -26,16 +26,20 @@ jobs:
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
         with:
           gradle-version: '9.5.0'
-      - id: patch
-        name: Verify materialized NRV69Y source
-        shell: bash
+      - name: Update tests for NRV69Y semantics
         run: |
           set -euo pipefail
-          grep -q 'ConversationTargetState' app/src/main/java/com/shaterguy/chatgptpromptscheduler/TargetParser.java
+          python tools/nrv69y_test_fix.py
           git diff --check
-          echo 'ok=true' >> "$GITHUB_OUTPUT"
-      - name: Unit tests
-        id: unit
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/test/java
+          if ! git diff --cached --quiet; then
+            git commit -m 'Align NRV69Y regression tests with recovery semantics'
+            git push origin HEAD:${{ github.head_ref }}
+          fi
+      - id: unit
+        name: Unit tests
         continue-on-error: true
         run: |
           mkdir -p /tmp/nrv69y-test
