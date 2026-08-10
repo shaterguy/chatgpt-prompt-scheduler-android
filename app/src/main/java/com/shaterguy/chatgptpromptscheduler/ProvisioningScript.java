@@ -20,11 +20,11 @@ public final class ProvisioningScript {
                 + "if(actualConversation)return result('EXISTING_CONVERSATION','새 대화 대신 기존 대화가 열렸습니다.',routeDiagnostics);"
                 + AutomationScript.preferenceScript(schedule, run)
                 + composerLookup()
-                + "if(!composer)return result('RETRY','입력창 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics});"
+                + "if(!composer)return result('UI_WAIT','입력창 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics});"
                 + composerFunctions()
-                + "if(same()){const send=findSend();if(!send)return result('RETRY','전송 버튼 대기',routeDiagnostics);if(send.disabled||send.getAttribute('aria-disabled')==='true')return result('RETRY','전송 버튼 활성화 대기',routeDiagnostics);return result('READY','첫 요청과 설정 확인 완료',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics});}"
+                + "if(same()){const send=findSend();if(!send)return result('UI_WAIT','전송 버튼 대기',routeDiagnostics);if(send.disabled||send.getAttribute('aria-disabled')==='true')return result('UI_WAIT','전송 버튼 활성화 대기',routeDiagnostics);return result('READY','첫 요청과 설정 확인 완료',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics});}"
                 + inputPrompt()
-                + "return result('RETRY',same()?'입력 반영 확인 대기':'요구사항 입력 미반영',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics});"
+                + "return result('UI_WAIT',same()?'입력 반영 확인 대기':'요구사항 입력 미반영',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics});"
                 + "})()";
     }
 
