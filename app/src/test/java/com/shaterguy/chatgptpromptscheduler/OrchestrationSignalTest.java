@@ -264,7 +264,9 @@ public class OrchestrationSignalTest {
         assertTrue(service.contains("validateBootstrap"));
         assertTrue(service.contains("BOOTSTRAP_SEQUENCE_SEEDED"));
         assertTrue(service.contains("continueSameBootstrap"));
-        assertTrue(service.contains("initialTargetPolling.onRetry"));
+        assertTrue(service.contains("canonicalReentryBackoff.next()"));
+        assertTrue(service.contains("CanonicalTargetRecoveryPolicy.INITIAL_GRACE_MS"));
+        assertTrue(service.contains("boolean recoverable = targetReady || isTransientExpectedTarget(actualUrl);"));
         assertTrue(service.contains("handler.postDelayed(initialTargetReloadRunnable"));
         assertTrue(service.contains("initialTargetReloadScheduled"));
         assertTrue(store.contains("boolean confirmedInitialStart = initialStartPending()"));
@@ -283,8 +285,8 @@ public class OrchestrationSignalTest {
         assertTrue(scan.contains("predecessor_index"));
         assertTrue(scan.contains("AUTOMATION_CHAT_REVIEW"));
         assertTrue(scan.contains("predecessor_signal"));
-        assertTrue(scan.contains("querySelectorAll('blockquote')"));
-        assertFalse(scan.contains("querySelectorAll('pre,code,blockquote')"));
+        assertTrue(scan.contains("querySelectorAll('pre,code,blockquote')"));
+        assertFalse(scan.contains("querySelectorAll('blockquote')"));
         assertTrue(scan.contains("candidate_count:candidates.length"));
         assertTrue(scan.contains("generating"));
         assertFalse(scan.contains("send.click()"));
