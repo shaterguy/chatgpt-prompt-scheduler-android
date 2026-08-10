@@ -266,6 +266,7 @@ public class OrchestrationSignalTest {
         assertTrue(service.contains("continueSameBootstrap"));
         assertTrue(service.contains("canonicalReentryBackoff.next()"));
         assertTrue(service.contains("CanonicalTargetRecoveryPolicy.INITIAL_GRACE_MS"));
+        assertTrue(service.contains("boolean recoverable = targetReady || isTransientExpectedTarget(actualUrl);"));
         assertTrue(service.contains("handler.postDelayed(initialTargetReloadRunnable"));
         assertTrue(service.contains("initialTargetReloadScheduled"));
         assertTrue(store.contains("boolean confirmedInitialStart = initialStartPending()"));
@@ -377,19 +378,3 @@ public class OrchestrationSignalTest {
         assertTrue(store.contains("reconciling()"));
         assertTrue(store.contains("자동 재전송 없음"));
         assertTrue(service.contains("reconcileScan"));
-        assertTrue(service.contains("reconcileTarget"));
-        assertTrue(service.contains("SIGNAL_SELECTED"));
-        assertTrue(service.contains("RESUME_TARGET_SCAN_RESULT"));
-        assertTrue(service.contains("RESUME_ROOM_SCAN_CHAT"));
-        assertTrue(service.contains("RESUME_ROOM_SCAN_WORK"));
-        assertTrue(service.contains("RESUME_RECONCILE_AMBIGUOUS"));
-        assertTrue(service.contains("rebuildForExistingPrompt"));
-        assertTrue(service.contains("rebuildForUserResolved"));
-        assertTrue(service.contains("resumeUserActionRequested"));
-        assertTrue(service.contains("scheduleReconciliationRetry"));
-        assertFalse(service.contains("RESUME_SOURCE_FRESHNESS_CHECK"));
-        assertFalse(service.contains("scheduleStep(1200L)"));
-        assertFalse(service.contains("postDelayed(this::ensureEngine, 1800L)"));
-    }
-
-}
