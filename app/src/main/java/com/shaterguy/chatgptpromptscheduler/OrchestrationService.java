@@ -1418,7 +1418,10 @@ public final class OrchestrationService extends Service implements AutomationRun
             scheduleStep(0L);
             return;
         }
-        boolean recoverable = isTransientExpectedTarget(actualUrl);
+        // A rate-limit response can leave the expected conversation URL in place while
+        // the main frame is still loading. That is recoverable target state too; do not
+        // misclassify it as a different conversation merely because progress is < 100.
+        boolean recoverable = targetReady || isTransientExpectedTarget(actualUrl);
         clearRateLimitRecovery(recoverable ? "target_restore_after_wait" : "target_changed_after_wait");
         if (recoverable) reloadInitialStartTarget("rate_limit_target", !pageFinished);
         else pauseTargetChanged(actualUrl, "rate-limit 복구 후 다른 대화 ID가 확인되었습니다.");
@@ -1918,6 +1921,3 @@ public final class OrchestrationService extends Service implements AutomationRun
     }
 
     private void log(String event, String detail) {
-        if (runLog != null) runLog.record(store, event, detail);
-    }
-}
