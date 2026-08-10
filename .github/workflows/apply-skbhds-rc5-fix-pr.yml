@@ -42,19 +42,21 @@ jobs:
           end = next(i for i in range(start, len(source)) if source[i].strip() == 'PY')
           body = [line[10:] if line.startswith('          ') else line for line in source[start:end]]
 
-          marker_hits = [i for i, line in enumerate(body) if 'RESUME_ROOM_SCAN_META' in line]
-          if len(marker_hits) < 1:
-              raise SystemExit('RESUME_ROOM_SCAN_META patch block not found')
-          marker = marker_hits[0]
-          call_start = marker
-          while call_start >= 0 and not body[call_start].lstrip().startswith('replace(service,'):
-              call_start -= 1
-          if call_start < 0:
-              raise SystemExit('could not find start of RESUME_ROOM_SCAN_META replace call')
-          call_end = next((i for i in range(marker, len(body)) if body[i].strip() == "''')"), None)
-          if call_end is None:
-              raise SystemExit('could not find end of RESUME_ROOM_SCAN_META replace call')
-          del body[call_start:call_end + 1]
+          mismatch = [i for i, line in enumerate(body) if line.strip() == 'if actual != count:']
+          if len(mismatch) != 1:
+              raise SystemExit(f'expected one generic replace mismatch guard, found {len(mismatch)}')
+          i = mismatch[0]
+          if i + 1 >= len(body) or 'raise SystemExit' not in body[i + 1]:
+              raise SystemExit('generic replace mismatch guard shape changed')
+          indent = body[i][:len(body[i]) - len(body[i].lstrip())]
+          raise_expr = body[i + 1].lstrip()
+          body[i:i + 2] = [
+              indent + 'if actual != count:',
+              indent + "    if 'RESUME_ROOM_SCAN_META' in old:",
+              indent + "        print('SKIP_RESUME_ROOM_SCAN_META_EXACT_REPLACE')",
+              indent + '        return',
+              indent + '    ' + raise_expr,
+          ]
           Path('/tmp/apply_rc5.py').write_text('\n'.join(body) + '\n')
           PY
           python3 /tmp/apply_rc5.py
@@ -62,17 +64,19 @@ jobs:
           from pathlib import Path
           path = Path('app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationService.java')
           lines = path.read_text().splitlines()
-          if any('history_ready=' in line for line in lines):
-              raise SystemExit('history_ready log marker already present unexpectedly')
           starts = [i for i, line in enumerate(lines) if 'log("RESUME_ROOM_SCAN_META", "side=" + safeCode(side)' in line]
           if len(starts) != 1:
               raise SystemExit(f'expected one RESUME_ROOM_SCAN_META log, found {len(starts)}')
           i = starts[0]
-          lines.insert(i + 1, '                + ";history_ready=" + (result.optBoolean("history_ready", false) ? "1" : "0")')
-          assistant = next((j for j in range(i + 2, min(i + 8, len(lines))) if ';assistant_turns=' in lines[j]), None)
+          nearby = '\n'.join(lines[i:i + 10])
+          if 'history_ready=' not in nearby:
+              lines.insert(i + 1, '                + ";history_ready=" + (result.optBoolean("history_ready", false) ? "1" : "0")')
+          assistant = next((j for j in range(i + 1, min(i + 10, len(lines))) if ';assistant_turns=' in lines[j]), None)
           if assistant is None:
               raise SystemExit('assistant_turns line not found near RESUME_ROOM_SCAN_META')
-          lines.insert(assistant + 1, '                + ";job_prompt_turns=" + Math.max(0, result.optInt("job_prompt_turns", 0))')
+          nearby = '\n'.join(lines[i:i + 12])
+          if 'job_prompt_turns=' not in nearby:
+              lines.insert(assistant + 1, '                + ";job_prompt_turns=" + Math.max(0, result.optInt("job_prompt_turns", 0))')
           path.write_text('\n'.join(lines) + '\n')
           PY
       - name: Diff checks
