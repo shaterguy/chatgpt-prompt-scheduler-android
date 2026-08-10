@@ -1,0 +1,102 @@
+name: Build Signed RC APK
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  rc-apk:
+    if: github.head_ref == 'fix/skbhds-rc4-recovery-followup'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      APK_NAME: chatgpt-prompt-scheduler-android-v0.1.22-rc6.apk
+      PACKAGE_NAME: com.shaterguy.chatgptpromptscheduler
+      VERSION_CODE: '28'
+      VERSION_NAME: '0.1.22-rc6'
+      BASELINE_VERSION_CODE: '22'
+      PREVIOUS_RC_VERSION_CODE: '27'
+      EXPECTED_PUBLIC_CERT_SHA256: '3cfe95acd09077a89cd8de85434cbd5d8bb3e2021d8e9eacb804a8da9ccce52a'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+      - name: Install Android SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+        with:
+          gradle-version: '9.5.0'
+      - name: Unit tests
+        run: gradle --no-daemon --console=plain --stacktrace :app:testDebugUnitTest
+      - name: Build unsigned release APK
+        run: gradle --no-daemon --console=plain --stacktrace :app:assembleRelease
+      - name: Sign with installed-public identity
+        shell: bash
+        env:
+          SIGNING_BUNDLE_BASE64: ${{ secrets.CHATGPT_PUBLIC_SIGNING_BUNDLE_BASE64 }}
+        run: |
+          set -euo pipefail
+          test -n "$SIGNING_BUNDLE_BASE64"
+          rm -rf /tmp/public-signing dist
+          mkdir -p /tmp/public-signing dist
+          trap 'rm -rf /tmp/public-signing' EXIT
+          printf '%s' "$SIGNING_BUNDLE_BASE64" | base64 --decode > /tmp/public-signing/bundle.tar.gz
+          tar -xzf /tmp/public-signing/bundle.tar.gz -C /tmp/public-signing
+          test -s /tmp/public-signing/key.pk8
+          test -s /tmp/public-signing/cert.pem
+          ACTUAL="$(openssl x509 -in /tmp/public-signing/cert.pem -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr 'A-F' 'a-f')"
+          test "$ACTUAL" = "$EXPECTED_PUBLIC_CERT_SHA256"
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/zipalign" -p -f 4 app/build/outputs/apk/release/app-release-unsigned.apk dist/app-aligned.apk
+          "$BT/apksigner" sign \
+            --key /tmp/public-signing/key.pk8 \
+            --cert /tmp/public-signing/cert.pem \
+            --out "dist/$APK_NAME" \
+            dist/app-aligned.apk
+          rm dist/app-aligned.apk
+          "$BT/apksigner" verify --verbose --print-certs "dist/$APK_NAME" | tee dist/SIGNING_CERTIFICATE.txt
+          grep -qi "$EXPECTED_PUBLIC_CERT_SHA256" dist/SIGNING_CERTIFICATE.txt
+          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' dist/SIGNING_CERTIFICATE.txt
+          unzip -t "dist/$APK_NAME" >/dev/null
+      - name: Verify package, version, and update compatibility
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/aapt" dump badging "dist/$APK_NAME" | tee dist/BADGING.txt
+          grep -q "package: name='$PACKAGE_NAME'" dist/BADGING.txt
+          grep -q "versionCode='$VERSION_CODE'" dist/BADGING.txt
+          grep -q "versionName='$VERSION_NAME'" dist/BADGING.txt
+          rm -rf /tmp/update-baseline
+          mkdir -p /tmp/update-baseline
+          gh release download v0.1.21 --repo "$GITHUB_REPOSITORY" --pattern '*.apk' --dir /tmp/update-baseline
+          OLD_APK="$(find /tmp/update-baseline -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          test -n "$OLD_APK"
+          "$BT/aapt" dump badging "$OLD_APK" > /tmp/update-baseline/old-badging.txt
+          grep -q "package: name='$PACKAGE_NAME'" /tmp/update-baseline/old-badging.txt
+          grep -q "versionCode='$BASELINE_VERSION_CODE'" /tmp/update-baseline/old-badging.txt
+          "$BT/apksigner" verify --verbose --print-certs "$OLD_APK" > /tmp/update-baseline/old-signature.txt
+          grep -qi "$EXPECTED_PUBLIC_CERT_SHA256" /tmp/update-baseline/old-signature.txt
+          test "$BASELINE_VERSION_CODE" -lt "$VERSION_CODE"
+          test "$PREVIOUS_RC_VERSION_CODE" -lt "$VERSION_CODE"
+          sha256sum "dist/$APK_NAME" | tee dist/SHA256SUMS.txt
+      - name: Upload signed RC APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: chatgpt-prompt-scheduler-android-v0.1.22-rc6-update
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30

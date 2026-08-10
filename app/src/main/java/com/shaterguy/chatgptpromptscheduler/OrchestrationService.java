@@ -38,12 +38,17 @@ public final class OrchestrationService extends Service implements AutomationRun
     private static final long SOFT_YIELD_MS = ResponseTimingPolicy.SOFT_YIELD_MS;
     private static final long HARD_FALLBACK_MS = ResponseTimingPolicy.HARD_FALLBACK_MS;
     private static final long STOP_CONFIRMATION_GRACE_MS = 15_000L;
+    private static final long MAX_NO_SIGNAL_RECONCILIATION_RETRIES = 5L;
+    private static final long MAX_RATE_LIMIT_WAIT_MS = 45_000L;
+    private static final long MAX_TARGET_RECOVERY_WAIT_MS = 45_000L;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable stepRunnable = this::runStep;
     private final Runnable resumeRunnable = this::ensureEngine;
     private final AdaptivePolling responsePolling = new AdaptivePolling();
     private final AdaptivePolling reconciliationPolling = new AdaptivePolling();
-    private final AdaptivePolling initialTargetPolling = new AdaptivePolling();
+    private final RecoveryBackoff rateLimitBackoff = new RecoveryBackoff();
+    private final RecoveryBackoff canonicalReentryBackoff = new RecoveryBackoff();
+    private final Runnable rateLimitRecoveryRunnable = this::performRateLimitRecovery;
     private final Runnable initialTargetReloadRunnable = this::performInitialTargetReload;
     private OrchestrationStore store;
     private OrchestrationRunLog runLog;
@@ -75,6 +80,13 @@ public final class OrchestrationService extends Service implements AutomationRun
     private long reconciliationPollingEpoch;
     private boolean initialTargetReloadScheduled;
     private String initialTargetReloadReason = "";
+    private long rateLimitStartedAt;
+    private boolean rateLimitWaiting;
+    private boolean rateLimitRecoveryScheduled;
+    private long targetRecoveryStartedAt;
+    private long uiWaitStartedAt;
+    private int canonicalReentryAttempts;
+    private boolean canonicalReentryForced;
 
     @Override
     public void onCreate() {
@@ -236,7 +248,7 @@ public final class OrchestrationService extends Service implements AutomationRun
             settings.setAllowUniversalAccessFromFileURLs(false);
             settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
             String userAgent = settings.getUserAgentString();
-            settings.setUserAgentString(userAgent + " ChatGPTPromptScheduler/0.1.21 Orchestration/3.3.2");
+            settings.setUserAgentString(userAgent + " ChatGPTPromptScheduler/0.1.22 Orchestration/3.3.2");
             CookieManager.getInstance().setAcceptCookie(true);
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false);
             webView.setWebViewClient(new WebViewClient() {
@@ -247,22 +259,30 @@ public final class OrchestrationService extends Service implements AutomationRun
                     resetResponsePolling("PAGE_START");
                     handler.removeCallbacks(stepRunnable);
                     log("WEBVIEW_PAGE_START", "generation=" + generation);
+                    if (rateLimitWaiting) {
+                        log("RATE_LIMIT_REOBSERVE", "phase=page_start");
+                        return;
+                    }
                     if (!matchesExpectedTarget(url)) {
-                        if (store.initialStartPending()) {
-                            // about:blank/home can be a transient SPA hop before ChatGPT restores
-                            // the requested conversation. Never authorize JS on this URL.
-                            log("INITIAL_START_TRANSIENT_ROUTE", "phase=page_start");
+                        if (store.initialStartPending() || isTransientExpectedTarget(url)) {
+                            log("TARGET_TRANSIENT_ROUTE", "phase=page_start");
+                            reloadInitialStartTarget("page_start");
                         } else {
-                            pauseWithError("TARGET_CHANGED", "중계 대상 대화가 바뀌었습니다.");
+                            pauseTargetChanged(url, "중계 대상 대화가 바뀌었습니다.");
                         }
                     }
                 }
 
                 @Override
                 public void onPageFinished(WebView view, String url) {
+                    if (rateLimitWaiting) {
+                        log("RATE_LIMIT_REOBSERVE", "phase=page_finish;progress=" + view.getProgress());
+                        return;
+                    }
                     if (!matchesExpectedTarget(url)) {
-                        if (store.initialStartPending()) reloadInitialStartTarget("page_finish");
-                        else pauseWithError("TARGET_CHANGED", "중계 대상 대화가 바뀌었습니다.");
+                        if (store.initialStartPending() || isTransientExpectedTarget(url))
+                            reloadInitialStartTarget("page_finish");
+                        else pauseTargetChanged(url, "중계 대상 대화가 바뀌었습니다.");
                         return;
                     }
                     resetInitialTargetRetry();
@@ -275,16 +295,33 @@ public final class OrchestrationService extends Service implements AutomationRun
                 @Override
                 public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                     if (request.isForMainFrame()) {
+                        if (error != null && RecoveryDecisionPolicy.isRateLimitWebViewError(error.getErrorCode())) {
+                            log("RATE_LIMIT_DETECTED", "source=WEBVIEW_ERROR_TOO_MANY_REQUESTS;code=" + error.getErrorCode());
+                            handleRateLimit("WEBVIEW_ERROR_TOO_MANY_REQUESTS", String.valueOf(error.getDescription()));
+                            return;
+                        }
+                        if (rateLimitWaiting) {
+                            log("RATE_LIMIT_REOBSERVE", "phase=network_error");
+                            return;
+                        }
                         log("WEBVIEW_ERROR", "type=network");
-                        pauseWithError("NETWORK_ERROR", "중계 대화를 불러오는 중 네트워크 오류가 발생했습니다.");
+                        recoverTransientNetwork("WEBVIEW_MAIN_FRAME");
                     }
                 }
 
                 @Override
                 public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
                     if (request.isForMainFrame()) {
-                        log("WEBVIEW_ERROR", "type=http;code=" + response.getStatusCode());
-                        pauseWithError("HTTP_ERROR", "중계 대화 서버가 오류 응답을 반환했습니다.");
+                        int code = response == null ? 0 : response.getStatusCode();
+                        log("WEBVIEW_ERROR", "type=http;code=" + code);
+                        if (RecoveryDecisionPolicy.isRateLimitHttp(code)) {
+                            log("RATE_LIMIT_DETECTED", "source=HTTP_429;code=429");
+                            handleRateLimit("HTTP_429", "HTTP 429");
+                        } else if (rateLimitWaiting) {
+                            log("RATE_LIMIT_REOBSERVE", "phase=http_error;code=" + code);
+                        } else {
+                            pauseWithError("HTTP_ERROR", "중계 대화 서버가 오류 응답을 반환했습니다.");
+                        }
                     }
                 }
 
@@ -292,8 +329,14 @@ public final class OrchestrationService extends Service implements AutomationRun
                 public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                     if (!request.isForMainFrame()) return false;
                     String requested = String.valueOf(request.getUrl());
+                    if (rateLimitWaiting) {
+                        log("RATE_LIMIT_REOBSERVE", "phase=navigation;url=" + safeDetail(requested));
+                        return false;
+                    }
                     if (matchesExpectedTarget(requested)) return false;
-                    if (store.initialStartPending()) handler.post(() -> reloadInitialStartTarget("navigation"));
+                    if (store.initialStartPending() || isTransientExpectedTarget(requested))
+                        handler.post(() -> reloadInitialStartTarget("navigation"));
+                    else handler.post(() -> pauseTargetChanged(requested, "다른 대화로의 탐색을 차단했습니다."));
                     return true;
                 }
 
@@ -354,6 +397,7 @@ public final class OrchestrationService extends Service implements AutomationRun
             yieldForSchedule();
             return;
         }
+        if (rateLimitWaiting) return;
         if (webView == null || evaluationInFlight || !canRun()) return;
         if (store.reconciling()) {
             runReconciliationStep();
@@ -365,8 +409,12 @@ public final class OrchestrationService extends Service implements AutomationRun
         }
         String actualUrl = webView.getUrl();
         if (!matchesExpectedTarget(actualUrl)) {
-            if (store.initialStartPending()) reloadInitialStartTarget("step_guard");
-            else pauseWithError("TARGET_CHANGED", "중계 대상 대화가 바뀌어 자동 전송을 멈췄습니다.");
+            RecoveryDecisionPolicy.Decision decision = relayTargetDecision(actualUrl);
+            if (decision == RecoveryDecisionPolicy.Decision.TARGET_CHANGED)
+                pauseTargetChanged(actualUrl, "중계 대상 대화가 바뀌어 자동 전송을 멈췄습니다.");
+            else if (store.initialStartPending() || isTransientExpectedTarget(actualUrl))
+                reloadInitialStartTarget("step_guard");
+            else pauseTargetChanged(actualUrl, "중계 대상 대화가 바뀌어 자동 전송을 멈췄습니다.");
             return;
         }
 
@@ -440,9 +488,14 @@ public final class OrchestrationService extends Service implements AutomationRun
                 yieldForSchedule();
                 return;
             }
+            if (rateLimitWaiting) return;
             if (!matchesExpectedTarget(active.getUrl())) {
-                if (store.initialStartPending()) reloadInitialStartTarget("evaluation_guard");
-                else pauseWithError("TARGET_CHANGED", "스크립트 실행 중 중계 대상 대화가 바뀌었습니다.");
+                RecoveryDecisionPolicy.Decision decision = relayTargetDecision(active.getUrl());
+                if (decision == RecoveryDecisionPolicy.Decision.TARGET_CHANGED)
+                    pauseTargetChanged(active.getUrl(), "스크립트 실행 중 중계 대상 대화가 바뀌었습니다.");
+                else if (store.initialStartPending() || isTransientExpectedTarget(active.getUrl()))
+                    reloadInitialStartTarget("evaluation_guard");
+                else pauseTargetChanged(active.getUrl(), "스크립트 실행 중 중계 대상 대화가 바뀌었습니다.");
                 return;
             }
             JSONObject result = parseObject(raw);
@@ -459,7 +512,9 @@ public final class OrchestrationService extends Service implements AutomationRun
     private void runProvisioningStep() {
         String actualUrl = webView.getUrl();
         if (!TargetParser.matchesProjectIdentity(store.runProjectUrl(), actualUrl)) {
-            pauseWithError("PROJECT_ENTRY_FAILED", "지정한 ChatGPT 프로젝트에 진입하지 못했습니다.");
+            if (TargetParser.isTransientProjectRoute(store.runProjectUrl(), actualUrl))
+                reloadInitialStartTarget("provisioning_target");
+            else pauseWithError("PROJECT_ENTRY_FAILED", "지정한 ChatGPT 프로젝트에 진입하지 못했습니다.");
             return;
         }
         String side = store.runChatUrl().isEmpty() ? OrchestrationStore.SIDE_CHAT : OrchestrationStore.SIDE_WORK;
@@ -505,6 +560,7 @@ public final class OrchestrationService extends Service implements AutomationRun
             evaluationInFlight = false;
             if (active != webView || activeGeneration != generation || activeEpoch != store.epoch()) return;
             if (scheduleHasPriority()) { yieldForSchedule(); return; }
+            if (rateLimitWaiting) return;
             JSONObject result = parseObject(raw);
             String status = result.optString("status", "");
             String url = result.optString("url", active.getUrl());
@@ -536,7 +592,15 @@ public final class OrchestrationService extends Service implements AutomationRun
                 scheduleStep(900L);
                 return;
             }
-            if ("RETRY".equals(status)) {
+            if ("RATE_LIMIT".equals(status)) {
+                handleRateLimit("BOOTSTRAP_SCRIPT", result.optString("detail", "rate limit"));
+                return;
+            }
+            if ("NETWORK_ERROR".equals(status)) {
+                recoverTransientNetwork("BOOTSTRAP_SCRIPT");
+                return;
+            }
+            if (RecoveryDecisionPolicy.isUiWaitStatus(status) || "RETRY".equals(status)) {
                 if (evaluatedSubmitting && !evaluatedClick && provisioningRecoveryStartedAt > 0L
                         && SystemClock.elapsedRealtime() - provisioningRecoveryStartedAt >= 20_000L) {
                     pauseAmbiguous(OrchestrationStore.SIDE_WORK.equals(side)
@@ -557,7 +621,10 @@ public final class OrchestrationService extends Service implements AutomationRun
                             : "프로젝트 새 일반 Chat 입력 화면을 확인하지 못했습니다.");
                     return;
                 }
-                retry(result.optString("detail", "bootstrap 준비 대기"), 900L);
+                String waitDetail = result.optString("detail", "bootstrap 준비 대기");
+                if (RecoveryDecisionPolicy.isUiWaitStatus(status) || isUiWaitDetail(waitDetail))
+                    uiWait(waitDetail, 900L);
+                else retry(waitDetail, 900L);
                 return;
             }
             String code = switch (status) {
@@ -609,7 +676,9 @@ public final class OrchestrationService extends Service implements AutomationRun
                 return;
             }
             if (!matchesExpectedTarget(active.getUrl())) {
-                pauseReconciliationError("TARGET_CHANGED", "재개 재구성 중 대상 대화가 바뀌었습니다.");
+                if (isTransientExpectedTarget(active.getUrl()))
+                    reloadInitialStartTarget("reconcile_evaluation");
+                else pauseReconciliationError("TARGET_CHANGED", "재개 재구성 중 다른 대화 ID가 확인되었습니다.");
                 return;
             }
             JSONObject result = parseObject(raw);
@@ -624,15 +693,27 @@ public final class OrchestrationService extends Service implements AutomationRun
         log(OrchestrationStore.SIDE_CHAT.equals(side) ? "RESUME_ROOM_SCAN_CHAT" : "RESUME_ROOM_SCAN_WORK",
                 "status=" + safeCode(status));
         log("RESUME_ROOM_SCAN_RESULT", "side=" + safeCode(side) + ";status=" + safeCode(status));
+        if ("RATE_LIMIT".equals(status)) {
+            handleRateLimit("RECONCILIATION_SCAN", result.optString("detail", "rate limit"));
+            return;
+        }
         if ("AUTH_REQUIRED".equals(status)) {
             pauseReconciliationError("AUTH_REQUIRED", "재개 재구성 중 로그인 세션을 확인하지 못했습니다.");
             return;
         }
-        if ("TARGET_CONTEXT_MISMATCH".equals(status) || "NETWORK_ERROR".equals(status)) {
+        if ("NETWORK_ERROR".equals(status)) {
+            recoverTransientNetwork("RECONCILIATION_SCAN");
+            return;
+        }
+        if ("TARGET_CONTEXT_MISMATCH".equals(status)) {
             pauseReconciliationError(status, fixedScriptMessage(status));
             return;
         }
         if ("RETRY".equals(status)) {
+            reconciliationRescanAttempts = 0;
+            log("RESUME_ROOM_NOT_READY", "side=" + safeCode(side)
+                    + ";assistant_turns=" + Math.max(0, result.optInt("assistant_turns", 0))
+                    + ";job_prompt_turns=" + Math.max(0, result.optInt("job_prompt_turns", 0)));
             store.setStatus(OrchestrationStore.sideLabel(side) + " 재개 상태 확인 대기");
             scheduleReconciliationRetry("room_retry");
             return;
@@ -642,23 +723,16 @@ public final class OrchestrationService extends Service implements AutomationRun
             return;
         }
         ResumeReconciliation.RoomScan scan = parseRoomScan(result, side);
-        if (scan.authRequired) {
-            pauseReconciliationError("AUTH_REQUIRED", "재개 재구성 중 명시적 로그인 화면을 확인했습니다.");
-            return;
-        }
+        log("RESUME_ROOM_SCAN_META", "side=" + safeCode(side)
+                + ";history_ready=" + (result.optBoolean("history_ready", false) ? "1" : "0")
+                + ";assistant_turns=" + Math.max(0, result.optInt("assistant_turns", 0))
+                + ";job_prompt_turns=" + Math.max(0, result.optInt("job_prompt_turns", 0))
+                + ";script_candidates=" + Math.max(0, result.optInt("candidate_count", 0))
+                + ";accepted_candidates=" + scan.candidates.size());
         if (scan.generating) {
             log("RESUME_WAITING_FOR_IDLE", "side=" + safeCode(side));
             restartReconciliation("room_generating", true);
             scheduleReconciliationRetry("room_generating");
-            return;
-        }
-        String phase = store.reconciliationPhase();
-        if (OrchestrationStore.RECONCILIATION_CONFIRM_ROOMS.equals(phase)) {
-            handleReconciliationConfirmationRoom(scan, side);
-            return;
-        }
-        if (OrchestrationStore.RECONCILIATION_SOURCE_FRESHNESS.equals(phase)) {
-            handleReconciliationSourceFreshness(scan, side);
             return;
         }
         log("ROOM_IDLE_CONFIRMED", "side=" + safeCode(side));
@@ -667,15 +741,13 @@ public final class OrchestrationService extends Service implements AutomationRun
             reconciliationWorkScan = null;
             store.setReconciliationSide(OrchestrationStore.SIDE_WORK,
                     "재개 상태 재구성 중 · Work 대화 확인");
-            resetReconciliationPolling("discovery_room_switch");
+            log("RESUME_ROOM_SWITCH", "from=CHAT;to=WORK");
             cleanupWebView();
             handler.post(this::ensureEngine);
             return;
         }
         reconciliationWorkScan = scan;
-        ResumeReconciliation.Decision decision = ResumeReconciliation.select(
-                reconciliationChatScan, reconciliationWorkScan);
-        handleReconciliationDecision(decision);
+        handleReconciliationDecision(ResumeReconciliation.select(reconciliationChatScan, reconciliationWorkScan));
     }
 
     private void handleReconciliationConfirmationRoom(ResumeReconciliation.RoomScan scan, String side) {
@@ -779,9 +851,21 @@ public final class OrchestrationService extends Service implements AutomationRun
         }
         switch (decision.type) {
             case WAIT_FOR_IDLE -> {
-                log("RESUME_WAITING_FOR_IDLE", "side=both");
-                restartReconciliation("both_rooms_not_idle", true);
-                scheduleReconciliationRetry("both_rooms_not_idle");
+                log("RESUME_WAITING_FOR_IDLE", "side=both;reason=" + safeCode(decision.reason)
+                        + ";retry=" + reconciliationRescanAttempts);
+                if ("NO_VALID_SIGNAL".equals(decision.reason)) {
+                    reconciliationRescanAttempts++;
+                    log("RESUME_NO_SIGNAL_RETRY", "attempt=" + reconciliationRescanAttempts);
+                    if (reconciliationRescanAttempts >= MAX_NO_SIGNAL_RECONCILIATION_RETRIES) {
+                        pauseReconciliationError("RESUME_NO_VALID_SIGNAL",
+                                "대화 이력 로딩이 확인된 뒤에도 두 대화방에서 최신 Protocol 제어 신호를 찾지 못했습니다.");
+                        return;
+                    }
+                } else {
+                    reconciliationRescanAttempts = 0;
+                }
+                restartReconciliation(decision.reason, true);
+                scheduleReconciliationRetry(decision.reason);
             }
             case AMBIGUOUS -> {
                 store.reconciliationAmbiguous("RESUME_RECONCILE_AMBIGUOUS", decision.reason);
@@ -791,26 +875,30 @@ public final class OrchestrationService extends Service implements AutomationRun
                 stopRelay();
             }
             case USER_ACTION -> {
-                store.waitForUser(decision.selected.signal, decision.selected.sourceSide);
-                log("RESUME_STATE_REBUILT", "state=WAITING_USER;side="
-                        + safeCode(decision.selected.sourceSide));
-                NotificationHelper.orchestrationUserAction(this, decision.selected.sourceSide,
-                        store.runJobId(), decision.selected.signal.step, decision.selected.signal.round,
-                        decision.selected.signal.actionId);
-                stopRelay();
+                if (store.resumeUserActionRequested()) {
+                    store.rebuildForUserResolved(decision.selected.signal, decision.selected.sourceSide);
+                    log("RESUME_STATE_REBUILT", "state=USER_ACTION_REVALIDATION;side=CHAT");
+                    cleanupWebView();
+                    handler.post(this::ensureEngine);
+                } else {
+                    store.waitForUser(decision.selected.signal, decision.selected.sourceSide);
+                    log("RESUME_STATE_REBUILT", "state=WAITING_USER;side=" + safeCode(decision.selected.sourceSide));
+                    NotificationHelper.orchestrationUserAction(this, decision.selected.sourceSide,
+                            store.runJobId(), decision.selected.signal.step, decision.selected.signal.round,
+                            decision.selected.signal.actionId);
+                    stopRelay();
+                }
             }
             case TERMINAL -> {
                 store.finish(decision.selected.signal, decision.selected.sourceSide);
-                log("RESUME_STATE_REBUILT", "state=TERMINAL;type="
-                        + safeCode(decision.selected.signal.type.name()));
+                log("RESUME_STATE_REBUILT", "state=TERMINAL;type=" + safeCode(decision.selected.signal.type.name()));
                 NotificationHelper.orchestrationTerminal(this, decision.selected.signal.type, store.runJobId());
                 stopRelay();
             }
             case ROUTE -> {
-                reconciliationConfirmationChatScan = null;
-                reconciliationConfirmationWorkScan = null;
-                store.beginReconciliationConfirmation();
-                resetReconciliationPolling("confirmation_start");
+                String target = decision.targetSide();
+                store.setReconciliationTarget(target, OrchestrationStore.sideLabel(target) + " 재개 전달 중복 여부 확인");
+                resetReconciliationPolling("route_selected");
                 cleanupWebView();
                 handler.post(this::ensureEngine);
             }
@@ -820,99 +908,45 @@ public final class OrchestrationService extends Service implements AutomationRun
     private void handleReconciliationTarget(JSONObject result) {
         String status = result.optString("status", "SCRIPT_RESULT_INVALID");
         log("RESUME_TARGET_SCAN_RESULT", "status=" + safeCode(status));
-        if ("TARGET_CONTEXT_MISMATCH".equals(status) || "NETWORK_ERROR".equals(status)
-                || "AUTH_REQUIRED".equals(status)) {
+        if ("RATE_LIMIT".equals(status)) {
+            handleRateLimit("RECONCILIATION_TARGET", result.optString("detail", "rate limit"));
+            return;
+        }
+        if ("NETWORK_ERROR".equals(status)) {
+            recoverTransientNetwork("RECONCILIATION_TARGET");
+            return;
+        }
+        if ("TARGET_CONTEXT_MISMATCH".equals(status) || "AUTH_REQUIRED".equals(status)) {
             pauseReconciliationError(status, fixedScriptMessage(status));
             return;
         }
-        if ("RETRY".equals(status)) {
-            scheduleReconciliationRetry("target_retry");
-            return;
-        }
-        if ("TARGET_GENERATING".equals(status)
-                || "TARGET_PROMPT_PRESENT_GENERATING".equals(status)) {
-            if ("TARGET_PROMPT_PRESENT_GENERATING".equals(status)) {
-                log("TARGET_PROMPT_ALREADY_PRESENT", "side=" + safeCode(store.reconciliationSide()));
-            }
-            log("RESUME_WAITING_FOR_IDLE", "side=" + safeCode(store.reconciliationSide()));
+        if ("RETRY".equals(status)) { scheduleReconciliationRetry("target_retry"); return; }
+        if ("TARGET_GENERATING".equals(status) || "TARGET_PROMPT_PRESENT_GENERATING".equals(status)) {
             restartReconciliation("target_generating", true);
             scheduleReconciliationRetry("target_generating");
             return;
         }
-        if ("TARGET_PROMPT_PRESENT_WITH_RESPONSE".equals(status)) {
-            log("TARGET_PROMPT_ALREADY_PRESENT", "side=" + safeCode(store.reconciliationSide()));
-            if (reconciliationRescanAttempts++ < 1) {
-                log("RESUME_RECONCILE_STARTED", "reason=target_response_recheck");
-                restartReconciliation("target_response_recheck", false);
-                cleanupWebView();
-                handler.post(this::ensureEngine);
-            } else {
-                pauseReconciliationAmbiguous("RESUME_TARGET_PROMPT_PRESENT_UNRESOLVED");
-            }
-            return;
+        if (reconciliationDecision == null || reconciliationDecision.selected == null) {
+            restartReconciliation("target_selection_missing"); return;
         }
         if ("TARGET_PROMPT_PRESENT_NO_RESPONSE".equals(status)) {
-            log("TARGET_PROMPT_ALREADY_PRESENT", "side=" + safeCode(store.reconciliationSide()));
-            log("RESUME_TARGET_PROMPT_PRESENT_NO_RESPONSE", "side=" + safeCode(store.reconciliationSide()));
-            if (reconciliationDecision == null || reconciliationDecision.selected == null) {
-                restartReconciliation("existing_prompt_selection_missing", false);
-                cleanupWebView();
-                handler.post(this::ensureEngine);
-                return;
-            }
-            if (!reconciliationFinalTargetScan) {
-                String source = reconciliationDecision.selected.sourceSide;
-                log("RESUME_SOURCE_FRESHNESS_CHECK", "side=" + safeCode(source)
-                        + ";reason=existing_prompt");
-                store.setReconciliationSourceFreshness(source,
-                        OrchestrationStore.sideLabel(source) + " 기존 프롬프트 복구 직전 후보 최신성 확인");
-                resetReconciliationPolling("source_freshness_start_existing_prompt");
-                cleanupWebView();
-                handler.post(this::ensureEngine);
-                return;
-            }
-            store.rebuildForExistingPrompt(reconciliationDecision.selected.signal,
-                    reconciliationDecision.selected.sourceSide);
+            store.rebuildForExistingPrompt(reconciliationDecision.selected.signal, reconciliationDecision.selected.sourceSide);
             reconciliationDeliveryInProgress = false;
             log("RESUME_STATE_REBUILT", "state=WAITING_RESPONSE;reason=existing_prompt");
-            log("RESUME_EXISTING_PROMPT_MONITOR", "side="
-                    + safeCode(reconciliationDecision.targetSide()));
-            cleanupWebView();
-            handler.post(this::ensureEngine);
-            return;
+            cleanupWebView(); handler.post(this::ensureEngine); return;
         }
-        if ("TARGET_PROMPT_MULTIPLE".equals(status)) {
-            log("TARGET_PROMPT_ALREADY_PRESENT", "side=" + safeCode(store.reconciliationSide()));
-            pauseReconciliationAmbiguous("RESUME_TARGET_PROMPT_MULTIPLE");
-            return;
+        if ("TARGET_PROMPT_PRESENT_WITH_RESPONSE".equals(status)) {
+            restartReconciliation("target_response_present", false);
+            cleanupWebView(); handler.post(this::ensureEngine); return;
         }
+        if ("TARGET_PROMPT_MULTIPLE".equals(status)) { pauseReconciliationAmbiguous("RESUME_TARGET_PROMPT_MULTIPLE"); return; }
         if (!"TARGET_PROMPT_ABSENT".equals(status)) {
-            pauseReconciliationError("RECONCILE_TARGET_SCAN_FAILED", "재개 대상 대화의 중복 여부를 확인하지 못했습니다.");
-            return;
+            pauseReconciliationError("RECONCILE_TARGET_SCAN_FAILED", "재개 대상 대화의 중복 여부를 확인하지 못했습니다."); return;
         }
-        if (reconciliationDecision == null || reconciliationDecision.selected == null) {
-            restartReconciliation("target_selection_missing");
-            return;
-        }
-        if (!reconciliationFinalTargetScan) {
-            String source = reconciliationDecision.selected.sourceSide;
-            log("RESUME_SOURCE_FRESHNESS_CHECK", "side=" + safeCode(source));
-            store.setReconciliationSourceFreshness(source,
-                    OrchestrationStore.sideLabel(source) + " 재개 후보 최신성 확인");
-            resetReconciliationPolling("source_freshness_start");
-            cleanupWebView();
-            handler.post(this::ensureEngine);
-            return;
-        }
-        log("RESUME_REPLAY_SUBMITTING", "side=" + safeCode(reconciliationDecision.targetSide())
-                + ";type=" + safeCode(reconciliationDecision.selected.signal.type.name()));
-        store.rebuildForReconciliation(reconciliationDecision.selected.signal,
-                reconciliationDecision.selected.sourceSide);
+        store.rebuildForReconciliation(reconciliationDecision.selected.signal, reconciliationDecision.selected.sourceSide);
         reconciliationDeliveryInProgress = true;
-        log("RESUME_STATE_REBUILT", "state=DELIVERY_PENDING;side="
-                + safeCode(reconciliationDecision.targetSide()));
-        cleanupWebView();
-        handler.post(this::ensureEngine);
+        log("RESUME_STATE_REBUILT", "state=DELIVERY_PENDING;side=" + safeCode(reconciliationDecision.targetSide()));
+        cleanupWebView(); handler.post(this::ensureEngine);
     }
 
     private void pauseReconciliationAmbiguous(String code) {
@@ -940,6 +974,7 @@ public final class OrchestrationService extends Service implements AutomationRun
      * adaptive cadence; all real phase/candidate changes reset it for prompt responsiveness.
      */
     private void restartReconciliation(String reason, boolean preservePolling) {
+        if (!"NO_VALID_SIGNAL".equals(reason)) reconciliationRescanAttempts = 0;
         reconciliationChatScan = null;
         reconciliationWorkScan = null;
         reconciliationConfirmationChatScan = null;
@@ -988,6 +1023,7 @@ public final class OrchestrationService extends Service implements AutomationRun
         }
         switch (status) {
             case "READY" -> {
+                uiWaitStartedAt = 0L;
                 if (store.initialStartPending()) {
                     store.setInitialStartBaselineCount(result.optInt("matching_user_turns", 0));
                     log("INITIAL_START_READY", "existing_turns=" + store.initialStartBaselineCount());
@@ -1010,12 +1046,13 @@ public final class OrchestrationService extends Service implements AutomationRun
                 resetResponsePolling("PREPARE_ALREADY_SUBMITTED");
                 scheduleStep(250L);
             }
-            case "RETRY" -> {
+            case "UI_WAIT", "RETRY" -> {
                 if (System.currentTimeMillis() - store.phaseStartedAt() >= 60_000L)
                     pauseWithError("DOM_COMPOSER_NOT_FOUND", "60초 동안 ChatGPT 프롬프트 입력창을 준비하지 못했습니다.");
-                else retry("프롬프트 입력 준비 대기", 1000L);
+                else uiWait(result.optString("detail", "프롬프트 입력 준비 대기"), 1000L);
             }
-            case "AUTH_REQUIRED", "DRAFT_PRESENT", "TARGET_CONTEXT_MISMATCH", "NETWORK_ERROR", "DOM_STRUCTURE_ERROR" -> {
+            case "NETWORK_ERROR" -> recoverTransientNetwork("PREPARE_SCRIPT");
+            case "AUTH_REQUIRED", "DRAFT_PRESENT", "TARGET_CONTEXT_MISMATCH", "DOM_STRUCTURE_ERROR" -> {
                 if ("AUTH_REQUIRED".equals(status)) log("AUTH_REQUIRED", "reason=structural_gate");
                 pauseWithError(status, fixedScriptMessage(status));
             }
@@ -1026,6 +1063,14 @@ public final class OrchestrationService extends Service implements AutomationRun
     private void handleSubmission(JSONObject result, boolean clickAttempt) {
         String status = result.optString("status", "SCRIPT_RESULT_INVALID");
         log("SUBMISSION_RESULT", "status=" + safeCode(status) + ";click=" + (clickAttempt ? "1" : "0"));
+        if ("RATE_LIMIT".equals(status)) {
+            handleRateLimit("SUBMISSION_SCRIPT", result.optString("detail", "rate limit"));
+            return;
+        }
+        if ("TARGET_TRANSIENT".equals(status)) {
+            reloadInitialStartTarget("submission_target");
+            return;
+        }
         if (clickAttempt && ("SUBMITTED".equals(status) || "ALREADY_SUBMITTED".equals(status))) {
             String previous = store.deliveryState();
             store.markSubmitted();
@@ -1077,6 +1122,9 @@ public final class OrchestrationService extends Service implements AutomationRun
         String status = result.optString("status", "SCRIPT_RESULT_INVALID");
         logScriptResult("CONFIRM_RESULT", status);
         switch (status) {
+            case "RATE_LIMIT" -> handleRateLimit("CONFIRMATION_SCRIPT", result.optString("detail", "rate limit"));
+            case "TARGET_TRANSIENT" -> reloadInitialStartTarget("confirmation_target");
+            case "UI_WAIT" -> uiWait(result.optString("detail", "제출 확인 UI 대기"), 1000L);
             case "SUBMITTED" -> {
                 String previous = store.deliveryState();
                 acceptInitialStartTargetIfNeeded();
@@ -1103,6 +1151,8 @@ public final class OrchestrationService extends Service implements AutomationRun
         String status = result.optString("status", "SCRIPT_RESULT_INVALID");
         logScriptResult("STOP_GENERATION_RESULT", status);
         switch (status) {
+            case "RATE_LIMIT" -> handleRateLimit("STOP_GENERATION_SCRIPT", result.optString("detail", "rate limit"));
+            case "TARGET_TRANSIENT" -> reloadInitialStartTarget("stop_generation_target");
             case "STOP_GENERATION_CLICKED" -> {
                 store.markStopGenerationClicked();
                 stopConfirmationStartedAt = SystemClock.elapsedRealtime();
@@ -1114,8 +1164,8 @@ public final class OrchestrationService extends Service implements AutomationRun
                 log("STOP_GENERATION_AMBIGUOUS", "reason=" + safeCode(status));
                 pauseAmbiguous("98분 장시간 보호를 실행했지만 생성 중지 버튼 상태가 명확하지 않습니다. 자동 재클릭하지 않습니다.");
             }
-            case "TARGET_CONTEXT_MISMATCH", "NETWORK_ERROR" ->
-                    pauseWithError(status, fixedScriptMessage(status));
+            case "NETWORK_ERROR" -> recoverTransientNetwork("STOP_GENERATION_SCRIPT");
+            case "TARGET_CONTEXT_MISMATCH" -> pauseWithError(status, fixedScriptMessage(status));
             default -> {
                 store.markStopGenerationAmbiguous();
                 log("STOP_GENERATION_AMBIGUOUS", "reason=unexpected_result");
@@ -1127,6 +1177,14 @@ public final class OrchestrationService extends Service implements AutomationRun
     private void handleObservation(JSONObject result) {
         String status = result.optString("status", "SCRIPT_RESULT_INVALID");
         logScriptResult("OBSERVE_RESULT", status);
+        if ("RATE_LIMIT".equals(status)) {
+            handleRateLimit("OBSERVE_SCRIPT", result.optString("detail", "rate limit"));
+            return;
+        }
+        if ("TARGET_TRANSIENT".equals(status)) {
+            reloadInitialStartTarget("observe_target");
+            return;
+        }
         boolean assistantPresent = result.optBoolean("assistant_present", false);
         boolean streaming = result.optBoolean("streaming", false);
         boolean stopAvailable = result.optBoolean("stop_available", false);
@@ -1177,7 +1235,11 @@ public final class OrchestrationService extends Service implements AutomationRun
                 handler.post(this::ensureEngine);
                 return;
             }
-            if ("AUTH_REQUIRED".equals(status) || "NETWORK_ERROR".equals(status)
+            if ("NETWORK_ERROR".equals(status)) {
+                recoverTransientNetwork("OBSERVE_SCRIPT");
+                return;
+            }
+            if ("AUTH_REQUIRED".equals(status)
                     || "DOM_STRUCTURE_ERROR".equals(status) || "TARGET_CONTEXT_MISMATCH".equals(status)) {
                 pauseWithError(status, fixedScriptMessage(status));
                 return;
@@ -1207,7 +1269,11 @@ public final class OrchestrationService extends Service implements AutomationRun
             retry("정상 응답 대기", AdaptivePolling.FAST_DELAY_MS);
             return;
         }
-        if ("AUTH_REQUIRED".equals(status) || "NETWORK_ERROR".equals(status)
+        if ("NETWORK_ERROR".equals(status)) {
+            recoverTransientNetwork("OBSERVE_SCRIPT");
+            return;
+        }
+        if ("AUTH_REQUIRED".equals(status)
                 || "DOM_STRUCTURE_ERROR".equals(status) || "TARGET_CONTEXT_MISMATCH".equals(status)) {
             pauseWithError(status, fixedScriptMessage(status));
             return;
@@ -1244,6 +1310,21 @@ public final class OrchestrationService extends Service implements AutomationRun
                         store.responseEpoch(), store.lastSignalResponseEpoch());
         if (!parsed.isValid()) {
             log("SIGNAL_REJECTED", "reason=" + safeCode(parsed.errorCode.name()));
+            if (store.lastDeliveryWasSignalRetry()) {
+                log("SIGNAL_RETRY_EXHAUSTED", "side=" + safeCode(sourceSide)
+                        + ";reason=" + safeCode(parsed.errorCode.name()));
+                pauseWithError("SIGNAL_RETRY_EXHAUSTED",
+                        "제어 신호 재출력을 한 번 요청했지만 다음 응답에도 올바른 Protocol 앱 제어 신호가 없었습니다.");
+                return;
+            }
+            if (parsed.errorCode == OrchestrationSignal.ErrorCode.NO_SIGNAL) {
+                store.prepareSignalRetry(sourceSide);
+                log("SIGNAL_RETRY_REQUESTED", "side=" + safeCode(sourceSide));
+                resetResponsePolling("SIGNAL_RETRY_REQUESTED");
+                cleanupWebView();
+                handler.post(this::ensureEngine);
+                return;
+            }
             pauseWithProtocolError(parsed.errorCode, sourceSide);
             return;
         }
@@ -1300,6 +1381,135 @@ public final class OrchestrationService extends Service implements AutomationRun
         handler.post(this::ensureEngine);
     }
 
+    private void uiWait(String detail, long delayMs) {
+        if (!canRun()) return;
+        String safe = safeDetail(detail);
+        long now = System.currentTimeMillis();
+        if (uiWaitStartedAt == 0L) uiWaitStartedAt = now;
+        CanonicalTargetRecoveryPolicy.Decision decision = CanonicalTargetRecoveryPolicy.decide(
+                now, uiWaitStartedAt, true, true, false, false, canonicalReentryAttempts);
+        log("UI_WAIT", "detail=" + safe + ";delay_ms=" + Math.max(0L, delayMs));
+        if (decision == CanonicalTargetRecoveryPolicy.Decision.REENTER) {
+            canonicalReentryForced = true;
+            reloadInitialStartTarget("ui_wait", true);
+            return;
+        }
+        if (decision == CanonicalTargetRecoveryPolicy.Decision.EXHAUSTED) {
+            pauseWithError("TARGET_ROUTE_RECOVERY_FAILED", "UI 준비가 장기 정체되어 canonical target 재진입 한도를 초과했습니다.");
+            return;
+        }
+        store.setStatus(OrchestrationStore.sideLabel(activeTargetSide()) + " · UI 준비 대기");
+        scheduleStep(Math.max(250L, delayMs));
+    }
+
+    private boolean isUiWaitDetail(String detail) {
+        String value = detail == null ? "" : detail.toLowerCase();
+        return value.contains("입력창") || value.contains("입력 반영")
+                || value.contains("모드") || value.contains("모델") || value.contains("추론")
+                || value.contains("전송 버튼") || value.contains("loading") || value.contains("로딩");
+    }
+
+    private void handleRateLimit(String source, String detail) {
+        if (!canRun()) return;
+        RecoveryDecisionPolicy.Decision policyDecision = relayNetworkDecision();
+        log("RECOVERY_POLICY", "network=RATE_LIMIT;decision=" + policyDecision.name());
+        long now = System.currentTimeMillis();
+        if (rateLimitStartedAt == 0L) {
+            rateLimitStartedAt = now;
+            rateLimitBackoff.reset();
+        }
+        if (now - rateLimitStartedAt >= MAX_RATE_LIMIT_WAIT_MS) {
+            pauseWithError("RATE_LIMIT_TIMEOUT", safeDetail(detail == null ? source : detail));
+            return;
+        }
+        suspendCanonicalTargetRecoveryForRateLimit();
+        rateLimitWaiting = true;
+        evaluationInFlight = false;
+        handler.removeCallbacks(stepRunnable);
+        if (rateLimitRecoveryScheduled) return;
+        RecoveryBackoff.Decision decision = rateLimitBackoff.next();
+        rateLimitRecoveryScheduled = true;
+        log("RATE_LIMIT_RECOVERY_WAIT", "source=" + safeCode(source)
+                + ";attempt=" + decision.attempt + ";delay_ms=" + decision.delayMs
+                + ";detail=" + safeDetail(detail));
+        store.setStatus(OrchestrationStore.sideLabel(activeTargetSide()) + " · rate limit 복구 대기");
+        acquireWakeLock();
+        handler.postDelayed(rateLimitRecoveryRunnable, decision.delayMs);
+    }
+
+    private RecoveryDecisionPolicy.Decision relayNetworkDecision() {
+        if (store == null) return RecoveryDecisionPolicy.Decision.FAIL;
+        boolean bootstrap = store.bootstrapProvisioning();
+        String targetType = bootstrap ? "project" : "existing";
+        String expected = bootstrap ? store.runProjectUrl() : currentRelayTargetUrl();
+        String actual = webView == null ? "" : webView.getUrl();
+        RecoveryDecisionPolicy.ObservedLocation location = RecoveryDecisionPolicy.classify(targetType, expected, actual);
+        return RecoveryDecisionPolicy.decide(
+                RecoveryDecisionPolicy.targetIntent(targetType, false, ""), location,
+                RecoveryDecisionPolicy.NetworkState.RATE_LIMIT,
+                RecoveryDecisionPolicy.UiReadiness.READY,
+                RecoveryDecisionPolicy.SendState.AMBIGUOUS);
+    }
+
+    private void performRateLimitRecovery() {
+        rateLimitRecoveryScheduled = false;
+        if (!rateLimitWaiting || !canRun()) return;
+        long now = System.currentTimeMillis();
+        if (now - rateLimitStartedAt >= MAX_RATE_LIMIT_WAIT_MS) {
+            pauseWithError("RATE_LIMIT_TIMEOUT", "rate-limit recovery deadline exceeded");
+            return;
+        }
+        if (scheduleHasPriority()) {
+            yieldForSchedule();
+            return;
+        }
+        if (webView == null) {
+            clearRateLimitRecovery("webview_missing");
+            handler.post(this::ensureEngine);
+            return;
+        }
+        String actualUrl = webView.getUrl();
+        boolean pageFinished = webView.getProgress() >= 100;
+        boolean targetReady = matchesExpectedTarget(actualUrl);
+        if (targetReady && pageFinished) {
+            clearRateLimitRecovery("target_reobserved");
+            resetInitialTargetRetry();
+            log("RATE_LIMIT_REOBSERVED", "url=" + safeDetail(actualUrl));
+            scheduleStep(0L);
+            return;
+        }
+        // A rate-limit response can leave the expected conversation URL in place while
+        // the main frame is still loading. That is recoverable target state too; do not
+        // misclassify it as a different conversation merely because progress is < 100.
+        boolean recoverable = targetReady || isTransientExpectedTarget(actualUrl);
+        clearRateLimitRecovery(recoverable ? "target_restore_after_wait" : "target_changed_after_wait");
+        if (recoverable) reloadInitialStartTarget("rate_limit_target", !pageFinished);
+        else pauseTargetChanged(actualUrl, "rate-limit 복구 후 다른 대화 ID가 확인되었습니다.");
+    }
+
+    private void clearRateLimitRecovery(String reason) {
+        if (rateLimitWaiting || rateLimitRecoveryScheduled)
+            log("RATE_LIMIT_RECOVERY_CLEAR", "reason=" + safeCode(reason)
+                    + ";attempt=" + rateLimitBackoff.attempt());
+        handler.removeCallbacks(rateLimitRecoveryRunnable);
+        rateLimitWaiting = false;
+        rateLimitRecoveryScheduled = false;
+        rateLimitStartedAt = 0L;
+        rateLimitBackoff.reset();
+    }
+
+    /** Cancel only the pending target callback; preserve the shared re-entry budget. */
+    private void suspendCanonicalTargetRecoveryForRateLimit() {
+        if (initialTargetReloadScheduled || targetRecoveryStartedAt != 0L) {
+            log("TARGET_RECOVERY_SUSPEND", "reason=rate_limit;reentries=" + canonicalReentryAttempts
+                    + ";backoff_attempt=" + canonicalReentryBackoff.attempt());
+        }
+        handler.removeCallbacks(initialTargetReloadRunnable);
+        initialTargetReloadScheduled = false;
+        targetRecoveryStartedAt = 0L;
+        canonicalReentryForced = false;
+    }
+
     /** Elapsed time is telemetry only; a normal response wait never times out. */
     private void retry(String detail, long delayMs) {
         long actualDelay = delayMs;
@@ -1341,6 +1551,21 @@ public final class OrchestrationService extends Service implements AutomationRun
         log("FAILED", "code=" + safeCode(code.name()));
         NotificationHelper.orchestrationError(this, side, store.runJobId(), store.currentStep(), store.currentRound(), detail);
         stopRelay();
+    }
+
+    private void recoverTransientNetwork(String source) {
+        if (!canRun()) return;
+        if (scheduleHasPriority()) {
+            yieldForSchedule();
+            return;
+        }
+        if (store.reconciling()) reconciliationRescanAttempts = 0;
+        log("TRANSIENT_NETWORK_RECOVERY", "source=" + safeCode(source)
+                + ";side=" + safeCode(activeTargetSide())
+                + ";state=" + safeCode(store.deliveryState())
+                + ";reconciling=" + (store.reconciling() ? "1" : "0"));
+        store.setStatus(OrchestrationStore.sideLabel(activeTargetSide()) + " · 네트워크 복구 후 대화 재확인");
+        reloadInitialStartTarget("network_" + source.toLowerCase(), true);
     }
 
     private void pauseWithError(String code, String detail) {
@@ -1428,41 +1653,133 @@ public final class OrchestrationService extends Service implements AutomationRun
      * wait until its conversation identity is visible instead of failing on transient SPA routes.
      */
     private void reloadInitialStartTarget(String reason) {
-        if (!store.initialStartPending() || webView == null || scheduleHasPriority()
-                || initialTargetReloadScheduled) return;
-        AdaptivePolling.Decision decision = initialTargetPolling.onRetry(store.epoch());
+        reloadInitialStartTarget(reason, false);
+    }
+
+    private void reloadInitialStartTarget(String reason, boolean forceReentry) {
+        if (webView == null || scheduleHasPriority() || rateLimitWaiting || initialTargetReloadScheduled) return;
+        long now = System.currentTimeMillis();
+        canonicalReentryForced = canonicalReentryForced || forceReentry;
+        boolean graceAlreadySatisfied = forceReentry || "RATE_LIMIT_TARGET".equals(safeCode(reason.toUpperCase()));
+        if (targetRecoveryStartedAt == 0L)
+            targetRecoveryStartedAt = graceAlreadySatisfied
+                    ? now - CanonicalTargetRecoveryPolicy.INITIAL_GRACE_MS : now;
+        if (now - targetRecoveryStartedAt >= MAX_TARGET_RECOVERY_WAIT_MS) {
+            pauseWithError("TARGET_ROUTE_RECOVERY_FAILED", "transient target restoration deadline exceeded");
+            return;
+        }
+        long elapsed = Math.max(0L, now - targetRecoveryStartedAt);
+        long delayMs;
+        int backoffAttempt = canonicalReentryBackoff.attempt();
+        if (elapsed < CanonicalTargetRecoveryPolicy.INITIAL_GRACE_MS) {
+            delayMs = Math.max(250L, CanonicalTargetRecoveryPolicy.delayUntilGrace(now, targetRecoveryStartedAt));
+        } else {
+            if (!CanonicalTargetRecoveryPolicy.canReenter(canonicalReentryAttempts)) {
+                pauseWithError("TARGET_ROUTE_RECOVERY_FAILED", "canonical target 재진입 한도를 초과했습니다.");
+                return;
+            }
+            RecoveryBackoff.Decision decision = canonicalReentryBackoff.next();
+            delayMs = decision.delayMs;
+            backoffAttempt = decision.attempt;
+        }
         initialTargetReloadScheduled = true;
         initialTargetReloadReason = safeCode(reason.toUpperCase());
-        log("INITIAL_START_TARGET_RETRY", "reason=" + initialTargetReloadReason
-                + ";retry=" + decision.retryCount + ";tier=" + decision.tier
-                + ";delay_ms=" + decision.delayMs);
-        handler.postDelayed(initialTargetReloadRunnable, decision.delayMs);
+        log("TARGET_RETRY", "reason=" + initialTargetReloadReason
+                + ";reentries=" + canonicalReentryAttempts + ";backoff_attempt=" + backoffAttempt
+                + ";grace_ms=" + CanonicalTargetRecoveryPolicy.INITIAL_GRACE_MS
+                + ";delay_ms=" + delayMs);
+        handler.postDelayed(initialTargetReloadRunnable, delayMs);
     }
 
     private void performInitialTargetReload() {
         initialTargetReloadScheduled = false;
-        if (!store.initialStartPending() || webView == null) return;
+        if (webView == null) return;
         if (scheduleHasPriority()) {
             yieldForSchedule();
             return;
         }
-        if (matchesExpectedTarget(webView.getUrl())) {
+        String actual = webView.getUrl();
+        boolean targetReady = matchesExpectedTarget(actual);
+        boolean transientTarget = targetReady || isTransientExpectedTarget(actual);
+        CanonicalTargetRecoveryPolicy.Decision decision = CanonicalTargetRecoveryPolicy.decide(
+                System.currentTimeMillis(), targetRecoveryStartedAt, targetReady, transientTarget,
+                !canonicalReentryForced, webView.getProgress() >= 100, canonicalReentryAttempts);
+        if (decision == CanonicalTargetRecoveryPolicy.Decision.READY) {
             resetInitialTargetRetry();
             scheduleStep(500L);
             return;
         }
-        String expected = store.runChatUrl();
-        store.setStatus("일반 Chat 시작 대화 다시 여는 중");
-        log("INITIAL_START_TARGET_RELOAD", "reason=" + initialTargetReloadReason);
-        webView.stopLoading();
-        webView.loadUrl(expected);
+        if (decision == CanonicalTargetRecoveryPolicy.Decision.TARGET_CHANGED) {
+            pauseTargetChanged(actual, "중계 대상 대화가 바뀌었습니다.");
+            return;
+        }
+        if (decision == CanonicalTargetRecoveryPolicy.Decision.WAIT) {
+            log("TARGET_REOBSERVE_LOADING", "reason=" + initialTargetReloadReason
+                    + ";progress=" + webView.getProgress());
+            reloadInitialStartTarget("loading", canonicalReentryForced);
+            return;
+        }
+        if (decision == CanonicalTargetRecoveryPolicy.Decision.EXHAUSTED) {
+            pauseWithError("TARGET_ROUTE_RECOVERY_FAILED", "canonical target 재진입 한도를 초과했습니다.");
+            return;
+        }
+        String expected = canonicalTargetUrl();
+        if (expected.isEmpty()) {
+            pauseWithError("TARGET_URL_MISSING", "복구할 중계 대화 URL이 없습니다.");
+            return;
+        }
+        store.setStatus(OrchestrationStore.sideLabel(activeTargetSide()) + " 대화 다시 여는 중");
+        reenterCanonicalTargetUrl(initialTargetReloadReason, actual);
     }
 
     private void resetInitialTargetRetry() {
         handler.removeCallbacks(initialTargetReloadRunnable);
         initialTargetReloadScheduled = false;
         initialTargetReloadReason = "";
-        initialTargetPolling.reset(store.epoch());
+        targetRecoveryStartedAt = 0L;
+        uiWaitStartedAt = 0L;
+        canonicalReentryAttempts = 0;
+        canonicalReentryForced = false;
+        canonicalReentryBackoff.reset();
+    }
+
+    /** The only recovery navigation side effect for the relay. */
+    private void reenterCanonicalTargetUrl(String reason, String actualUrl) {
+        if (webView == null) return;
+        if (!CanonicalTargetRecoveryPolicy.canReenter(canonicalReentryAttempts)) {
+            pauseWithError("TARGET_ROUTE_RECOVERY_FAILED", "canonical target 재진입 한도를 초과했습니다.");
+            return;
+        }
+        String canonicalUrl = canonicalTargetUrl();
+        if (canonicalUrl.isEmpty()) {
+            pauseWithError("TARGET_URL_MISSING", "복구할 canonical target URL이 없습니다.");
+            return;
+        }
+        canonicalReentryAttempts++;
+        canonicalReentryForced = false;
+        generation++;
+        evaluationInFlight = false;
+        log("CANONICAL_TARGET_REENTRY", "reason=" + safeCode(reason)
+                + ";attempt=" + canonicalReentryAttempts + ";progress=" + webView.getProgress()
+                + ";actual=" + safeDetail(actualUrl));
+        webView.loadUrl(canonicalUrl);
+    }
+
+    private String canonicalTargetUrl() {
+        if (store.bootstrapProvisioning()) return store.runProjectUrl();
+        return currentRelayTargetUrl();
+    }
+
+    private boolean isTransientExpectedTarget(String actualUrl) {
+        if (actualUrl == null || actualUrl.isBlank() || "about:blank".equalsIgnoreCase(actualUrl)) return true;
+        if (store.bootstrapProvisioning())
+            return TargetParser.isTransientProjectRoute(store.runProjectUrl(), actualUrl);
+        return TargetParser.isTransientConversationRoute(currentRelayTargetUrl(), actualUrl);
+    }
+
+    private void pauseTargetChanged(String actualUrl, String detail) {
+        log("TARGET_MISMATCH", TargetParser.mismatchDetail("existing", currentRelayTargetUrl(), actualUrl));
+        pauseWithError("TARGET_CHANGED", detail);
     }
 
     private String activeTargetSide() {
@@ -1505,6 +1822,25 @@ public final class OrchestrationService extends Service implements AutomationRun
         return value;
     }
 
+    private RecoveryDecisionPolicy.Decision relayTargetDecision(String actualUrl) {
+        if (actualUrl == null || actualUrl.isBlank() || "about:blank".equalsIgnoreCase(actualUrl))
+            return RecoveryDecisionPolicy.Decision.RESTORE_TARGET;
+        if (store == null || store.bootstrapProvisioning() || !TargetParser.isSupported(actualUrl))
+            return RecoveryDecisionPolicy.Decision.TARGET_CHANGED;
+        RecoveryDecisionPolicy.SendState sendState =
+                OrchestrationStore.DELIVERY_SUBMITTING.equals(store.deliveryState())
+                        ? RecoveryDecisionPolicy.SendState.AMBIGUOUS
+                        : OrchestrationStore.DELIVERY_SUBMITTED.equals(store.deliveryState())
+                        ? RecoveryDecisionPolicy.SendState.DOM_CONFIRMED
+                        : RecoveryDecisionPolicy.SendState.NOT_STARTED;
+        return RecoveryDecisionPolicy.decide(
+                RecoveryDecisionPolicy.TargetIntent.FIXED_CONVERSATION,
+                RecoveryDecisionPolicy.classify("existing", currentRelayTargetUrl(), actualUrl),
+                RecoveryDecisionPolicy.NetworkState.OK,
+                RecoveryDecisionPolicy.UiReadiness.READY,
+                sendState);
+    }
+
     private static String fixedScriptMessage(String status) {
         return switch (status) {
             case "AUTH_REQUIRED" -> "ChatGPT 로그인 세션을 확인해야 합니다.";
@@ -1518,8 +1854,19 @@ public final class OrchestrationService extends Service implements AutomationRun
 
     private void cleanupWebView() {
         handler.removeCallbacks(stepRunnable);
+        handler.removeCallbacks(rateLimitRecoveryRunnable);
         handler.removeCallbacks(initialTargetReloadRunnable);
         initialTargetReloadScheduled = false;
+        initialTargetReloadReason = "";
+        rateLimitWaiting = false;
+        rateLimitRecoveryScheduled = false;
+        rateLimitStartedAt = 0L;
+        rateLimitBackoff.reset();
+        targetRecoveryStartedAt = 0L;
+        uiWaitStartedAt = 0L;
+        canonicalReentryAttempts = 0;
+        canonicalReentryForced = false;
+        canonicalReentryBackoff.reset();
         generation++;
         evaluationInFlight = false;
         commitAuthorized = false;

@@ -1,0 +1,1 @@
+Temporary CI-only patch payload for NRV69Y recovery. This directory and .github/workflows/nrv69y-patch.yml must be removed before merge/release.

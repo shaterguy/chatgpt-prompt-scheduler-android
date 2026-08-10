@@ -414,7 +414,7 @@ public final class OrchestrationActivity extends Activity {
         ResumePath path = resumePath(store.waitingForUser(), fullRelay);
         boolean resumed = switch (path) {
             case USER_ACTION_RESOLVED -> store.resolveUserAction();
-            case RECONCILE -> store.beginReconciliation();
+            case RECONCILE -> store.beginReconciliation(store.waitingForUser());
             case BOOTSTRAP -> store.resume();
         };
         if (!resumed) {
@@ -693,8 +693,11 @@ public final class OrchestrationActivity extends Activity {
     enum ResumePath { USER_ACTION_RESOLVED, RECONCILE, BOOTSTRAP }
 
     static ResumePath resumePath(boolean waitingForUser, boolean fullRelay) {
+        // WAITING_USER is an explicit user-confirmation transition, not an observational recovery.
+        // It must bypass generic reconciliation even after both relay rooms are provisioned.
         if (waitingForUser) return ResumePath.USER_ACTION_RESOLVED;
-        return fullRelay ? ResumePath.RECONCILE : ResumePath.BOOTSTRAP;
+        if (fullRelay) return ResumePath.RECONCILE;
+        return ResumePath.BOOTSTRAP;
     }
 
     static NewJobFormDefaults newJobFormDefaults(String defaultProjectUrl) {

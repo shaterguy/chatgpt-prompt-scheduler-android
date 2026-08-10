@@ -64,7 +64,9 @@ public final class OrchestrationStore {
     public static final String PHASE_SUBMITTING = "SUBMITTING";
     public static final String PHASE_WAIT = "WAIT_RESPONSE";
 
-    private static final int SCHEMA_VERSION = 6;
+    private static final int SCHEMA_VERSION = 7;
+    private static final String SIGNAL_RETRY_PROMPT =
+            "다음 작업을 위한 신호가 누락되었습니다. 현재 상태는 그대로 유지하고, 방금 완료한 작업에 대응하는 올바른 Protocol 앱 제어 신호 한 줄만 다시 출력해 주세요.";
     private static final String PREFS = "orchestration_protocol_3";
     private static final String WORKSPACE_PREFS_PREFIX = "orchestration_workspace_";
     private static final Set<String> GLOBAL_KEYS = Set.of(
@@ -581,6 +583,33 @@ public final class OrchestrationStore {
         return true;
     }
 
+    public void rebuildForUserResolved(OrchestrationSignal signal, String sourceSide) {
+        if (signal == null || signal.type != OrchestrationSignal.Type.USER_ACTION_REQUIRED
+                || !SIDE_CHAT.equals(sourceSide) || signal.actionId.isEmpty())
+            throw new IllegalArgumentException("재개 가능한 사용자 조치 신호가 아닙니다.");
+        long now = System.currentTimeMillis();
+        String prompt = userResolvedPrompt(runJobId(), signal.actionId);
+        commit(preferences.edit().putBoolean("active", true).putBoolean("paused", false)
+                .putBoolean("terminal", false).putBoolean("waitingForUser", false).putString("actionId", "")
+                .putBoolean("resumeUserActionRequested", false)
+                .putBoolean("reconciling", false).putString("reconciliationPhase", RECONCILIATION_NONE)
+                .putString("lastSignalSource", sourceSide).putString("lastAcceptedSignal", signal.raw)
+                .putLong("lastSignalAt", now)
+                .putString("currentStep", signal.step).putString("currentRound", signal.round)
+                .putString("deliveryTarget", SIDE_CHAT).putString("pendingPrompt", prompt)
+                .putString("stampedPrompt", "").putString("deliveryState", DELIVERY_PENDING)
+                .putString("expectedSignal", "전송 완료 후 일반 Chat의 재검증 결과")
+                .putLong("deliveryPreparedAt", 0L).putLong("deliveryAttemptAt", 0L)
+                .putString("status", "일반 Chat 사용자 조치 재검증 요청 전송 대기")
+                .putString("lastErrorCode", "").putString("error", "").putLong("errorAt", 0L)
+                .putLong("phaseStartedAt", now).putLong("pollCountLong", 0L).putInt("pollCount", 0)
+                .putString("candidateFingerprint", "").putInt("candidateStability", 0)
+                .putString("bootstrapState", FLOW_AUTO_BOOTSTRAP.equals(flowMode())
+                        ? BOOTSTRAP_RELAY_ACTIVE : bootstrapState())
+                .putLong("epoch", epoch() + 1L));
+        resetResponseTiming("RESUME_USER_ACTION_REVALIDATION");
+    }
+
     public void incrementPoll() {
         long next = pollCountLong() == Long.MAX_VALUE ? Long.MAX_VALUE : pollCountLong() + 1L;
         preferences.edit().putLong("pollCountLong", next).putInt("pollCount", (int) Math.min(next, Integer.MAX_VALUE)).apply();
@@ -662,12 +691,18 @@ public final class OrchestrationStore {
      * until both conversation rooms have been scanned and a new atomic state is committed.
      */
     public boolean beginReconciliation() {
+        return beginReconciliation(false);
+    }
+
+    public boolean beginReconciliation(boolean userActionRequested) {
         if (runJobId().isEmpty() || runChatUrl().isEmpty() || runWorkUrl().isEmpty()) return false;
         commit(preferences.edit().putBoolean("active", true).putBoolean("paused", false)
                 .putBoolean("reconciling", true).putString("reconciliationPhase", RECONCILIATION_SCAN_ROOMS)
                 .putString("reconciliationSide", SIDE_CHAT)
+                .putBoolean("resumeUserActionRequested", userActionRequested || resumeUserActionRequested())
                 .putString("status", "재개 상태 재구성 중 · 두 대화방 확인")
                 .putString("lastErrorCode", "").putString("error", "").putLong("errorAt", 0L)
+                .putLong("pollCountLong", 0L).putInt("pollCount", 0)
                 .putLong("phaseStartedAt", System.currentTimeMillis())
                 .putString("candidateFingerprint", "").putInt("candidateStability", 0)
                 .putLong("epoch", epoch() + 1L));
@@ -952,6 +987,30 @@ public final class OrchestrationStore {
     public static String startPrompt(String jobId) {
         return "[AUTOMATION_START " + clean(jobId) + "]";
     }
+
+    public static String signalRetryPrompt() { return SIGNAL_RETRY_PROMPT; }
+
+    public boolean lastDeliveryWasSignalRetry() {
+        return lastDeliveredPrompt().contains(SIGNAL_RETRY_PROMPT);
+    }
+
+    public void prepareSignalRetry(String sourceSide) {
+        if (!SIDE_CHAT.equals(sourceSide) && !SIDE_WORK.equals(sourceSide))
+            throw new IllegalArgumentException("신호 재요청 대상 대화방이 올바르지 않습니다.");
+        long now = System.currentTimeMillis();
+        commit(preferences.edit().putString("deliveryTarget", sourceSide)
+                .putString("pendingPrompt", SIGNAL_RETRY_PROMPT).putString("stampedPrompt", "")
+                .putString("deliveryState", DELIVERY_PENDING)
+                .putString("expectedSignal", expectedFor(sourceSide, currentStep(), currentRound()))
+                .putLong("deliveryPreparedAt", 0L).putLong("deliveryAttemptAt", 0L)
+                .putString("status", sideLabel(sourceSide) + " 제어 신호 재출력 요청 전송 대기")
+                .putString("lastErrorCode", "").putString("error", "").putLong("errorAt", 0L)
+                .putString("candidateFingerprint", "").putInt("candidateStability", 0)
+                .putLong("phaseStartedAt", now).putLong("pollCountLong", 0L).putInt("pollCount", 0)
+                .putLong("epoch", epoch() + 1L));
+        resetResponseTiming("SIGNAL_RETRY_REQUESTED");
+    }
+
     public String lastDeliveredPrompt() { return preferences.getString("lastDeliveredPrompt", ""); }
     public String lastDeliveryTarget() { return preferences.getString("lastDeliveryTarget", ""); }
     public String lastDeliveryState() { return preferences.getString("lastDeliveryState", ""); }
@@ -991,6 +1050,9 @@ public final class OrchestrationStore {
     public long errorAt() { return preferences.getLong("errorAt", 0L); }
     public boolean schedulePreempted() { return preferences.getBoolean("schedulePreempted", false); }
     public boolean waitingForUser() { return preferences.getBoolean("waitingForUser", false); }
+    public boolean resumeUserActionRequested() {
+        return preferences.getBoolean("resumeUserActionRequested", false);
+    }
     public String actionId() { return preferences.getString("actionId", ""); }
     public long pollCountLong() { return preferences.getLong("pollCountLong", preferences.getInt("pollCount", 0)); }
     public int pollCount() { return (int) Math.min(pollCountLong(), Integer.MAX_VALUE); }

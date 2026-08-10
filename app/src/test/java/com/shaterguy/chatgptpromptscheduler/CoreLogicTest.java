@@ -80,7 +80,9 @@ public class CoreLogicTest {
         String expected = "https://chatgpt.com/g/proj/c/abc";
         assertTrue(TargetParser.matchesTarget("existing", expected, "https://chatgpt.com/g/proj/c/abc"));
         assertFalse(TargetParser.matchesTarget("existing", expected, "https://chatgpt.com/"));
-        assertFalse(TargetParser.matchesTarget("existing", expected, "https://chatgpt.com/c/abc"));
+        assertTrue(TargetParser.matchesTarget("existing", expected, "https://chatgpt.com/c/abc"));
+        assertEquals(TargetParser.ConversationTargetState.TRANSIENT,
+                TargetParser.classifyConversationTarget(expected, "https://chatgpt.com/g/proj"));
         assertFalse(TargetParser.matchesTarget("existing", expected, "https://chatgpt.com/g/proj/c/other"));
         assertTrue(TargetParser.matchesTarget("project", "https://chatgpt.com/g/proj/project", "https://chatgpt.com/g/proj/project"));
         assertFalse(TargetParser.matchesTarget("project", "https://chatgpt.com/g/proj/project", "https://chatgpt.com/"));

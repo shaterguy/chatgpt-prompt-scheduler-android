@@ -6,7 +6,7 @@ import org.junit.Test;
 
 public class UnifiedResumeTest {
     @Test
-    public void waitingUserResumeSendsResolvedControlSignalBeforeGenericRecovery() {
+    public void waitingUserAlwaysUsesDirectResolvedPath() {
         assertEquals(OrchestrationActivity.ResumePath.USER_ACTION_RESOLVED,
                 OrchestrationActivity.resumePath(true, true));
         assertEquals(OrchestrationActivity.ResumePath.USER_ACTION_RESOLVED,
@@ -14,9 +14,13 @@ public class UnifiedResumeTest {
     }
 
     @Test
-    public void ordinaryResumeReconcilesFullRelayOrContinuesBootstrap() {
+    public void fullRelayWithoutWaitingUserReconciles() {
         assertEquals(OrchestrationActivity.ResumePath.RECONCILE,
                 OrchestrationActivity.resumePath(false, true));
+    }
+
+    @Test
+    public void incompleteBootstrapWithoutWaitingUserKeepsBootstrapPath() {
         assertEquals(OrchestrationActivity.ResumePath.BOOTSTRAP,
                 OrchestrationActivity.resumePath(false, false));
     }

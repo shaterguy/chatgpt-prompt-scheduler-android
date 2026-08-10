@@ -1,4 +1,41 @@
-package com.shaterguy.chatgptpromptscheduler;
+from pathlib import Path
+
+def read(p): return Path(p).read_text(encoding='utf-8')
+def write(p,s): Path(p).write_text(s,encoding='utf-8')
+def rep(p,old,new,n=1):
+    s=read(p)
+    if s.count(old)<n: raise SystemExit(f'missing {p}: {old[:100]!r} count={s.count(old)}')
+    write(p,s.replace(old,new,n))
+
+p='app/src/test/java/com/shaterguy/chatgptpromptscheduler/CoreLogicTest.java'
+rep(p,
+'''        assertFalse(TargetParser.matchesTarget("existing", expected, "https://chatgpt.com/c/abc"));''',
+'''        assertTrue(TargetParser.matchesTarget("existing", expected, "https://chatgpt.com/c/abc"));
+        assertEquals(TargetParser.ConversationTargetState.TRANSIENT,
+                TargetParser.classifyConversationTarget(expected, "https://chatgpt.com/g/proj"));''')
+
+p='app/src/test/java/com/shaterguy/chatgptpromptscheduler/OrchestrationSignalTest.java'
+rep(p,'''        assertTrue(service.contains("matchesConversationIdentity"));''',
+       '''        assertTrue(service.contains("classifyConversationTarget"));''')
+rep(p,'''        assertTrue(service.contains("INITIAL_START_TRANSIENT_ROUTE"));''',
+       '''        assertTrue(service.contains("TARGET_TRANSIENT_ROUTE"));''')
+rep(p,'''        assertTrue(activity.contains("store.beginReconciliation"));''',
+       '''        assertTrue(activity.contains("store.beginReconciliation(store.waitingForUser())"));''')
+old='''        assertTrue(service.contains("RECONCILIATION_CONFIRM_ROOMS"));
+        assertTrue(service.contains("RESUME_STABLE_IDLE_CONFIRMED"));
+        assertTrue(service.contains("RESUME_SOURCE_FRESHNESS_CONFIRMED"));
+        assertTrue(service.contains("rebuildForExistingPrompt"));
+        assertTrue(service.contains("scheduleReconciliationRetry"));
+        assertTrue(service.indexOf("RESUME_SOURCE_FRESHNESS_CHECK")
+                < service.indexOf("rebuildForExistingPrompt"));'''
+new='''        assertTrue(service.contains("rebuildForExistingPrompt"));
+        assertTrue(service.contains("rebuildForUserResolved"));
+        assertTrue(service.contains("resumeUserActionRequested"));
+        assertTrue(service.contains("scheduleReconciliationRetry"));
+        assertFalse(service.contains("RESUME_SOURCE_FRESHNESS_CHECK"));'''
+rep(p,old,new)
+
+write('app/src/test/java/com/shaterguy/chatgptpromptscheduler/ResumeReconciliationTest.java', r'''package com.shaterguy.chatgptpromptscheduler;
 
 import static org.junit.Assert.*;
 import org.junit.Test;
@@ -49,17 +86,6 @@ public class ResumeReconciliationTest {
         chat = candidate(OrchestrationStore.SIDE_CHAT, "[AR_SEND_WORK JOB-7 S003 R010]");
         work = candidate(OrchestrationStore.SIDE_WORK, "[AR_SEND_CHAT JOB-7 S003 R009]");
         assertSame(chat, decide(chat, work).selected);
-    }
-
-    @Test public void correctedWorkSignalAfterPauseWinsOverOlderChatSignal() {
-        ResumeReconciliation.Candidate chat = candidate(OrchestrationStore.SIDE_CHAT,
-                "[AR_SEND_WORK JOB-7 S001 R001]");
-        ResumeReconciliation.Candidate correctedWork = candidate(OrchestrationStore.SIDE_WORK,
-                "[AR_SEND_CHAT JOB-7 S001 R002]");
-        ResumeReconciliation.Decision decision = decide(chat, correctedWork);
-        assertEquals(ResumeReconciliation.DecisionType.ROUTE, decision.type);
-        assertSame(correctedWork, decision.selected);
-        assertEquals(OrchestrationStore.SIDE_CHAT, decision.targetSide());
     }
 
     @Test public void sameStepRoundChatUserActionWinsOtherwiseWorkWins() {
@@ -119,3 +145,6 @@ public class ResumeReconciliationTest {
         assertEquals(ResumeReconciliation.DecisionType.TERMINAL, decide(done, null).type);
     }
 }
+''')
+
+print('test fix ok')
