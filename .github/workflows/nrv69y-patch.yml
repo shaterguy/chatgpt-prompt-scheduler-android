@@ -1,11 +1,11 @@
-name: NRV69Y Patch And Verify
+name: NRV69Y Finalize Release Branch
 on:
   pull_request:
     branches: [main]
 permissions:
   contents: write
 jobs:
-  patch:
+  finalize:
     if: github.head_ref == 'fix/nrv69y-resume-target-v0.1.22'
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -26,37 +26,26 @@ jobs:
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
         with:
           gradle-version: '9.5.0'
-      - name: Update tests for NRV69Y semantics
+      - name: Finalize v0.1.22 release tree
         run: |
           set -euo pipefail
-          python tools/nrv69y_test_fix2.py
+          python tools/nrv69y_finalize_release.py
           git diff --check
+      - name: Unit tests
+        run: gradle --no-daemon --console=plain --stacktrace :app:testDebugUnitTest
+      - name: Release build
+        run: gradle --no-daemon --console=plain --stacktrace :app:assembleRelease
+      - name: Remove temporary NRV69Y transport and commit final tree
+        run: |
+          set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add app/src/test/java
-          if ! git diff --cached --quiet; then
-            git commit -m 'Finish NRV69Y regression test migration'
-            git push origin HEAD:${{ github.head_ref }}
-          fi
-      - id: unit
-        name: Unit tests
-        continue-on-error: true
-        run: |
-          mkdir -p /tmp/nrv69y-test
-          gradle --no-daemon --console=plain --stacktrace :app:testDebugUnitTest > /tmp/nrv69y-test/unit.log 2>&1
-      - name: Upload unit diagnostics
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: nrv69y-unit-diagnostics
-          path: |
-            /tmp/nrv69y-test/unit.log
-            app/build/test-results/testDebugUnitTest/**
-            app/build/reports/tests/testDebugUnitTest/**
-          if-no-files-found: warn
-          retention-days: 7
-      - name: Stop on unit failure
-        if: steps.unit.outcome == 'failure'
-        run: exit 1
-      - name: Build release
-        run: gradle --no-daemon --console=plain --stacktrace :app:assembleRelease
+          git rm -f .github/workflows/nrv69y-patch.yml
+          git rm -rf tools/nrv69y_patch_parts
+          git rm -f tools/nrv69y_patch_plain1.py tools/nrv69y_patch_plain2.py tools/nrv69y_patch_plain2b.py
+          git rm -f tools/nrv69y_test_fix.py tools/nrv69y_test_fix2.py tools/nrv69y_finalize_release.py
+          git rm -f tools/nrv69y_patch_error.txt tools/nrv69y_unit_failure.txt 2>/dev/null || true
+          git add .github/workflows/android-build.yml
+          git diff --cached --check
+          git commit -m 'Prepare clean v0.1.22 release tree'
+          git push origin HEAD:${{ github.head_ref }}
