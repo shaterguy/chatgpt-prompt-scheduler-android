@@ -305,7 +305,7 @@ public final class OrchestrationService extends Service implements AutomationRun
                             return;
                         }
                         log("WEBVIEW_ERROR", "type=network");
-                        pauseWithError("NETWORK_ERROR", "중계 대화를 불러오는 중 네트워크 오류가 발생했습니다.");
+                        recoverTransientNetwork("WEBVIEW_MAIN_FRAME");
                     }
                 }
 
@@ -596,6 +596,10 @@ public final class OrchestrationService extends Service implements AutomationRun
                 handleRateLimit("BOOTSTRAP_SCRIPT", result.optString("detail", "rate limit"));
                 return;
             }
+            if ("NETWORK_ERROR".equals(status)) {
+                recoverTransientNetwork("BOOTSTRAP_SCRIPT");
+                return;
+            }
             if (RecoveryDecisionPolicy.isUiWaitStatus(status) || "RETRY".equals(status)) {
                 if (evaluatedSubmitting && !evaluatedClick && provisioningRecoveryStartedAt > 0L
                         && SystemClock.elapsedRealtime() - provisioningRecoveryStartedAt >= 20_000L) {
@@ -697,11 +701,19 @@ public final class OrchestrationService extends Service implements AutomationRun
             pauseReconciliationError("AUTH_REQUIRED", "재개 재구성 중 로그인 세션을 확인하지 못했습니다.");
             return;
         }
-        if ("TARGET_CONTEXT_MISMATCH".equals(status) || "NETWORK_ERROR".equals(status)) {
+        if ("NETWORK_ERROR".equals(status)) {
+            recoverTransientNetwork("RECONCILIATION_SCAN");
+            return;
+        }
+        if ("TARGET_CONTEXT_MISMATCH".equals(status)) {
             pauseReconciliationError(status, fixedScriptMessage(status));
             return;
         }
         if ("RETRY".equals(status)) {
+            reconciliationRescanAttempts = 0;
+            log("RESUME_ROOM_NOT_READY", "side=" + safeCode(side)
+                    + ";assistant_turns=" + Math.max(0, result.optInt("assistant_turns", 0))
+                    + ";job_prompt_turns=" + Math.max(0, result.optInt("job_prompt_turns", 0)));
             store.setStatus(OrchestrationStore.sideLabel(side) + " 재개 상태 확인 대기");
             scheduleReconciliationRetry("room_retry");
             return;
@@ -712,7 +724,9 @@ public final class OrchestrationService extends Service implements AutomationRun
         }
         ResumeReconciliation.RoomScan scan = parseRoomScan(result, side);
         log("RESUME_ROOM_SCAN_META", "side=" + safeCode(side)
+                + ";history_ready=" + (result.optBoolean("history_ready", false) ? "1" : "0")
                 + ";assistant_turns=" + Math.max(0, result.optInt("assistant_turns", 0))
+                + ";job_prompt_turns=" + Math.max(0, result.optInt("job_prompt_turns", 0))
                 + ";script_candidates=" + Math.max(0, result.optInt("candidate_count", 0))
                 + ";accepted_candidates=" + scan.candidates.size());
         if (scan.generating) {
@@ -838,12 +852,17 @@ public final class OrchestrationService extends Service implements AutomationRun
         switch (decision.type) {
             case WAIT_FOR_IDLE -> {
                 log("RESUME_WAITING_FOR_IDLE", "side=both;reason=" + safeCode(decision.reason)
-                        + ";retry=" + store.pollCountLong());
-                if ("NO_VALID_SIGNAL".equals(decision.reason)
-                        && store.pollCountLong() >= MAX_NO_SIGNAL_RECONCILIATION_RETRIES) {
-                    pauseReconciliationError("RESUME_NO_VALID_SIGNAL",
-                            "두 대화방을 반복 확인했지만 최신 Protocol 제어 신호를 찾지 못했습니다.");
-                    return;
+                        + ";retry=" + reconciliationRescanAttempts);
+                if ("NO_VALID_SIGNAL".equals(decision.reason)) {
+                    reconciliationRescanAttempts++;
+                    log("RESUME_NO_SIGNAL_RETRY", "attempt=" + reconciliationRescanAttempts);
+                    if (reconciliationRescanAttempts >= MAX_NO_SIGNAL_RECONCILIATION_RETRIES) {
+                        pauseReconciliationError("RESUME_NO_VALID_SIGNAL",
+                                "대화 이력 로딩이 확인된 뒤에도 두 대화방에서 최신 Protocol 제어 신호를 찾지 못했습니다.");
+                        return;
+                    }
+                } else {
+                    reconciliationRescanAttempts = 0;
                 }
                 restartReconciliation(decision.reason, true);
                 scheduleReconciliationRetry(decision.reason);
@@ -893,7 +912,11 @@ public final class OrchestrationService extends Service implements AutomationRun
             handleRateLimit("RECONCILIATION_TARGET", result.optString("detail", "rate limit"));
             return;
         }
-        if ("TARGET_CONTEXT_MISMATCH".equals(status) || "NETWORK_ERROR".equals(status) || "AUTH_REQUIRED".equals(status)) {
+        if ("NETWORK_ERROR".equals(status)) {
+            recoverTransientNetwork("RECONCILIATION_TARGET");
+            return;
+        }
+        if ("TARGET_CONTEXT_MISMATCH".equals(status) || "AUTH_REQUIRED".equals(status)) {
             pauseReconciliationError(status, fixedScriptMessage(status));
             return;
         }
@@ -951,6 +974,7 @@ public final class OrchestrationService extends Service implements AutomationRun
      * adaptive cadence; all real phase/candidate changes reset it for prompt responsiveness.
      */
     private void restartReconciliation(String reason, boolean preservePolling) {
+        if (!"NO_VALID_SIGNAL".equals(reason)) reconciliationRescanAttempts = 0;
         reconciliationChatScan = null;
         reconciliationWorkScan = null;
         reconciliationConfirmationChatScan = null;
@@ -1027,7 +1051,8 @@ public final class OrchestrationService extends Service implements AutomationRun
                     pauseWithError("DOM_COMPOSER_NOT_FOUND", "60초 동안 ChatGPT 프롬프트 입력창을 준비하지 못했습니다.");
                 else uiWait(result.optString("detail", "프롬프트 입력 준비 대기"), 1000L);
             }
-            case "AUTH_REQUIRED", "DRAFT_PRESENT", "TARGET_CONTEXT_MISMATCH", "NETWORK_ERROR", "DOM_STRUCTURE_ERROR" -> {
+            case "NETWORK_ERROR" -> recoverTransientNetwork("PREPARE_SCRIPT");
+            case "AUTH_REQUIRED", "DRAFT_PRESENT", "TARGET_CONTEXT_MISMATCH", "DOM_STRUCTURE_ERROR" -> {
                 if ("AUTH_REQUIRED".equals(status)) log("AUTH_REQUIRED", "reason=structural_gate");
                 pauseWithError(status, fixedScriptMessage(status));
             }
@@ -1139,8 +1164,8 @@ public final class OrchestrationService extends Service implements AutomationRun
                 log("STOP_GENERATION_AMBIGUOUS", "reason=" + safeCode(status));
                 pauseAmbiguous("98분 장시간 보호를 실행했지만 생성 중지 버튼 상태가 명확하지 않습니다. 자동 재클릭하지 않습니다.");
             }
-            case "TARGET_CONTEXT_MISMATCH", "NETWORK_ERROR" ->
-                    pauseWithError(status, fixedScriptMessage(status));
+            case "NETWORK_ERROR" -> recoverTransientNetwork("STOP_GENERATION_SCRIPT");
+            case "TARGET_CONTEXT_MISMATCH" -> pauseWithError(status, fixedScriptMessage(status));
             default -> {
                 store.markStopGenerationAmbiguous();
                 log("STOP_GENERATION_AMBIGUOUS", "reason=unexpected_result");
@@ -1210,7 +1235,11 @@ public final class OrchestrationService extends Service implements AutomationRun
                 handler.post(this::ensureEngine);
                 return;
             }
-            if ("AUTH_REQUIRED".equals(status) || "NETWORK_ERROR".equals(status)
+            if ("NETWORK_ERROR".equals(status)) {
+                recoverTransientNetwork("OBSERVE_SCRIPT");
+                return;
+            }
+            if ("AUTH_REQUIRED".equals(status)
                     || "DOM_STRUCTURE_ERROR".equals(status) || "TARGET_CONTEXT_MISMATCH".equals(status)) {
                 pauseWithError(status, fixedScriptMessage(status));
                 return;
@@ -1240,7 +1269,11 @@ public final class OrchestrationService extends Service implements AutomationRun
             retry("정상 응답 대기", AdaptivePolling.FAST_DELAY_MS);
             return;
         }
-        if ("AUTH_REQUIRED".equals(status) || "NETWORK_ERROR".equals(status)
+        if ("NETWORK_ERROR".equals(status)) {
+            recoverTransientNetwork("OBSERVE_SCRIPT");
+            return;
+        }
+        if ("AUTH_REQUIRED".equals(status)
                 || "DOM_STRUCTURE_ERROR".equals(status) || "TARGET_CONTEXT_MISMATCH".equals(status)) {
             pauseWithError(status, fixedScriptMessage(status));
             return;
@@ -1277,6 +1310,21 @@ public final class OrchestrationService extends Service implements AutomationRun
                         store.responseEpoch(), store.lastSignalResponseEpoch());
         if (!parsed.isValid()) {
             log("SIGNAL_REJECTED", "reason=" + safeCode(parsed.errorCode.name()));
+            if (store.lastDeliveryWasSignalRetry()) {
+                log("SIGNAL_RETRY_EXHAUSTED", "side=" + safeCode(sourceSide)
+                        + ";reason=" + safeCode(parsed.errorCode.name()));
+                pauseWithError("SIGNAL_RETRY_EXHAUSTED",
+                        "제어 신호 재출력을 한 번 요청했지만 다음 응답에도 올바른 Protocol 앱 제어 신호가 없었습니다.");
+                return;
+            }
+            if (parsed.errorCode == OrchestrationSignal.ErrorCode.NO_SIGNAL) {
+                store.prepareSignalRetry(sourceSide);
+                log("SIGNAL_RETRY_REQUESTED", "side=" + safeCode(sourceSide));
+                resetResponsePolling("SIGNAL_RETRY_REQUESTED");
+                cleanupWebView();
+                handler.post(this::ensureEngine);
+                return;
+            }
             pauseWithProtocolError(parsed.errorCode, sourceSide);
             return;
         }
@@ -1503,6 +1551,21 @@ public final class OrchestrationService extends Service implements AutomationRun
         log("FAILED", "code=" + safeCode(code.name()));
         NotificationHelper.orchestrationError(this, side, store.runJobId(), store.currentStep(), store.currentRound(), detail);
         stopRelay();
+    }
+
+    private void recoverTransientNetwork(String source) {
+        if (!canRun()) return;
+        if (scheduleHasPriority()) {
+            yieldForSchedule();
+            return;
+        }
+        if (store.reconciling()) reconciliationRescanAttempts = 0;
+        log("TRANSIENT_NETWORK_RECOVERY", "source=" + safeCode(source)
+                + ";side=" + safeCode(activeTargetSide())
+                + ";state=" + safeCode(store.deliveryState())
+                + ";reconciling=" + (store.reconciling() ? "1" : "0"));
+        store.setStatus(OrchestrationStore.sideLabel(activeTargetSide()) + " · 네트워크 복구 후 대화 재확인");
+        reloadInitialStartTarget("network_" + source.toLowerCase(), true);
     }
 
     private void pauseWithError(String code, String detail) {

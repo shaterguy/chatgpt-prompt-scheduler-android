@@ -187,9 +187,14 @@ public final class OrchestrationScript {
                 "const turns=roots.filter((e,i,a)=>!a.some((p,j)=>j<i&&p.contains(e)));" +
                 "const stopButtons=[...main.querySelectorAll('button')].filter(b=>visible(b)&&(b.dataset.testid==='stop-button'||/stop generating|응답 중지|생성 중지/i.test((b.getAttribute('aria-label')||'')+' '+(b.title||''))));" +
                 "const busy=turns.some(e=>roleOf(e)==='assistant'&&(e.getAttribute('aria-busy')==='true'||e.getAttribute('data-is-streaming')==='true'||!!e.querySelector('[aria-busy=\"true\"],[data-is-streaming=\"true\"],[class*=\"spinner\" i],[class*=\"loading\" i]')));" +
-                "const generating=busy||stopButtons.length>0;const candidates=[];" +
+                "const generating=busy||stopButtons.length>0;" +
+                "const assistantTurns=turns.filter(e=>roleOf(e)==='assistant').length;" +
+                "const userTurns=turns.filter(e=>roleOf(e)==='user');" +
+                "const jobPromptTurns=userTurns.filter(e=>{const t=cleanMessage(e);return t.includes('[AUTOMATION_')&&t.includes(' '+job);}).length;" +
+                "if(jobPromptTurns===0||assistantTurns===0)return out('RETRY','대화 이력 로딩 대기',{main_present:true,history_ready:false,generating,stop_available:stopButtons.length>0,assistant_turns:assistantTurns,user_turns:userTurns.length,job_prompt_turns:jobPromptTurns,candidate_count:0,candidates:[]});" +
+                "const candidates=[];" +
                 "for(let i=0;i<turns.length;i++){if(roleOf(turns[i])!=='assistant')continue;const signal=signalOf(turns[i]);if(!signal)continue;let predecessorIndex=-1;let predecessor=null;let predecessorSignal='';for(let j=i-1;j>=0;j--){if(roleOf(turns[j])==='user'){predecessor=promptOf(cleanMessage(turns[j]));predecessorIndex=j;if(predecessor&&predecessor.kind==='AUTOMATION_USER_RESOLVED'&&j>0){for(let k=j-1;k>=0;k--){if(roleOf(turns[k])==='assistant'){predecessorSignal=signalOf(turns[k]);break;}}}break;}}candidates.push({signal,predecessor:predecessor?.raw||'',predecessor_kind:predecessor?.kind||'',predecessor_signal:predecessorSignal,predecessor_index:predecessorIndex,message_index:i});}" +
-                "return out('SCAN','대화 상태 수집 완료',{main_present:true,generating,stop_available:stopButtons.length>0,assistant_turns:turns.filter(e=>roleOf(e)==='assistant').length,candidate_count:candidates.length,candidates});" +
+                "return out('SCAN','대화 상태 수집 완료',{main_present:true,history_ready:true,generating,stop_available:stopButtons.length>0,assistant_turns:assistantTurns,user_turns:userTurns.length,job_prompt_turns:jobPromptTurns,candidate_count:candidates.length,candidates});" +
                 "})()";
     }
 

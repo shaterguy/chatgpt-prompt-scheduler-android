@@ -65,6 +65,8 @@ public final class OrchestrationStore {
     public static final String PHASE_WAIT = "WAIT_RESPONSE";
 
     private static final int SCHEMA_VERSION = 7;
+    private static final String SIGNAL_RETRY_PROMPT =
+            "다음 작업을 위한 신호가 누락되었습니다. 현재 상태는 그대로 유지하고, 방금 완료한 작업에 대응하는 올바른 Protocol 앱 제어 신호 한 줄만 다시 출력해 주세요.";
     private static final String PREFS = "orchestration_protocol_3";
     private static final String WORKSPACE_PREFS_PREFIX = "orchestration_workspace_";
     private static final Set<String> GLOBAL_KEYS = Set.of(
@@ -985,6 +987,30 @@ public final class OrchestrationStore {
     public static String startPrompt(String jobId) {
         return "[AUTOMATION_START " + clean(jobId) + "]";
     }
+
+    public static String signalRetryPrompt() { return SIGNAL_RETRY_PROMPT; }
+
+    public boolean lastDeliveryWasSignalRetry() {
+        return lastDeliveredPrompt().contains(SIGNAL_RETRY_PROMPT);
+    }
+
+    public void prepareSignalRetry(String sourceSide) {
+        if (!SIDE_CHAT.equals(sourceSide) && !SIDE_WORK.equals(sourceSide))
+            throw new IllegalArgumentException("신호 재요청 대상 대화방이 올바르지 않습니다.");
+        long now = System.currentTimeMillis();
+        commit(preferences.edit().putString("deliveryTarget", sourceSide)
+                .putString("pendingPrompt", SIGNAL_RETRY_PROMPT).putString("stampedPrompt", "")
+                .putString("deliveryState", DELIVERY_PENDING)
+                .putString("expectedSignal", expectedFor(sourceSide, currentStep(), currentRound()))
+                .putLong("deliveryPreparedAt", 0L).putLong("deliveryAttemptAt", 0L)
+                .putString("status", sideLabel(sourceSide) + " 제어 신호 재출력 요청 전송 대기")
+                .putString("lastErrorCode", "").putString("error", "").putLong("errorAt", 0L)
+                .putString("candidateFingerprint", "").putInt("candidateStability", 0)
+                .putLong("phaseStartedAt", now).putLong("pollCountLong", 0L).putInt("pollCount", 0)
+                .putLong("epoch", epoch() + 1L));
+        resetResponseTiming("SIGNAL_RETRY_REQUESTED");
+    }
+
     public String lastDeliveredPrompt() { return preferences.getString("lastDeliveredPrompt", ""); }
     public String lastDeliveryTarget() { return preferences.getString("lastDeliveryTarget", ""); }
     public String lastDeliveryState() { return preferences.getString("lastDeliveryState", ""); }
