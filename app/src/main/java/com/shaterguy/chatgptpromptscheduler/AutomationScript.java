@@ -72,7 +72,7 @@ public final class AutomationScript {
                 "const homePath=location.pathname==='/'||location.pathname==='';" +
                 "const routeDiagnostics={expectedType,expectedProject,expectedConversation,actualProject,actualConversation,afterSubmit,userMessages:users.length,promptAlreadyPresent};" +
                 "let targetOk=false;" +
-                "if(expectedType==='existing')targetOk=!!expectedConversation&&actualConversation===expectedConversation&&(expectedProject?actualProject===expectedProject:!actualProject);" +
+                "if(expectedType==='existing')targetOk=!!expectedConversation&&actualConversation===expectedConversation;" +
                 "else if(expectedType==='project')targetOk=!!expectedProject&&actualProject===expectedProject&&(!actualConversation||afterSubmit||promptAlreadyPresent||users.length===0);" +
                 "else if(expectedType==='general')targetOk=!actualProject&&((!actualConversation&&homePath)||(!!actualConversation&&(afterSubmit||promptAlreadyPresent||users.length===0)));" +
                 "if(!targetOk)return result('TARGET_CONTEXT_MISMATCH','expected='+expectedUrl+' actual='+location.href,routeDiagnostics);";
@@ -85,23 +85,36 @@ public final class AutomationScript {
                     "const reasoningDiagnostics={requested:'inherit',ready:true,action:'',skipped:true};";
         }
         String requestedMode = "work".equals(schedule.experience) ? "work" : "chat";
-        String modeLabels = "work".equals(schedule.experience) ? "['work','작업']" : "['chat','채팅']";
         String requestedModel = Schedule.normalizedWorkModel(schedule.experience, schedule.workModel);
         String requestedEffort = Schedule.normalizedReasoningEffort(schedule.experience, schedule.reasoningEffort);
+        String modeSelection;
+        if ("work".equals(schedule.experience)) {
+            // v0.1.15 baseline: click Work once, remember that action for this run,
+            // then continue on the next evaluation. The current ChatGPT project UI does
+            // not expose a reliable aria/data selected marker after the click.
+            modeSelection =
+                    "const mode=modeCandidate(['work','작업']);" +
+                    "let modePrior='';try{modePrior=sessionStorage.getItem(modeKey)||'';}catch(_){}" +
+                    "const modeSelected=modeIsSelected(mode);" +
+                    "const modeDiagnostics={requested:'work',candidateFound:!!mode,candidateLabel:mode?clip(exactText((mode.innerText||'')+' '+(mode.getAttribute('aria-label')||'')),120):'',selected:modeSelected,clicked:false,priorClick:!!modePrior};" +
+                    "if(mode&&!modeSelected&&!modePrior){const value=JSON.stringify({at:Date.now(),label:modeDiagnostics.candidateLabel});try{sessionStorage.setItem(modeKey,value);}catch(_){}window[modeKey]=value;mode.click();modeDiagnostics.clicked=true;}" +
+                    "if(modeDiagnostics.clicked)return result('RETRY','모드 전환 반영 대기',{...routeDiagnostics,mode:modeDiagnostics});";
+        } else {
+            modeSelection =
+                    "const mode=modeCandidate(['chat','채팅']);" +
+                    "const workMode=modeCandidate(['work','작업']);" +
+                    "let modeClicks=0;try{modeClicks=Math.max(0,Number(sessionStorage.getItem(modeKey)||0));}catch(_){}" +
+                    "const modeSelected=modeIsSelected(mode),workSelected=modeIsSelected(workMode);" +
+                    "const modeDiagnostics={requested:'chat',candidateFound:!!mode,candidateLabel:mode?clip(exactText((mode.innerText||'')+' '+(mode.getAttribute('aria-label')||'')),120):'',selected:modeSelected,workSelected,assumedActive:!modeSelected&&!workSelected,clicked:false,clickCount:modeClicks};" +
+                    "if(workSelected){if(!mode)return result('MODE_SELECTION_FAILED','Chat 모드 선택 항목을 찾지 못했습니다.',{...routeDiagnostics,mode:modeDiagnostics});if(modeClicks>=3)return result('MODE_SELECTION_FAILED','Chat 모드 전환을 확인하지 못했습니다.',{...routeDiagnostics,mode:modeDiagnostics});modeClicks++;try{sessionStorage.setItem(modeKey,String(modeClicks));}catch(_){}mode.click();modeDiagnostics.clicked=true;modeDiagnostics.clickCount=modeClicks;return result('RETRY','Chat 모드 전환 반영 대기',{...routeDiagnostics,mode:modeDiagnostics});}";
+        }
         return "const modeKey='chatgpt-prompt-scheduler:mode:' + " + run + ";" +
                 "const exactText=s=>String(s??'').replace(/\\s+/g,' ').trim().toLowerCase();" +
-                "const desiredModeLabels=" + modeLabels + ";" +
                 "const forbiddenMode=/new chat|새 채팅|새 대화|new conversation/i;" +
                 "const modeCandidates=[...document.querySelectorAll('button,[role=\"button\"],[role=\"menuitemradio\"],[role=\"radio\"],[role=\"tab\"]')];" +
-                "const mode=modeCandidates.find(e=>{const inner=exactText(e.innerText||'');const aria=exactText(e.getAttribute('aria-label')||'');const combined=exactText(inner+' '+aria);if(forbiddenMode.test(combined))return false;const role=e.getAttribute('role')||'';const testId=exactText(e.dataset?.testid||'');const strong=e.hasAttribute('aria-pressed')||e.hasAttribute('aria-checked')||['menuitemradio','radio','tab'].includes(role)||e.getAttribute('aria-haspopup')==='menu'||/mode|experience/.test(testId);return strong&&(desiredModeLabels.includes(inner)||desiredModeLabels.includes(aria));});" +
-                "let modePrior='';try{modePrior=sessionStorage.getItem(modeKey)||'';}catch(_){}" +
-                "const modeSelected=!!mode&&(mode.getAttribute('aria-pressed')==='true'||mode.getAttribute('aria-checked')==='true'||/active|selected|checked/.test(exactText(mode.dataset?.state||'')));" +
-                "const modeDiagnostics={requested:" + jsQuote(requestedMode) + ",candidateFound:!!mode,candidateLabel:mode?clip(exactText((mode.innerText||'')+' '+(mode.getAttribute('aria-label')||'')),120):'',selected:modeSelected,clicked:false,priorClick:!!modePrior};" +
-                "if(mode&&!modeSelected&&!modePrior){const value=JSON.stringify({at:Date.now(),label:modeDiagnostics.candidateLabel});try{sessionStorage.setItem(modeKey,value);}catch(_){}window[modeKey]=value;mode.click();modeDiagnostics.clicked=true;}" +
-                "if(modeDiagnostics.clicked)return result('RETRY','모드 전환 반영 대기',{...routeDiagnostics,mode:modeDiagnostics});" +
-                ("work".equals(schedule.experience)
-                        ? "if(!modeSelected)return result('RETRY','Work 모드 실제 적용 상태 대기',{...routeDiagnostics,mode:modeDiagnostics});"
-                        : "") +
+                "const modeCandidate=labels=>modeCandidates.find(e=>{const inner=exactText(e.innerText||'');const aria=exactText(e.getAttribute('aria-label')||'');const combined=exactText(inner+' '+aria);if(forbiddenMode.test(combined))return false;const role=e.getAttribute('role')||'';const testId=exactText(e.dataset?.testid||'');const strong=e.hasAttribute('aria-pressed')||e.hasAttribute('aria-checked')||['menuitemradio','radio','tab'].includes(role)||e.getAttribute('aria-haspopup')==='menu'||/mode|experience/.test(testId);return strong&&(labels.includes(inner)||labels.includes(aria));});" +
+                "const modeIsSelected=e=>!!e&&(e.getAttribute('aria-pressed')==='true'||e.getAttribute('aria-checked')==='true'||/active|selected|checked/.test(exactText(e.dataset?.state||'')));" +
+                modeSelection +
                 "const elementLabel=e=>exactText(e?.innerText||'')||exactText(e?.getAttribute?.('aria-label')||'');" +
                 "const visible=e=>!!e&&e.isConnected&&e.offsetParent!==null;" +
                 "const composerInput=document.querySelector('#prompt-textarea')||[...document.querySelectorAll('textarea,[contenteditable=\"true\"]')].filter(visible).sort((a,b)=>b.getBoundingClientRect().bottom-a.getBoundingClientRect().bottom)[0]||null;" +

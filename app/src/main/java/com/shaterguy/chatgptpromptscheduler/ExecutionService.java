@@ -356,6 +356,8 @@ public final class ExecutionService extends Service {
                 else scheduleAutomationStep(1200L);
             }
             case "TARGET_CONTEXT_MISMATCH" -> recoverTargetRoute(detail);
+            case "MODE_SELECTION_FAILED", "MODE_SELECTION_AMBIGUOUS" ->
+                    finish(false, "WORK_MODE_SELECT_FAILED", contextualDetail(detail));
             case "AUTH_REQUIRED", "DRAFT_PRESENT" -> finish(false, status, contextualDetail(detail));
             default -> finish(false, status, contextualDetail(detail.isBlank() ? "자동화 스크립트가 실패했습니다." : detail));
         }
@@ -405,6 +407,8 @@ public final class ExecutionService extends Service {
     private String retryFailureStatus(String detail) {
         if (detail.contains("입력창 대기")) return "COMPOSER_NOT_FOUND";
         if (detail.contains("예약 프롬프트 입력") || detail.contains("입력 반영")) return "COMPOSER_INPUT_FAILED";
+        if (detail.contains("Work 모드") || detail.contains("모드 실제 적용") || detail.contains("모드 전환"))
+            return "WORK_MODE_SELECT_FAILED";
         if (detail.contains("전송 버튼")) return "SEND_BUTTON_UNAVAILABLE";
         if (detail.contains("전송 검증")) return "SUBMISSION_STATE_STALLED";
         return "AUTOMATION_RETRY_EXHAUSTED";

@@ -29,7 +29,10 @@ public class ProjectDuplicatePreventionTest {
 
         String script = AutomationScript.build(schedule, "prompt", "run-mode", 0);
 
-        assertTrue(script.contains("desiredModeLabels=['chat','채팅']"));
+        assertTrue(script.contains("const mode=modeCandidate(['chat','채팅'])"));
+        assertTrue(script.contains("const workMode=modeCandidate(['work','작업'])"));
+        assertTrue(script.contains("workSelected=modeIsSelected(workMode)"));
+        assertTrue(script.contains("assumedActive:!modeSelected&&!workSelected"));
         assertTrue(script.contains("forbiddenMode=/new chat|새 채팅|새 대화|new conversation/i"));
         assertTrue(script.contains("button,[role=\"button\"],[role=\"menuitemradio\"],[role=\"radio\"],[role=\"tab\"]"));
         assertTrue(script.contains("modeCandidates.find"));
