@@ -1,11 +1,11 @@
-name: NRV69Y Finalize Release Branch
+name: NRV69Y RC2 Project Chat Fix
 on:
   pull_request:
     branches: [main]
 permissions:
   contents: write
 jobs:
-  finalize:
+  patch-and-test:
     if: github.head_ref == 'fix/nrv69y-resume-target-v0.1.22'
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -26,26 +26,23 @@ jobs:
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
         with:
           gradle-version: '9.5.0'
-      - name: Finalize v0.1.22 release tree
+      - name: Apply project Chat regression fix
         run: |
           set -euo pipefail
-          python tools/nrv69y_finalize_release.py
+          python tools/nrv69y_rc2_fix.py
           git diff --check
       - name: Unit tests
         run: gradle --no-daemon --console=plain --stacktrace :app:testDebugUnitTest
       - name: Release build
         run: gradle --no-daemon --console=plain --stacktrace :app:assembleRelease
-      - name: Remove temporary NRV69Y transport and commit final tree
+      - name: Commit tested RC2 source changes
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git rm -f .github/workflows/nrv69y-patch.yml
-          git rm -rf tools/nrv69y_patch_parts
-          git rm -f tools/nrv69y_patch_plain1.py tools/nrv69y_patch_plain2.py tools/nrv69y_patch_plain2b.py
-          git rm -f tools/nrv69y_test_fix.py tools/nrv69y_test_fix2.py tools/nrv69y_finalize_release.py
-          git rm -f tools/nrv69y_patch_error.txt tools/nrv69y_unit_failure.txt 2>/dev/null || true
-          git add .github/workflows/android-build.yml
+          git add app/build.gradle \
+            app/src/main/java/com/shaterguy/chatgptpromptscheduler/AutomationScript.java \
+            app/src/test/java/com/shaterguy/chatgptpromptscheduler/ProjectChatModeRegressionTest.java
           git diff --cached --check
-          git commit -m 'Prepare clean v0.1.22 release tree'
+          git commit -m 'Fix project Chat mode detection for RC2'
           git push origin HEAD:${{ github.head_ref }}
