@@ -256,7 +256,7 @@ public class OrchestrationSignalTest {
         assertTrue(service.contains("prepareInitialStart"));
         assertTrue(service.contains("commitInitialStart"));
         assertTrue(service.contains("confirmInitialStartSubmission"));
-        assertTrue(service.contains("classifyConversationTarget"));
+        assertTrue(service.contains("isTransientExpectedTarget"));
         assertTrue(service.contains("acceptInitialStartTargetIfNeeded"));
         assertTrue(service.contains("reloadInitialStartTarget(\"page_finish\")"));
         assertTrue(service.contains("reloadInitialStartTarget(\"step_guard\")"));
@@ -378,7 +378,7 @@ public class OrchestrationSignalTest {
         assertTrue(service.contains("reconcileScan"));
         assertTrue(service.contains("reconcileTarget"));
         assertTrue(service.contains("SIGNAL_SELECTED"));
-        assertTrue(service.contains("TARGET_PROMPT_ALREADY_PRESENT"));
+        assertTrue(service.contains("RESUME_TARGET_SCAN_RESULT"));
         assertTrue(service.contains("RESUME_ROOM_SCAN_CHAT"));
         assertTrue(service.contains("RESUME_ROOM_SCAN_WORK"));
         assertTrue(service.contains("RESUME_RECONCILE_AMBIGUOUS"));
