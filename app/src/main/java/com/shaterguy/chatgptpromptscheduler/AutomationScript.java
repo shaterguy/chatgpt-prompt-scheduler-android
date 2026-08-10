@@ -12,32 +12,38 @@ public final class AutomationScript {
                 "if(location.hostname!=='chatgpt.com'&&location.hostname!=='www.chatgpt.com')return result('TARGET_CONTEXT_MISMATCH','호스트 불일치 actual='+location.href);" +
                 "const markerKey='chatgpt-prompt-scheduler:submit:' + " + run + ";" +
                 "const readMarker=()=>{try{return localStorage.getItem(markerKey)||sessionStorage.getItem(markerKey)||window[markerKey]||'';}catch(_){return window[markerKey]||'';}};" +
-                "const priorMarker=readMarker();if(priorMarker)return result('SUBMITTED','동일 실행의 전송 클릭 기록을 확인했습니다.',{marker:priorMarker,recoveredAfterNavigation:true});" +
+                "const priorMarker=readMarker();" +
                 "const norm=s=>String(s??'').replace(/[\\u200B-\\u200D\\uFEFF]/g,'').replace(/\\u00a0/g,' ').replace(/\\r\\n?/g,'\\n').replace(/[\\u2028\\u2029]/g,'\\n').trim();" +
                 "const canonical=s=>norm(s).replace(/[ \\t]+/g,' ').replace(/ *\\n+ */g,'\\n');" +
                 "const expected=norm(" + prompt + ");" +
+                "const visibleNode=e=>!!e&&e.isConnected&&e.offsetParent!==null;" +
+                "const loadingNodes=[...document.querySelectorAll('[aria-busy=\"true\"],[role=\"progressbar\"],[data-testid*=\"loading\"]')].filter(visibleNode);" +
+                "if(document.readyState!=='complete'||loadingNodes.length)return result('UI_WAIT','ChatGPT 화면 로딩 대기',{readyState:document.readyState,loadingCount:loadingNodes.length});" +
                 "const users=[...document.querySelectorAll('[data-message-author-role=\"user\"],article[data-turn=\"user\"]')];" +
                 "const expectedCanonical=canonical(expected),userTexts=users.map(e=>canonical(e.innerText||e.textContent));" +
                 "const occurrences=(text,needle)=>{if(!needle)return 0;let count=0,index=0;while((index=text.indexOf(needle,index))>=0){count++;index+=needle.length;}return count;};" +
                 "const matchCounts=userTexts.map(text=>occurrences(text,expectedCanonical));" +
-                "const promptAlreadyPresent=matchCounts.some(count=>count===1);" +                targetGuard(schedule, false) +
-                "if(expectedType!=='existing'&&promptAlreadyPresent)return result('SUBMITTED','동일 실행 프롬프트가 이미 새 대화에 존재합니다.',{...routeDiagnostics,recoveredAfterNavigation:true});" +
+                "const promptAlreadyPresent=matchCounts.some(count=>count===1),promptAmbiguous=matchCounts.some(count=>count>1);" +                targetGuard(schedule, false) +
+                "if(promptAmbiguous)return result('RECONCILE_SEND','동일 프롬프트 사용자 turn이 여러 개라 중복 전송하지 않습니다.',{...routeDiagnostics,reconciled:false});" +
+                "if(priorMarker&&promptAlreadyPresent)return result('SUBMITTED','전송 marker와 정확한 사용자 turn을 함께 확인했습니다.',{...routeDiagnostics,marker:priorMarker,reconciled:true,recoveredAfterNavigation:true});" +
+                "if(priorMarker)return result('RECONCILE_SEND','전송 marker만 확인되어 정확한 사용자 turn을 재확인합니다.',{...routeDiagnostics,marker:priorMarker,reconciled:false});" +
+                "if(promptAlreadyPresent)return result('RECONCILE_SEND','동일 실행 프롬프트가 이미 새 대화에 존재합니다.',{...routeDiagnostics,reconciled:false});" +
                 "const body=(document.body?.innerText||'').toLowerCase();" +
                 "if(body.includes('log in')||body.includes('sign up')||body.includes('로그인'))return result('AUTH_REQUIRED','ChatGPT 로그인이 필요합니다.');" +
                 preferenceScript(schedule, run) +
                 "const selectors=['textarea#prompt-textarea','textarea[data-testid=\"prompt-textarea\"]','div#prompt-textarea[contenteditable=\"true\"]','main form [contenteditable=\"true\"][data-lexical-editor=\"true\"]','main form [contenteditable=\"true\"]'];" +
                 "let selector='';let composer=null;for(const s of selectors){const candidates=[...document.querySelectorAll(s)];const found=candidates.find(e=>e&&e.isConnected&&e.offsetParent!==null);if(found){selector=s;composer=found;break;}}" +
-                "if(!composer)return result('RETRY','입력창 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics,selectors,readyState:document.readyState,activeTag:document.activeElement?.tagName||'',forms:document.forms.length});" +
+                "if(!composer)return result('UI_WAIT','입력창 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics,selectors,readyState:document.readyState,activeTag:document.activeElement?.tagName||'',forms:document.forms.length});" +
                 "const raw=()=>('value'in composer?composer.value:(composer.innerText||composer.textContent||''));" +
                 "const same=()=>canonical(raw())===canonical(expected);" +
                 "const diag=(phase,strategy='')=>({phase,strategy,attempt:" + Math.max(0, attempt) + ",selector,tag:composer.tagName,contentEditable:composer.getAttribute('contenteditable')||'',connected:composer.isConnected,visible:composer.offsetParent!==null,activeIsComposer:document.activeElement===composer,hasFocus:document.hasFocus(),actualLength:norm(raw()).length,expectedLength:expected.length,actualPreview:clip(norm(raw())),htmlPreview:clip(composer.innerHTML||''),readyState:document.readyState,route:routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics});" +
-                "if(same()){const form=composer.closest('form');const buttons=[...(form||document).querySelectorAll('button')];const send=buttons.find(b=>b.dataset.testid==='send-button'||b.dataset.testid==='composer-submit-button'||/send|보내기|submit/i.test((b.getAttribute('aria-label')||'')+' '+(b.title||'')));if(!send)return result('RETRY','전송 버튼 대기',diag('ready','send-not-found'));if(send.disabled||send.getAttribute('aria-disabled')==='true')return result('RETRY','전송 버튼 활성화 대기',diag('ready','send-disabled'));const marker=JSON.stringify({at:Date.now(),url:location.href});let persisted=false;try{localStorage.setItem(markerKey,marker);persisted=localStorage.getItem(markerKey)===marker;}catch(_){}if(!persisted){try{sessionStorage.setItem(markerKey,marker);persisted=sessionStorage.getItem(markerKey)===marker;}catch(_){}}window[markerKey]=marker;if(!persisted&&!window[markerKey])return result('SUBMIT_MARKER_FAILED','전송 중복 방지 상태를 저장하지 못했습니다.',diag('ready','marker-save-failed'));send.click();return result('SUBMITTED','전송 클릭을 한 번 수행했습니다.',{...diag('submitted','marker-before-click'),marker,persisted});}" +
+                "if(same()){const form=composer.closest('form');const buttons=[...(form||document).querySelectorAll('button')];const send=buttons.find(b=>b.dataset.testid==='send-button'||b.dataset.testid==='composer-submit-button'||/send|보내기|submit/i.test((b.getAttribute('aria-label')||'')+' '+(b.title||'')));if(!send)return result('UI_WAIT','전송 버튼 대기',diag('ready','send-not-found'));if(send.disabled||send.getAttribute('aria-disabled')==='true')return result('UI_WAIT','전송 버튼 활성화 대기',diag('ready','send-disabled'));const marker=JSON.stringify({at:Date.now(),url:location.href});let persisted=false;try{localStorage.setItem(markerKey,marker);persisted=localStorage.getItem(markerKey)===marker;}catch(_){}if(!persisted){try{sessionStorage.setItem(markerKey,marker);persisted=sessionStorage.getItem(markerKey)===marker;}catch(_){}}window[markerKey]=marker;if(!persisted&&!window[markerKey])return result('SUBMIT_MARKER_FAILED','전송 중복 방지 상태를 저장하지 못했습니다.',diag('ready','marker-save-failed'));send.click();return result('SUBMITTED','전송 클릭을 한 번 수행했습니다.',{...diag('submitted','marker-before-click'),marker,persisted});}" +
                 "const fire=(type,inputType,data)=>{try{return composer.dispatchEvent(new InputEvent(type,{bubbles:true,cancelable:type==='beforeinput',inputType,data}));}catch(_){return composer.dispatchEvent(new Event(type,{bubbles:true,cancelable:type==='beforeinput'}));}};" +
                 "const selectAll=()=>{composer.focus();const selection=window.getSelection();if(!selection)return false;const range=document.createRange();range.selectNodeContents(composer);selection.removeAllRanges();selection.addRange(range);return true;};" +
                 "const nativeSet=value=>{const proto=Object.getPrototypeOf(composer);const own=Object.getOwnPropertyDescriptor(proto,'value');const base=typeof HTMLTextAreaElement!=='undefined'?Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value'):null;const setter=own?.set||base?.set;if(setter)setter.call(composer,value);else composer.value=value;fire('input','insertText',value);composer.dispatchEvent(new Event('change',{bubbles:true}));};" +
                 "const execInsert=()=>{selectAll();let deleted=false,inserted=false;try{deleted=document.execCommand('delete',false,null);}catch(_){}try{inserted=document.execCommand('insertText',false,expected);}catch(_){}return {deleted,inserted};};" +
                 "let strategy='';composer.focus();if('value'in composer){strategy='native-value';nativeSet(expected);}else{strategy='single-execCommand';execInsert();}" +
-                "return result('RETRY',same()?'입력 반영 확인 대기':'예약 프롬프트 입력 미반영',diag('input-attempt',strategy));" +
+                "return result('UI_WAIT',same()?'입력 반영 확인 대기':'예약 프롬프트 입력 미반영',diag('input-attempt',strategy));" +
                 "})()";
     }
 
@@ -69,13 +75,22 @@ public final class AutomationScript {
                 "const parts=location.pathname.split('/').filter(Boolean);" +
                 "const segmentAfter=k=>{const i=parts.indexOf(k);return i>=0&&i+1<parts.length?parts[i+1]:'';};" +
                 "const actualProject=segmentAfter('g'),actualConversation=segmentAfter('c');" +
-                "const homePath=location.pathname==='/'||location.pathname==='';" +
+                "const homePath=location.pathname==='/'||location.pathname===''||location.pathname==='/new-chat'||location.pathname==='/new-chat/';" +
+                "const projectRoot=!!actualProject&&!actualConversation&&/^\\/g\\/[^/]+\\/?$/.test(location.pathname);" +
+                "const projectNewChat=!!actualProject&&!actualConversation&&!projectRoot;" +
                 "const routeDiagnostics={expectedType,expectedProject,expectedConversation,actualProject,actualConversation,afterSubmit,userMessages:users.length,promptAlreadyPresent};" +
-                "let targetOk=false;" +
+                "let locationKind='UNKNOWN',targetOk=false;" +
+                "if(actualConversation&&expectedConversation&&actualConversation===expectedConversation)locationKind='EXPECTED_CONVERSATION';" +
+                "else if(actualConversation)locationKind='DIFFERENT_CONVERSATION';" +
+                "else if(projectRoot)locationKind='PROJECT_ROOT';" +
+                "else if(projectNewChat)locationKind='PROJECT_NEW_CHAT';" +
+                "else if(homePath)locationKind='GLOBAL_NEW_CHAT';" +
+                "else locationKind='TRANSIENT';" +
                 "if(expectedType==='existing')targetOk=!!expectedConversation&&actualConversation===expectedConversation;" +
                 "else if(expectedType==='project')targetOk=!!expectedProject&&actualProject===expectedProject&&(!actualConversation||afterSubmit||promptAlreadyPresent||users.length===0);" +
                 "else if(expectedType==='general')targetOk=!actualProject&&((!actualConversation&&homePath)||(!!actualConversation&&(afterSubmit||promptAlreadyPresent||users.length===0)));" +
-                "if(!targetOk)return result('TARGET_CONTEXT_MISMATCH','expected='+expectedUrl+' actual='+location.href,routeDiagnostics);";
+                "routeDiagnostics.locationKind=locationKind;" +
+                "if(!targetOk)return result(locationKind==='DIFFERENT_CONVERSATION'?'TARGET_CONTEXT_MISMATCH':'TARGET_TRANSIENT','expected='+expectedUrl+' actual='+location.href,routeDiagnostics);";
     }
 
     static String preferenceScript(Schedule schedule, String run) {
@@ -98,7 +113,7 @@ public final class AutomationScript {
                     "const modeSelected=modeIsSelected(mode);" +
                     "const modeDiagnostics={requested:'work',candidateFound:!!mode,candidateLabel:mode?clip(exactText((mode.innerText||'')+' '+(mode.getAttribute('aria-label')||'')),120):'',selected:modeSelected,clicked:false,priorClick:!!modePrior};" +
                     "if(mode&&!modeSelected&&!modePrior){const value=JSON.stringify({at:Date.now(),label:modeDiagnostics.candidateLabel});try{sessionStorage.setItem(modeKey,value);}catch(_){}window[modeKey]=value;mode.click();modeDiagnostics.clicked=true;}" +
-                    "if(modeDiagnostics.clicked)return result('RETRY','모드 전환 반영 대기',{...routeDiagnostics,mode:modeDiagnostics});";
+                    "if(modeDiagnostics.clicked)return result('UI_WAIT','모드 전환 반영 대기',{...routeDiagnostics,mode:modeDiagnostics});";
         } else {
             modeSelection =
                     "const mode=modeCandidate(['chat','채팅']);" +
@@ -106,7 +121,7 @@ public final class AutomationScript {
                     "let modeClicks=0;try{modeClicks=Math.max(0,Number(sessionStorage.getItem(modeKey)||0));}catch(_){}" +
                     "const modeSelected=modeIsSelected(mode),workSelected=modeIsSelected(workMode);" +
                     "const modeDiagnostics={requested:'chat',candidateFound:!!mode,candidateLabel:mode?clip(exactText((mode.innerText||'')+' '+(mode.getAttribute('aria-label')||'')),120):'',selected:modeSelected,workSelected,assumedActive:!modeSelected&&!workSelected,clicked:false,clickCount:modeClicks};" +
-                    "if(workSelected){if(!mode)return result('MODE_SELECTION_FAILED','Chat 모드 선택 항목을 찾지 못했습니다.',{...routeDiagnostics,mode:modeDiagnostics});if(modeClicks>=3)return result('MODE_SELECTION_FAILED','Chat 모드 전환을 확인하지 못했습니다.',{...routeDiagnostics,mode:modeDiagnostics});modeClicks++;try{sessionStorage.setItem(modeKey,String(modeClicks));}catch(_){}mode.click();modeDiagnostics.clicked=true;modeDiagnostics.clickCount=modeClicks;return result('RETRY','Chat 모드 전환 반영 대기',{...routeDiagnostics,mode:modeDiagnostics});}";
+                    "if(workSelected){if(!mode)return result('MODE_SELECTION_FAILED','Chat 모드 선택 항목을 찾지 못했습니다.',{...routeDiagnostics,mode:modeDiagnostics});if(modeClicks>=3)return result('MODE_SELECTION_FAILED','Chat 모드 전환을 확인하지 못했습니다.',{...routeDiagnostics,mode:modeDiagnostics});modeClicks++;try{sessionStorage.setItem(modeKey,String(modeClicks));}catch(_){}mode.click();modeDiagnostics.clicked=true;modeDiagnostics.clickCount=modeClicks;return result('UI_WAIT','Chat 모드 전환 반영 대기',{...routeDiagnostics,mode:modeDiagnostics});}";
         }
         return "const modeKey='chatgpt-prompt-scheduler:mode:' + " + run + ";" +
                 "const exactText=s=>String(s??'').replace(/\\s+/g,' ').trim().toLowerCase();" +
@@ -145,8 +160,8 @@ public final class AutomationScript {
                 "else if(modelLevelItem){modelLevelItem.click();modelAction='open-model-menu';}" +
                 "else if(workSettingsTrigger&&!modelTriggerExpanded){openMenu(workSettingsTrigger);modelAction='open-work-settings-menu';}" +
                 "const modelDiagnostics={requested:desiredModel,ready:modelReady,action:modelAction,current:currentModel,triggerLabel:workSettingsTrigger?clip(elementLabel(workSettingsTrigger),160):'',triggerExpanded:modelTriggerExpanded,triggerInComposer:inComposer(workSettingsTrigger),levelItemFound:!!modelLevelItem,optionFound:!!desiredModelOption};" +
-                "if(modelAction)return result('RETRY','Work 모델 반영 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics});" +
-                "if(!modelReady)return result('RETRY','Work 모델 선택 요소 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics});";
+                "if(modelAction)return result('UI_WAIT','Work 모델 반영 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics});" +
+                "if(!modelReady)return result('UI_WAIT','Work 모델 선택 요소 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics});";
     }
     private static String reasoningScript(String requestedEffort) {
         if ("inherit".equals(requestedEffort)) {
@@ -167,8 +182,8 @@ public final class AutomationScript {
                 "else if(reasoningLevelItem){reasoningLevelItem.click();reasoningAction='open-effort-menu';}" +
                 "else if(reasoningTrigger&&!reasoningTriggerExpanded){openMenu(reasoningTrigger);reasoningAction='open-reasoning-menu';}" +
                 "const reasoningDiagnostics={requested:desiredEffort,ready:reasoningReady,action:reasoningAction,current:currentEffort,triggerLabel:reasoningTrigger?clip(elementLabel(reasoningTrigger),160):'',triggerExpanded:reasoningTriggerExpanded,triggerInComposer:inComposer(reasoningTrigger),levelItemFound:!!reasoningLevelItem,optionFound:!!desiredEffortOption};" +
-                "if(reasoningAction)return result('RETRY','추론 강도 반영 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics});" +
-                "if(!reasoningReady)return result('RETRY','추론 강도 선택 요소 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics});";
+                "if(reasoningAction)return result('UI_WAIT','추론 강도 반영 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics});" +
+                "if(!reasoningReady)return result('UI_WAIT','추론 강도 선택 요소 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics});";
     }
 
     private static String valueOrEmpty(String value) {
