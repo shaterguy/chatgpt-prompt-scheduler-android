@@ -40,14 +40,19 @@ jobs:
           python tools/nrv69y_patch_plain1.py > /tmp/nrv69y-diag/patch1.log 2>&1
           rc1=$?
           rc2=0
+          rc2b=0
           if [ "$rc1" -eq 0 ]; then
             python tools/nrv69y_patch_plain2.py > /tmp/nrv69y-diag/patch2.log 2>&1
             rc2=$?
+            if [ "$rc2" -ne 0 ]; then
+              python tools/nrv69y_patch_plain2b.py > /tmp/nrv69y-diag/patch2b.log 2>&1
+              rc2b=$?
+            fi
           fi
-          echo "rc1=$rc1 rc2=$rc2" > /tmp/nrv69y-diag/status.txt
+          echo "rc1=$rc1 rc2=$rc2 rc2b=$rc2b" > /tmp/nrv69y-diag/status.txt
           git diff --check > /tmp/nrv69y-diag/diffcheck.txt 2>&1
           diff_rc=$?
-          if [ "$rc1" -eq 0 ] && [ "$rc2" -eq 0 ] && [ "$diff_rc" -eq 0 ]; then
+          if [ "$rc1" -eq 0 ] && { [ "$rc2" -eq 0 ] || [ "$rc2b" -eq 0 ]; } && [ "$diff_rc" -eq 0 ]; then
             echo 'ok=true' >> "$GITHUB_OUTPUT"
           else
             echo 'ok=false' >> "$GITHUB_OUTPUT"
