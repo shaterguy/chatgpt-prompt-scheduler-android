@@ -13,11 +13,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      APK_NAME: chatgpt-prompt-scheduler-android-v0.1.22-rc1.apk
+      APK_NAME: chatgpt-prompt-scheduler-android-v0.1.22-rc2.apk
       PACKAGE_NAME: com.shaterguy.chatgptpromptscheduler
-      VERSION_CODE: '23'
-      VERSION_NAME: '0.1.22-rc1'
+      VERSION_CODE: '24'
+      VERSION_NAME: '0.1.22-rc2'
       BASELINE_VERSION_CODE: '22'
+      PREVIOUS_RC_VERSION_CODE: '23'
       EXPECTED_PUBLIC_CERT_SHA256: '3cfe95acd09077a89cd8de85434cbd5d8bb3e2021d8e9eacb804a8da9ccce52a'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -90,11 +91,12 @@ jobs:
           "$BT/apksigner" verify --verbose --print-certs "$OLD_APK" > /tmp/update-baseline/old-signature.txt
           grep -qi "$EXPECTED_PUBLIC_CERT_SHA256" /tmp/update-baseline/old-signature.txt
           test "$BASELINE_VERSION_CODE" -lt "$VERSION_CODE"
+          test "$PREVIOUS_RC_VERSION_CODE" -lt "$VERSION_CODE"
           sha256sum "dist/$APK_NAME" | tee dist/SHA256SUMS.txt
       - name: Upload signed RC APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: chatgpt-prompt-scheduler-android-v0.1.22-rc1-update
+          name: chatgpt-prompt-scheduler-android-v0.1.22-rc2-update
           path: dist/*
           if-no-files-found: error
           retention-days: 30
