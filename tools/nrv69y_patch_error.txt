@@ -1,0 +1,4 @@
+PATCH1_RC=0
+plain1 ok
+PATCH2_RC=1
+regex mismatch app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationService.java: '    private void performInitialTargetReload\\(\\) \\{.*?\n    \\}\n\n    private void resetInitialTargetRetry' got=0

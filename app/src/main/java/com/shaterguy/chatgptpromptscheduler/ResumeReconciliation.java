@@ -118,96 +118,62 @@ public final class ResumeReconciliation {
                                             String predecessorPrompt, String predecessorSignal,
                                             int predecessorIndex, int messageIndex) {
         OrchestrationSignal.ParseResult parsed = OrchestrationSignal.parseDetailed(rawSignal, expectedJobId);
-        if (!parsed.isValid() || predecessorIndex < 0 || messageIndex <= predecessorIndex)
-            return null;
+        if (!parsed.isValid() || messageIndex < 0) return null;
         OrchestrationSignal signal = parsed.signal;
-        String promptKind = promptKind(predecessorPrompt, expectedJobId);
-        if (promptKind.isEmpty() || !validSource(signal, sourceSide)) return null;
-        String predecessorStep = promptStep(predecessorPrompt, expectedJobId);
-        String predecessorRound = promptRound(predecessorPrompt, expectedJobId);
-        if (PROMPT_USER_RESOLVED.equals(promptKind)) {
-            OrchestrationSignal context = OrchestrationSignal.parse(predecessorSignal, expectedJobId);
-            if (context == null || context.type != OrchestrationSignal.Type.USER_ACTION_REQUIRED
-                    || !OrchestrationStore.SIDE_CHAT.equals(sourceSide)) return null;
-            predecessorStep = context.step;
-            predecessorRound = context.round;
+        if (!validSource(signal, sourceSide)) return null;
+        String predecessorKind = promptKind(predecessorPrompt, expectedJobId);
+        String positionStep = signal.step;
+        String positionRound = signal.round;
+        if (positionStep.isEmpty() || positionRound.isEmpty()) {
+            positionStep = promptStep(predecessorPrompt, expectedJobId);
+            positionRound = promptRound(predecessorPrompt, expectedJobId);
         }
-        if (!validPredecessor(signal, sourceSide, promptKind, predecessorStep, predecessorRound)) return null;
-        int phase = causalPhase(signal, sourceSide, promptKind);
-        if (phase < 0) return null;
-        String positionStep = signal.step.isEmpty()
-                ? (predecessorStep.isEmpty() && PROMPT_START.equals(promptKind) ? "S001" : predecessorStep)
-                : signal.step;
-        String positionRound = signal.round.isEmpty()
-                ? (predecessorRound.isEmpty() && PROMPT_START.equals(promptKind) ? "R001" : predecessorRound)
-                : signal.round;
-        if (positionStep.isEmpty() || positionRound.isEmpty()) return null;
-        return new Candidate(signal, sourceSide, predecessorPrompt, promptKind, predecessorSignal,
-                predecessorIndex, messageIndex, phase, positionStep, positionRound);
+        if (positionStep.isEmpty() || positionRound.isEmpty()) {
+            if (!OrchestrationStore.isTerminalSignal(signal.type)) return null;
+            positionStep = "S999";
+            positionRound = "R999";
+        }
+        if (!validSequence(positionStep, positionRound)) return null;
+        return new Candidate(signal, sourceSide, predecessorPrompt, predecessorKind, predecessorSignal,
+                predecessorIndex, messageIndex, 0, positionStep, positionRound);
     }
 
     public static Decision select(RoomScan chat, RoomScan work) {
         if (chat == null || work == null) return ambiguous("ROOM_SCAN_MISSING");
-        if (!chat.mainPresent || !work.mainPresent) return ambiguous("ROOM_DOM_MISSING");
+        if (!chat.mainPresent || !work.mainPresent) return waitForIdle("ROOM_DOM_NOT_READY");
         if (chat.authRequired || work.authRequired) return ambiguous("AUTH_REQUIRED");
-        if (chat.generating || work.generating) return new Decision(DecisionType.WAIT_FOR_IDLE, null,
-                "ROOM_GENERATING");
+        if (chat.generating || work.generating) return waitForIdle("ROOM_GENERATING");
 
-        List<Candidate> all = new ArrayList<>();
-        all.addAll(chat.candidates);
-        all.addAll(work.candidates);
-        if (all.isEmpty()) return ambiguous("NO_VALID_SIGNAL");
+        RoomChoice chatChoice = chooseRoom(chat);
+        RoomChoice workChoice = chooseRoom(work);
+        if (chatChoice.conflict || workChoice.conflict) return ambiguous("SAME_ROOM_CONFLICT");
+        Candidate c = chatChoice.candidate;
+        Candidate w = workChoice.candidate;
+        if (c == null && w == null) return waitForIdle("NO_VALID_SIGNAL");
+        if (c == null) return classify(w, "ONE_SIDED_WORK");
+        if (w == null) return classify(c, "ONE_SIDED_CHAT");
 
-        all.sort(Comparator.comparingInt((Candidate value) -> sequenceNumber(value.positionStep))
-                .thenComparingInt(value -> sequenceNumber(value.positionRound))
-                .thenComparingInt(value -> value.phase)
-                .thenComparingInt(value -> value.messageIndex).reversed());
-
-        Candidate best = all.get(0);
-        for (int index = 1; index < all.size(); index++) {
-            Candidate candidate = all.get(index);
-            if (rankCompare(candidate, best) != 0) break;
-            if (candidate.sourceSide.equals(best.sourceSide) && candidate.raw().equals(best.raw())) {
-                if (candidate.messageIndex > best.messageIndex) best = candidate;
-                continue;
-            }
-            return ambiguous("PROTOCOL_POSITION_CONFLICT");
-        }
-        if (best.signal.type == OrchestrationSignal.Type.USER_ACTION_REQUIRED)
-            return new Decision(DecisionType.USER_ACTION, best, "USER_ACTION_REQUIRED");
-        if (OrchestrationStore.isTerminalSignal(best.signal.type))
-            return new Decision(DecisionType.TERMINAL, best, best.signal.type.name());
-        return new Decision(DecisionType.ROUTE, best, "SIGNAL_SELECTED");
+        int position = comparePosition(c, w);
+        if (position > 0) return classify(c, "CHAT_NEWER_POSITION");
+        if (position < 0) return classify(w, "WORK_NEWER_POSITION");
+        if (c.signal.type == OrchestrationSignal.Type.USER_ACTION_REQUIRED)
+            return classify(c, "CHAT_USER_ACTION_TIE");
+        return classify(w, "WORK_TIE");
     }
 
     public static int comparePosition(Candidate left, Candidate right) {
-        return rankCompare(left, right);
+        int step = Integer.compare(sequenceNumber(left.positionStep), sequenceNumber(right.positionStep));
+        if (step != 0) return step;
+        return Integer.compare(sequenceNumber(left.positionRound), sequenceNumber(right.positionRound));
     }
 
-    /**
-     * Returns the highest candidate from one room, or null when the room has no usable candidate
-     * or contains a same-rank protocol conflict. This is used by the pre-submit source-freshness
-     * guard and intentionally fails closed instead of guessing between equal positions.
-     */
+    /** Returns the highest numeric Step/Round candidate from one room, or null on same-position conflict. */
     public static Candidate highestCandidate(RoomScan room) {
-        if (room == null || !room.mainPresent || room.authRequired || room.generating
-                || room.candidates.isEmpty()) return null;
-        List<Candidate> values = new ArrayList<>(room.candidates);
-        values.sort(Comparator.comparingInt((Candidate value) -> sequenceNumber(value.positionStep))
-                .thenComparingInt(value -> sequenceNumber(value.positionRound))
-                .thenComparingInt(value -> value.phase)
-                .thenComparingInt(value -> value.messageIndex).reversed());
-        Candidate best = values.get(0);
-        for (int index = 1; index < values.size(); index++) {
-            Candidate candidate = values.get(index);
-            if (rankCompare(candidate, best) != 0) break;
-            if (!sameCandidate(candidate, best)) return null;
-            if (candidate.messageIndex > best.messageIndex) best = candidate;
-        }
-        return best;
+        RoomChoice choice = chooseRoom(room);
+        return choice.conflict ? null : choice.candidate;
     }
 
-    /** Compares the protocol identity, not the transient DOM index, of two candidates. */
+    /** Protocol identity deliberately ignores DOM index and predecessor/causal metadata. */
     public static boolean sameCandidate(Candidate left, Candidate right) {
         if (left == null || right == null) return false;
         return left.sourceSide.equals(right.sourceSide)
@@ -217,11 +183,7 @@ public final class ResumeReconciliation {
                 && left.signal.actionId.equals(right.signal.actionId)
                 && left.raw().equals(right.raw())
                 && left.positionStep.equals(right.positionStep)
-                && left.positionRound.equals(right.positionRound)
-                && left.phase == right.phase
-                && left.predecessorKind.equals(right.predecessorKind)
-                && left.predecessorPrompt.equals(right.predecessorPrompt)
-                && left.predecessorSignal.equals(right.predecessorSignal);
+                && left.positionRound.equals(right.positionRound);
     }
 
     public static String promptKind(String prompt, String expectedJobId) {
@@ -251,6 +213,44 @@ public final class ResumeReconciliation {
         String[] tokens = promptTokens(prompt);
         return tokens.length >= 4 && expectedJobId.equals(tokens[1]) && validSequence(tokens[2], tokens[3])
                 ? tokens[3] : "";
+    }
+
+    private static final class RoomChoice {
+        final Candidate candidate;
+        final boolean conflict;
+        RoomChoice(Candidate candidate, boolean conflict) {
+            this.candidate = candidate;
+            this.conflict = conflict;
+        }
+    }
+
+    private static RoomChoice chooseRoom(RoomScan room) {
+        if (room == null || !room.mainPresent || room.authRequired || room.generating || room.candidates.isEmpty())
+            return new RoomChoice(null, false);
+        List<Candidate> values = new ArrayList<>(room.candidates);
+        values.sort(Comparator.comparingInt((Candidate value) -> sequenceNumber(value.positionStep))
+                .thenComparingInt(value -> sequenceNumber(value.positionRound)).reversed());
+        Candidate best = values.get(0);
+        for (int i = 1; i < values.size(); i++) {
+            Candidate candidate = values.get(i);
+            if (comparePosition(candidate, best) != 0) break;
+            if (!sameCandidate(candidate, best)) return new RoomChoice(null, true);
+            if (candidate.messageIndex > best.messageIndex) best = candidate;
+        }
+        return new RoomChoice(best, false);
+    }
+
+    private static Decision classify(Candidate candidate, String reason) {
+        if (candidate == null) return waitForIdle("NO_VALID_SIGNAL");
+        if (candidate.signal.type == OrchestrationSignal.Type.USER_ACTION_REQUIRED)
+            return new Decision(DecisionType.USER_ACTION, candidate, reason);
+        if (OrchestrationStore.isTerminalSignal(candidate.signal.type))
+            return new Decision(DecisionType.TERMINAL, candidate, reason);
+        return new Decision(DecisionType.ROUTE, candidate, reason);
+    }
+
+    private static Decision waitForIdle(String reason) {
+        return new Decision(DecisionType.WAIT_FOR_IDLE, null, reason);
     }
 
     private static boolean validSource(OrchestrationSignal signal, String sourceSide) {
