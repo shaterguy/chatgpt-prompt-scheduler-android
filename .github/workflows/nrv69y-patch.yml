@@ -2,10 +2,8 @@ name: NRV69Y Patch And Verify
 on:
   pull_request:
     branches: [main]
-
 permissions:
   contents: write
-
 jobs:
   patch:
     if: github.head_ref == 'fix/nrv69y-resume-target-v0.1.22'
@@ -28,61 +26,58 @@ jobs:
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
         with:
           gradle-version: '9.5.0'
-      - name: Apply and materialize NRV69Y recovery patch
+      - id: patch
+        name: Apply NRV69Y recovery patch
+        shell: bash
+        run: |
+          set +e
+          mkdir -p /tmp/nrv69y-diag
+          if grep -q 'ConversationTargetState' app/src/main/java/com/shaterguy/chatgptpromptscheduler/TargetParser.java; then
+            echo 'already materialized' > /tmp/nrv69y-diag/patch.log
+            echo 'ok=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          python tools/nrv69y_patch_plain1.py > /tmp/nrv69y-diag/patch1.log 2>&1
+          rc1=$?
+          rc2=0
+          if [ "$rc1" -eq 0 ]; then
+            python tools/nrv69y_patch_plain2.py > /tmp/nrv69y-diag/patch2.log 2>&1
+            rc2=$?
+          fi
+          echo "rc1=$rc1 rc2=$rc2" > /tmp/nrv69y-diag/status.txt
+          git diff --check > /tmp/nrv69y-diag/diffcheck.txt 2>&1
+          diff_rc=$?
+          if [ "$rc1" -eq 0 ] && [ "$rc2" -eq 0 ] && [ "$diff_rc" -eq 0 ]; then
+            echo 'ok=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ok=false' >> "$GITHUB_OUTPUT"
+          fi
+          exit 0
+      - name: Upload patch diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nrv69y-patch-diagnostics
+          path: /tmp/nrv69y-diag/**
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Commit materialized source
+        if: steps.patch.outputs.ok == 'true'
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          if grep -q 'ConversationTargetState' app/src/main/java/com/shaterguy/chatgptpromptscheduler/TargetParser.java; then
-            echo 'NRV69Y source already materialized; skipping patch scripts.'
-          else
-            rm -f tools/nrv69y_patch_error.txt
-            set +e
-            python tools/nrv69y_patch_plain1.py > /tmp/patch1.log 2>&1
-            rc1=$?
-            if [ "$rc1" -eq 0 ]; then
-              python tools/nrv69y_patch_plain2.py > /tmp/patch2.log 2>&1
-              rc2=$?
-            else
-              rc2=0
-            fi
-            set -e
-            if [ "$rc1" -ne 0 ] || [ "$rc2" -ne 0 ]; then
-              { echo "PATCH1_RC=$rc1"; cat /tmp/patch1.log; echo "PATCH2_RC=$rc2"; cat /tmp/patch2.log; } > tools/nrv69y_patch_error.txt
-              git add tools/nrv69y_patch_error.txt
-              if ! git diff --cached --quiet; then
-                git commit -m 'Record NRV69Y readable patch failure'
-                git push origin HEAD:${{ github.head_ref }}
-              fi
-              exit 1
-            fi
-            git diff --check
-            git add app/src/main/java app/src/test/java tools/nrv69y_patch_error.txt || true
-            if ! git diff --cached --quiet; then
-              git commit -m 'Materialize NRV69Y recovery patch'
-              git push origin HEAD:${{ github.head_ref }}
-            fi
+          git add app/src/main/java app/src/test/java
+          if ! git diff --cached --quiet; then
+            git commit -m 'Materialize NRV69Y recovery patch'
+            git push origin HEAD:${{ github.head_ref }}
           fi
-      - name: Diff check
-        run: git diff --check
-      - name: Unit tests with persisted failure log
-        run: |
-          set +e
-          gradle --no-daemon --console=plain --stacktrace :app:testDebugUnitTest > /tmp/unit.log 2>&1
-          rc=$?
-          set -e
-          if [ "$rc" -ne 0 ]; then
-            tail -n 500 /tmp/unit.log > tools/nrv69y_unit_failure.txt
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add tools/nrv69y_unit_failure.txt
-            if ! git diff --cached --quiet; then
-              git commit -m 'Record NRV69Y unit test failure'
-              git push origin HEAD:${{ github.head_ref }}
-            fi
-            cat /tmp/unit.log
-            exit "$rc"
-          fi
-          rm -f tools/nrv69y_unit_failure.txt
+      - name: Unit tests
+        if: steps.patch.outputs.ok == 'true'
+        run: gradle --no-daemon --console=plain --stacktrace :app:testDebugUnitTest
       - name: Build release
+        if: steps.patch.outputs.ok == 'true'
         run: gradle --no-daemon --console=plain --stacktrace :app:assembleRelease
+      - name: Fail if patch failed
+        if: steps.patch.outputs.ok != 'true'
+        run: exit 1
