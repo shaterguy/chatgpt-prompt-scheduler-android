@@ -21,8 +21,9 @@ jobs:
       - name: Apply source patch
         run: |
           sed -i 's/Files\.readString(path, StandardCharsets\.UTF_8)/new String(Files.readAllBytes(path), StandardCharsets.UTF_8)/' .github/rc5_patch.py
-          python3 -m py_compile .github/rc5_patch.py
           python3 .github/rc5_patch.py
+          git checkout -- .github/workflows/rc-apk.yml
+          rm -rf .github/__pycache__
           git diff --check
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
         with:
@@ -40,12 +41,15 @@ jobs:
         run: gradle --no-daemon --console=plain --stacktrace :app:testDebugUnitTest
       - name: Unsigned release build
         run: gradle --no-daemon --console=plain --stacktrace :app:assembleRelease
-      - name: Commit verified RC5 source
+      - name: Commit verified RC5 source only
         run: |
-          rm -f .github/rc5_patch.py .github/rc5-apply-failure.txt
-          rm -f .github/workflows/apply-skbhds-rc5-fix.yml .github/workflows/apply-skbhds-rc5-fix-pr.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
+          git add \
+            app/build.gradle \
+            app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationScript.java \
+            app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationStore.java \
+            app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationService.java \
+            app/src/test/java/com/shaterguy/chatgptpromptscheduler/Rc5RelayRecoveryRegressionTest.java
           git commit -m 'fix: harden relay observation and signal recovery for rc5'
           git push origin HEAD:fix/skbhds-rc4-recovery-followup
