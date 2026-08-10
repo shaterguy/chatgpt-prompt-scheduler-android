@@ -52,7 +52,8 @@ jobs:
           raise_expr = body[i + 1].lstrip()
           body[i:i + 2] = [
               indent + 'if actual != count:',
-              indent + "    if 'RESUME_ROOM_SCAN_META' in old or 'case WAIT_FOR_IDLE' in old:",
+              indent + "    if ('RESUME_ROOM_SCAN_META' in old or 'case WAIT_FOR_IDLE' in old",
+              indent + "            or 'case \\\"TARGET_CONTEXT_MISMATCH\\\", \\\"NETWORK_ERROR\\\"' in old):",
               indent + "        print('SKIP_APPROVED_EXACT_REPLACE')",
               indent + '        return',
               indent + '    ' + raise_expr,
@@ -97,6 +98,14 @@ jobs:
           if old_wait not in text:
               raise SystemExit('actual WAIT_FOR_IDLE block changed')
           text = text.replace(old_wait, new_wait, 1)
+
+          old_stop = '''            case "TARGET_CONTEXT_MISMATCH", "NETWORK_ERROR" ->
+                    pauseWithError(status, fixedScriptMessage(status));'''
+          new_stop = '''            case "NETWORK_ERROR" -> recoverTransientNetwork("STOP_GENERATION_SCRIPT");
+            case "TARGET_CONTEXT_MISMATCH" -> pauseWithError(status, fixedScriptMessage(status));'''
+          if old_stop not in text:
+              raise SystemExit('actual STOP_GENERATION network case changed')
+          text = text.replace(old_stop, new_stop, 1)
           path.write_text(text)
 
           lines = path.read_text().splitlines()
@@ -124,6 +133,7 @@ jobs:
           grep -q 'history_ready:false' app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationScript.java
           grep -q 'history_ready=' app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationService.java
           grep -q 'reconciliationRescanAttempts++' app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationService.java
+          grep -q 'recoverTransientNetwork("STOP_GENERATION_SCRIPT")' app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationService.java
       - name: Unit tests
         run: gradle --no-daemon --console=plain --stacktrace :app:testDebugUnitTest
       - name: Unsigned release build
