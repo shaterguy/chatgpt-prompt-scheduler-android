@@ -264,7 +264,8 @@ public class OrchestrationSignalTest {
         assertTrue(service.contains("validateBootstrap"));
         assertTrue(service.contains("BOOTSTRAP_SEQUENCE_SEEDED"));
         assertTrue(service.contains("continueSameBootstrap"));
-        assertTrue(service.contains("initialTargetPolling.onRetry"));
+        assertTrue(service.contains("canonicalReentryBackoff.next()"));
+        assertTrue(service.contains("CanonicalTargetRecoveryPolicy.INITIAL_GRACE_MS"));
         assertTrue(service.contains("handler.postDelayed(initialTargetReloadRunnable"));
         assertTrue(service.contains("initialTargetReloadScheduled"));
         assertTrue(store.contains("boolean confirmedInitialStart = initialStartPending()"));
