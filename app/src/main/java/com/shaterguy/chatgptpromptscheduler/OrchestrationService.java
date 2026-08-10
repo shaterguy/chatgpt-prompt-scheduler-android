@@ -1933,3 +1933,6 @@ public final class OrchestrationService extends Service implements AutomationRun
     }
 
     private void log(String event, String detail) {
+        if (runLog != null) runLog.record(store, event, detail);
+    }
+}
