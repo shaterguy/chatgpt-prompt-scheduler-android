@@ -51,6 +51,17 @@ public class ResumeReconciliationTest {
         assertSame(chat, decide(chat, work).selected);
     }
 
+    @Test public void correctedWorkSignalAfterPauseWinsOverOlderChatSignal() {
+        ResumeReconciliation.Candidate chat = candidate(OrchestrationStore.SIDE_CHAT,
+                "[AR_SEND_WORK JOB-7 S001 R001]");
+        ResumeReconciliation.Candidate correctedWork = candidate(OrchestrationStore.SIDE_WORK,
+                "[AR_SEND_CHAT JOB-7 S001 R002]");
+        ResumeReconciliation.Decision decision = decide(chat, correctedWork);
+        assertEquals(ResumeReconciliation.DecisionType.ROUTE, decision.type);
+        assertSame(correctedWork, decision.selected);
+        assertEquals(OrchestrationStore.SIDE_CHAT, decision.targetSide());
+    }
+
     @Test public void sameStepRoundChatUserActionWinsOtherwiseWorkWins() {
         ResumeReconciliation.Candidate chat = candidate(OrchestrationStore.SIDE_CHAT,
                 "[AR_USER_ACTION_REQUIRED JOB-7 S003 R004 ACTION-1]");

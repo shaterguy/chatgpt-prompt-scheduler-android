@@ -700,6 +700,7 @@ public final class OrchestrationStore {
                 .putBoolean("resumeUserActionRequested", userActionRequested || resumeUserActionRequested())
                 .putString("status", "재개 상태 재구성 중 · 두 대화방 확인")
                 .putString("lastErrorCode", "").putString("error", "").putLong("errorAt", 0L)
+                .putLong("pollCountLong", 0L).putInt("pollCount", 0)
                 .putLong("phaseStartedAt", System.currentTimeMillis())
                 .putString("candidateFingerprint", "").putInt("candidateStability", 0)
                 .putLong("epoch", epoch() + 1L));

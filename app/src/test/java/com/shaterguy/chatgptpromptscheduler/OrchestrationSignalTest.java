@@ -283,7 +283,9 @@ public class OrchestrationSignalTest {
         assertTrue(scan.contains("predecessor_index"));
         assertTrue(scan.contains("AUTOMATION_CHAT_REVIEW"));
         assertTrue(scan.contains("predecessor_signal"));
-        assertTrue(scan.contains("querySelectorAll('pre,code,blockquote')"));
+        assertTrue(scan.contains("querySelectorAll('blockquote')"));
+        assertFalse(scan.contains("querySelectorAll('pre,code,blockquote')"));
+        assertTrue(scan.contains("candidate_count:candidates.length"));
         assertTrue(scan.contains("generating"));
         assertFalse(scan.contains("send.click()"));
         assertTrue(target.contains("TARGET_PROMPT_ABSENT"));
@@ -329,6 +331,10 @@ public class OrchestrationSignalTest {
         assertTrue(service.contains("STOP_GENERATION_CONFIRMED"));
         assertTrue(service.contains("REBOOT_TIMEBASE_RESET"));
         assertTrue(service.contains("CONTINUE_SAME_DELIVERY"));
+        assertTrue(service.contains("MAX_NO_SIGNAL_RECONCILIATION_RETRIES"));
+        assertTrue(service.contains("RESUME_NO_VALID_SIGNAL"));
+        assertTrue(service.contains("RESUME_ROOM_SCAN_META"));
+        assertFalse(service.contains("resetReconciliationPolling(\"room_switch\")"));
     }
     @Test
     public void authRequiredUsesVisibleStructuralGateInsteadOfPageText() {

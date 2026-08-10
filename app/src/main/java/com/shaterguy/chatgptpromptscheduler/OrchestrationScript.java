@@ -180,7 +180,7 @@ public final class OrchestrationScript {
                 "if(visibleAuthGate())return out('AUTH_REQUIRED','명시적 로그인 화면이 표시되었습니다.');" +
                 "const job=" + job + ";" +
                 "const roleOf=e=>e?.getAttribute('data-message-author-role')||e?.getAttribute('data-turn')||e?.querySelector('[data-message-author-role]')?.getAttribute('data-message-author-role')||'';" +
-                "const cleanMessage=e=>{const copy=e.cloneNode(true);copy.querySelectorAll('pre,code,blockquote').forEach(n=>n.remove());return norm(copy.innerText||copy.textContent||'');};" +
+                "const cleanMessage=e=>{const copy=e.cloneNode(true);copy.querySelectorAll('blockquote').forEach(n=>n.remove());return norm(copy.innerText||copy.textContent||'');};" +
                 "const promptOf=txt=>{const lines=norm(txt).split('\\n').map(norm).filter(Boolean);const line=lines.length?lines[lines.length-1]:'';if(!line.startsWith('[AUTOMATION_')||!line.endsWith(']'))return null;const t=line.slice(1,-1).split(/\\s+/);if(t[1]!==job)return null;const validSeq=t.length===4&&/^S\\d{3}$/.test(t[2])&&/^R\\d{3}$/.test(t[3]);if(t[0]==='AUTOMATION_START'&&t.length===2)return {kind:'AUTOMATION_START',raw:line};if((t[0]==='AUTOMATION_WORK_STEP'||t[0]==='AUTOMATION_CHAT_REVIEW'||t[0]==='AUTOMATION_CONTINUE_SAME')&&validSeq)return {kind:t[0],raw:line,step:t[2],round:t[3]};if(t[0]==='AUTOMATION_USER_RESOLVED'&&t.length===3&&/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(t[2]))return {kind:'AUTOMATION_USER_RESOLVED',raw:line};return null;};" +
                 "const signalOf=e=>{const lines=cleanMessage(e).split('\\n').map(norm).filter(Boolean);const line=lines.length?lines[lines.length-1]:'';return line.startsWith('[AR_')&&line.endsWith(']')&&line.length<=320?line:'';};" +
                 "const roots=[...main.querySelectorAll('article,[data-message-author-role]')];" +
@@ -189,7 +189,7 @@ public final class OrchestrationScript {
                 "const busy=turns.some(e=>roleOf(e)==='assistant'&&(e.getAttribute('aria-busy')==='true'||e.getAttribute('data-is-streaming')==='true'||!!e.querySelector('[aria-busy=\"true\"],[data-is-streaming=\"true\"],[class*=\"spinner\" i],[class*=\"loading\" i]')));" +
                 "const generating=busy||stopButtons.length>0;const candidates=[];" +
                 "for(let i=0;i<turns.length;i++){if(roleOf(turns[i])!=='assistant')continue;const signal=signalOf(turns[i]);if(!signal)continue;let predecessorIndex=-1;let predecessor=null;let predecessorSignal='';for(let j=i-1;j>=0;j--){if(roleOf(turns[j])==='user'){predecessor=promptOf(cleanMessage(turns[j]));predecessorIndex=j;if(predecessor&&predecessor.kind==='AUTOMATION_USER_RESOLVED'&&j>0){for(let k=j-1;k>=0;k--){if(roleOf(turns[k])==='assistant'){predecessorSignal=signalOf(turns[k]);break;}}}break;}}candidates.push({signal,predecessor:predecessor?.raw||'',predecessor_kind:predecessor?.kind||'',predecessor_signal:predecessorSignal,predecessor_index:predecessorIndex,message_index:i});}" +
-                "return out('SCAN','대화 상태 수집 완료',{main_present:true,generating,stop_available:stopButtons.length>0,candidates});" +
+                "return out('SCAN','대화 상태 수집 완료',{main_present:true,generating,stop_available:stopButtons.length>0,assistant_turns:turns.filter(e=>roleOf(e)==='assistant').length,candidate_count:candidates.length,candidates});" +
                 "})()";
     }
 

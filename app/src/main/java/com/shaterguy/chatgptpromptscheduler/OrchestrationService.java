@@ -38,6 +38,7 @@ public final class OrchestrationService extends Service implements AutomationRun
     private static final long SOFT_YIELD_MS = ResponseTimingPolicy.SOFT_YIELD_MS;
     private static final long HARD_FALLBACK_MS = ResponseTimingPolicy.HARD_FALLBACK_MS;
     private static final long STOP_CONFIRMATION_GRACE_MS = 15_000L;
+    private static final long MAX_NO_SIGNAL_RECONCILIATION_RETRIES = 5L;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable stepRunnable = this::runStep;
     private final Runnable resumeRunnable = this::ensureEngine;
@@ -654,6 +655,10 @@ public final class OrchestrationService extends Service implements AutomationRun
             return;
         }
         ResumeReconciliation.RoomScan scan = parseRoomScan(result, side);
+        log("RESUME_ROOM_SCAN_META", "side=" + safeCode(side)
+                + ";assistant_turns=" + Math.max(0, result.optInt("assistant_turns", 0))
+                + ";script_candidates=" + Math.max(0, result.optInt("candidate_count", 0))
+                + ";accepted_candidates=" + scan.candidates.size());
         if (scan.generating) {
             log("RESUME_WAITING_FOR_IDLE", "side=" + safeCode(side));
             restartReconciliation("room_generating", true);
@@ -666,7 +671,7 @@ public final class OrchestrationService extends Service implements AutomationRun
             reconciliationWorkScan = null;
             store.setReconciliationSide(OrchestrationStore.SIDE_WORK,
                     "재개 상태 재구성 중 · Work 대화 확인");
-            resetReconciliationPolling("room_switch");
+            log("RESUME_ROOM_SWITCH", "from=CHAT;to=WORK");
             cleanupWebView();
             handler.post(this::ensureEngine);
             return;
@@ -776,7 +781,14 @@ public final class OrchestrationService extends Service implements AutomationRun
         }
         switch (decision.type) {
             case WAIT_FOR_IDLE -> {
-                log("RESUME_WAITING_FOR_IDLE", "side=both;reason=" + safeCode(decision.reason));
+                log("RESUME_WAITING_FOR_IDLE", "side=both;reason=" + safeCode(decision.reason)
+                        + ";retry=" + store.pollCountLong());
+                if ("NO_VALID_SIGNAL".equals(decision.reason)
+                        && store.pollCountLong() >= MAX_NO_SIGNAL_RECONCILIATION_RETRIES) {
+                    pauseReconciliationError("RESUME_NO_VALID_SIGNAL",
+                            "두 대화방을 반복 확인했지만 최신 Protocol 제어 신호를 찾지 못했습니다.");
+                    return;
+                }
                 restartReconciliation(decision.reason, true);
                 scheduleReconciliationRetry(decision.reason);
             }
