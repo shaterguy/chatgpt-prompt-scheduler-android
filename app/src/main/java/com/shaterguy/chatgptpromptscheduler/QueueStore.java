@@ -76,12 +76,17 @@ public final class QueueStore {
     }
 
     public synchronized boolean markSubmissionAttempted(String runId, long attemptedAt) {
+        return markSubmissionAttempted(runId, attemptedAt, "");
+    }
+
+    public synchronized boolean markSubmissionAttempted(String runId, long attemptedAt, String prompt) {
         JSONArray queue = read();
         for (int i = 0; i < queue.length(); i++) {
             JSONObject item = queue.optJSONObject(i);
             if (item == null || !runId.equals(item.optString("runId"))) continue;
             try {
                 item.put("submitAttemptedAt", attemptedAt);
+                if (prompt != null && !prompt.isBlank()) item.put("submitPrompt", prompt);
                 save(queue);
                 return true;
             } catch (JSONException e) {
@@ -97,6 +102,7 @@ public final class QueueStore {
             JSONObject item = queue.optJSONObject(i);
             if (item == null || !runId.equals(item.optString("runId"))) continue;
             item.remove("submitAttemptedAt");
+            item.remove("submitPrompt");
             save(queue);
             return;
         }
