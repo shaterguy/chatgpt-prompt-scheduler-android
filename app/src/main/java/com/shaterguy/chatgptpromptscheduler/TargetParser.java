@@ -65,12 +65,11 @@ public final class TargetParser {
         String actualConversation = conversationId(actualUrl);
         if (expectedConversation.equals(actualConversation)) return ConversationTargetState.MATCH;
         if (actualConversation != null) return ConversationTargetState.DIFFERENT;
-        if (isHomePath(actualUrl)) return ConversationTargetState.TRANSIENT;
-        String expectedProject = projectId(expectedUrl);
-        String actualProject = projectId(actualUrl);
-        if (expectedProject != null && expectedProject.equals(actualProject) && isProjectHome(actualUrl))
-            return ConversationTargetState.TRANSIENT;
-        return ConversationTargetState.DIFFERENT;
+        // A supported route without a concrete conversation ID is never proof
+        // that another conversation was selected. It may be the home screen,
+        // project root, a project new-chat surface, or a transient SPA route.
+        // Only an observed /c/{different-id} is a target-change proof.
+        return ConversationTargetState.TRANSIENT;
     }
 
     public static boolean isTransientConversationRoute(String expectedUrl, String actualUrl) {
@@ -99,6 +98,29 @@ public final class TargetParser {
         return path != null && path.matches("/g/[^/]+/?");
     }
 
+    /** A project-owned new-chat surface has the project identity but no conversation ID. */
+    public static boolean isProjectNewChatSurface(String expectedProjectUrl, String actualUrl) {
+        if (!isSupported(expectedProjectUrl) || !isSupported(actualUrl)) return false;
+        String expectedProject = projectId(expectedProjectUrl);
+        return expectedProject != null && expectedProject.equals(projectId(actualUrl))
+                && conversationId(actualUrl) == null && !isProjectHome(actualUrl);
+    }
+
+    /** A project bootstrap route is recoverable while it has no concrete conversation ID. */
+    public static boolean isTransientProjectRoute(String expectedProjectUrl, String actualUrl) {
+        if (actualUrl == null || actualUrl.isBlank() || "about:blank".equalsIgnoreCase(actualUrl)) return true;
+        if (!isSupported(expectedProjectUrl) || !isSupported(actualUrl)) return false;
+        String expectedProject = projectId(expectedProjectUrl);
+        return expectedProject != null && expectedProject.equals(projectId(actualUrl))
+                && conversationId(actualUrl) == null;
+    }
+
+    /** ChatGPT's global home and new-chat routes contain neither project nor conversation IDs. */
+    public static boolean isGlobalNewChatSurface(String url) {
+        if (!isSupported(url) || projectId(url) != null || conversationId(url) != null) return false;
+        return isHomePath(url);
+    }
+
     public static boolean isProjectConversation(String projectUrl, String conversationUrl) {
         return matchesProjectIdentity(projectUrl, conversationUrl) && conversationId(conversationUrl) != null;
     }
@@ -118,6 +140,7 @@ public final class TargetParser {
     private static boolean isHomePath(String url) {
         if (!isSupported(url)) return false;
         String path = URI.create(url).getPath();
-        return path == null || path.isBlank() || "/".equals(path);
+        return path == null || path.isBlank() || "/".equals(path)
+                || "/new-chat".equals(path) || "/new-chat/".equals(path);
     }
 }
