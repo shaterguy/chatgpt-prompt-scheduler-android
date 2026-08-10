@@ -256,11 +256,11 @@ public class OrchestrationSignalTest {
         assertTrue(service.contains("prepareInitialStart"));
         assertTrue(service.contains("commitInitialStart"));
         assertTrue(service.contains("confirmInitialStartSubmission"));
-        assertTrue(service.contains("matchesConversationIdentity"));
+        assertTrue(service.contains("classifyConversationTarget"));
         assertTrue(service.contains("acceptInitialStartTargetIfNeeded"));
         assertTrue(service.contains("reloadInitialStartTarget(\"page_finish\")"));
         assertTrue(service.contains("reloadInitialStartTarget(\"step_guard\")"));
-        assertTrue(service.contains("INITIAL_START_TRANSIENT_ROUTE"));
+        assertTrue(service.contains("TARGET_TRANSIENT_ROUTE"));
         assertTrue(service.contains("validateBootstrap"));
         assertTrue(service.contains("BOOTSTRAP_SEQUENCE_SEEDED"));
         assertTrue(service.contains("continueSameBootstrap"));
@@ -363,7 +363,7 @@ public class OrchestrationSignalTest {
         assertFalse(activity.contains("일반 Chat 대화 URL"));
         assertFalse(activity.contains("Work 대화 URL"));
         assertFalse(activity.contains("Job ID\", store.jobId"));
-        assertTrue(activity.contains("store.beginReconciliation"));
+        assertTrue(activity.contains("store.beginReconciliation(store.waitingForUser())"));
         assertTrue(activity.contains("RESUME_RECONCILE_STARTED"));
         assertTrue(activity.contains("NonCredentialEditText"));
         assertTrue(activity.contains("getAutofillType"));
@@ -382,13 +382,11 @@ public class OrchestrationSignalTest {
         assertTrue(service.contains("RESUME_ROOM_SCAN_CHAT"));
         assertTrue(service.contains("RESUME_ROOM_SCAN_WORK"));
         assertTrue(service.contains("RESUME_RECONCILE_AMBIGUOUS"));
-        assertTrue(service.contains("RECONCILIATION_CONFIRM_ROOMS"));
-        assertTrue(service.contains("RESUME_STABLE_IDLE_CONFIRMED"));
-        assertTrue(service.contains("RESUME_SOURCE_FRESHNESS_CONFIRMED"));
         assertTrue(service.contains("rebuildForExistingPrompt"));
+        assertTrue(service.contains("rebuildForUserResolved"));
+        assertTrue(service.contains("resumeUserActionRequested"));
         assertTrue(service.contains("scheduleReconciliationRetry"));
-        assertTrue(service.indexOf("RESUME_SOURCE_FRESHNESS_CHECK")
-                < service.indexOf("rebuildForExistingPrompt"));
+        assertFalse(service.contains("RESUME_SOURCE_FRESHNESS_CHECK"));
         assertFalse(service.contains("scheduleStep(1200L)"));
         assertFalse(service.contains("postDelayed(this::ensureEngine, 1800L)"));
     }

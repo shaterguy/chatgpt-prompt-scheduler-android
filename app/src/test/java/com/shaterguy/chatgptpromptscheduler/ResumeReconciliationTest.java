@@ -1,155 +1,110 @@
 package com.shaterguy.chatgptpromptscheduler;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertSame;
-import static org.junit.Assert.assertTrue;
-
+import static org.junit.Assert.*;
 import org.junit.Test;
 
 public class ResumeReconciliationTest {
     private static final String JOB = "JOB-7";
 
-    private static ResumeReconciliation.Candidate candidate(String side, String signal,
-                                                             String predecessor, int predecessorIndex,
-                                                             int messageIndex) {
-        return ResumeReconciliation.acceptCandidate(JOB, side, signal, predecessor,
-                predecessorIndex, messageIndex);
+    private ResumeReconciliation.Candidate candidate(String side, String raw) {
+        return ResumeReconciliation.acceptCandidate(JOB, side, raw, "", "", -1, 1);
     }
 
-    @Test
-    public void domPositionBeatsStaleLocalPositionAndUsesNumericStepRoundOrdering() {
-        ResumeReconciliation.Candidate chat = candidate(OrchestrationStore.SIDE_CHAT,
-                "[AR_SEND_WORK JOB-7 S004 R002]",
-                "[AUTOMATION_CHAT_REVIEW JOB-7 S004 R001]", 3, 8);
-        ResumeReconciliation.Candidate olderWork = candidate(OrchestrationStore.SIDE_WORK,
-                "[AR_SEND_CHAT JOB-7 S004 R001]",
-                "[AUTOMATION_WORK_STEP JOB-7 S004 R001]", 2, 7);
+    private ResumeReconciliation.Decision decide(ResumeReconciliation.Candidate chat,
+                                                   ResumeReconciliation.Candidate work) {
+        return ResumeReconciliation.select(
+                chat == null ? ResumeReconciliation.RoomScan.idle(OrchestrationStore.SIDE_CHAT)
+                        : ResumeReconciliation.RoomScan.idle(OrchestrationStore.SIDE_CHAT, chat),
+                work == null ? ResumeReconciliation.RoomScan.idle(OrchestrationStore.SIDE_WORK)
+                        : ResumeReconciliation.RoomScan.idle(OrchestrationStore.SIDE_WORK, work));
+    }
 
-        ResumeReconciliation.Decision decision = ResumeReconciliation.select(
-                ResumeReconciliation.RoomScan.idle(OrchestrationStore.SIDE_CHAT, chat),
-                ResumeReconciliation.RoomScan.idle(OrchestrationStore.SIDE_WORK, olderWork));
-
+    @Test public void oneSidedValidSignalRoutes() {
+        ResumeReconciliation.Candidate work = candidate(OrchestrationStore.SIDE_WORK,
+                "[AR_SEND_CHAT JOB-7 S001 R001]");
+        ResumeReconciliation.Decision decision = decide(null, work);
         assertEquals(ResumeReconciliation.DecisionType.ROUTE, decision.type);
-        assertSame(chat, decision.selected);
-        assertEquals("[AUTOMATION_WORK_STEP JOB-7 S004 R002]", decision.prompt());
+        assertSame(work, decision.selected);
     }
 
-    @Test
-    public void sameStepRoundUsesCausalPhaseInsteadOfRoomOrStringOrder() {
-        ResumeReconciliation.Candidate chatDispatch = candidate(OrchestrationStore.SIDE_CHAT,
-                "[AR_SEND_WORK JOB-7 S004 R002]",
-                "[AUTOMATION_CHAT_REVIEW JOB-7 S004 R001]", 1, 4);
-        ResumeReconciliation.Candidate workReturn = candidate(OrchestrationStore.SIDE_WORK,
-                "[AR_SEND_CHAT JOB-7 S004 R002]",
-                "[AUTOMATION_WORK_STEP JOB-7 S004 R002]", 2, 5);
-        ResumeReconciliation.Candidate chatReviewContinue = candidate(OrchestrationStore.SIDE_CHAT,
-                "[AR_CONTINUE_SAME JOB-7 S004 R002]",
-                "[AUTOMATION_CHAT_REVIEW JOB-7 S004 R002]", 3, 6);
-
-        ResumeReconciliation.Decision workDecision = ResumeReconciliation.select(
-                ResumeReconciliation.RoomScan.idle(OrchestrationStore.SIDE_CHAT, chatDispatch),
-                ResumeReconciliation.RoomScan.idle(OrchestrationStore.SIDE_WORK, workReturn));
-        assertSame(workReturn, workDecision.selected);
-
-        ResumeReconciliation.Decision reviewDecision = ResumeReconciliation.select(
-                new ResumeReconciliation.RoomScan(OrchestrationStore.SIDE_CHAT, true, false, false,
-                        java.util.List.of(chatDispatch, chatReviewContinue)),
-                ResumeReconciliation.RoomScan.idle(OrchestrationStore.SIDE_WORK, workReturn));
-        assertSame(chatReviewContinue, reviewDecision.selected);
-    }
-
-    @Test
-    public void generatingEitherRoomPreventsReplay() {
-        ResumeReconciliation.Candidate chat = candidate(OrchestrationStore.SIDE_CHAT,
-                "[AR_SEND_WORK JOB-7 S001 R001]", "[AUTOMATION_START JOB-7]", 0, 1);
-        ResumeReconciliation.Decision decision = ResumeReconciliation.select(
-                new ResumeReconciliation.RoomScan(OrchestrationStore.SIDE_CHAT, true, true, false,
-                        java.util.List.of(chat)),
-                ResumeReconciliation.RoomScan.idle(OrchestrationStore.SIDE_WORK));
-        assertEquals(ResumeReconciliation.DecisionType.WAIT_FOR_IDLE, decision.type);
-    }
-
-    @Test
-    public void malformedForeignAndOrphanSignalsAreExcluded() {
-        assertNull(candidate(OrchestrationStore.SIDE_CHAT,
-                "[AR_SEND_WORK OTHER S001 R001]", "[AUTOMATION_START JOB-7]", 0, 1));
-        assertNull(candidate(OrchestrationStore.SIDE_CHAT,
-                "[AR_SEND_WORK JOB-7 S1 R001]", "[AUTOMATION_START JOB-7]", 0, 1));
-        assertNull(candidate(OrchestrationStore.SIDE_CHAT,
-                "[AR_SEND_WORK JOB-7 S001 R001]", "", -1, 1));
-        assertNull(candidate(OrchestrationStore.SIDE_WORK,
-                "[AR_SEND_WORK JOB-7 S001 R001]", "[AUTOMATION_WORK_STEP JOB-7 S001 R001]", 0, 1));
-    }
-
-    @Test
-    public void targetPromptMappingNeverUsesStalePromptText() {
-        ResumeReconciliation.Candidate work = candidate(OrchestrationStore.SIDE_CHAT,
-                "[AR_SEND_WORK JOB-7 S002 R003]",
-                "[AUTOMATION_CHAT_REVIEW JOB-7 S002 R002]", 4, 9);
-        ResumeReconciliation.Decision decision = ResumeReconciliation.select(
-                ResumeReconciliation.RoomScan.idle(OrchestrationStore.SIDE_CHAT, work),
-                ResumeReconciliation.RoomScan.idle(OrchestrationStore.SIDE_WORK));
-        assertEquals("[AUTOMATION_WORK_STEP JOB-7 S002 R003]", decision.prompt());
-        assertTrue(decision.selected.positionStep.equals("S002"));
-        assertTrue(decision.selected.positionRound.equals("R003"));
-    }
-
-    @Test
-    public void userResolvedUsesThePrecedingUserActionPosition() {
-        ResumeReconciliation.Candidate next = ResumeReconciliation.acceptCandidate(JOB,
-                OrchestrationStore.SIDE_CHAT,
-                "[AR_SEND_WORK JOB-7 S005 R001]",
-                "[AUTOMATION_USER_RESOLVED JOB-7 ACTION-1]",
-                "[AR_USER_ACTION_REQUIRED JOB-7 S004 R002 ACTION-1]", 8, 10);
-        assertTrue(next != null);
-        assertEquals("S005", next.positionStep);
-        assertEquals("R001", next.positionRound);
-
-        assertNull(ResumeReconciliation.acceptCandidate(JOB, OrchestrationStore.SIDE_CHAT,
-                "[AR_SEND_WORK JOB-7 S005 R001]",
-                "[AUTOMATION_USER_RESOLVED JOB-7 ACTION-1]", "", 8, 10));
-    }
-
-    @Test
-    public void equalProtocolRankWithDifferentSignalsFailsClosed() {
-        ResumeReconciliation.Candidate first = candidate(OrchestrationStore.SIDE_CHAT,
-                "[AR_DONE JOB-7]",
-                "[AUTOMATION_CHAT_REVIEW JOB-7 S002 R002]", 1, 4);
-        ResumeReconciliation.Candidate second = candidate(OrchestrationStore.SIDE_CHAT,
-                "[AR_USER_ACTION_REQUIRED JOB-7 S002 R002 ACTION-1]",
-                "[AUTOMATION_CHAT_REVIEW JOB-7 S002 R002]", 2, 5);
-        assertEquals(ResumeReconciliation.DecisionType.AMBIGUOUS,
-                ResumeReconciliation.select(
-                        ResumeReconciliation.RoomScan.idle(OrchestrationStore.SIDE_CHAT, first, second),
+    @Test public void generatingEitherRoomWaits() {
+        ResumeReconciliation.RoomScan generatingChat = new ResumeReconciliation.RoomScan(
+                OrchestrationStore.SIDE_CHAT, true, true, false, java.util.List.of());
+        assertEquals(ResumeReconciliation.DecisionType.WAIT_FOR_IDLE,
+                ResumeReconciliation.select(generatingChat,
                         ResumeReconciliation.RoomScan.idle(OrchestrationStore.SIDE_WORK)).type);
     }
 
-    @Test
-    public void sameCandidateUsesProtocolIdentityAndIgnoresDomIndexChanges() {
-        ResumeReconciliation.Candidate first = candidate(OrchestrationStore.SIDE_CHAT,
-                "[AR_SEND_WORK JOB-7 S004 R002]",
-                "[AUTOMATION_CHAT_REVIEW JOB-7 S004 R001]", 3, 8);
-        ResumeReconciliation.Candidate confirmation = candidate(OrchestrationStore.SIDE_CHAT,
-                "[AR_SEND_WORK JOB-7 S004 R002]",
-                "[AUTOMATION_CHAT_REVIEW JOB-7 S004 R001]", 9, 14);
-
-        assertTrue(ResumeReconciliation.sameCandidate(first, confirmation));
-        assertTrue(ResumeReconciliation.sameCandidate(confirmation,
-                ResumeReconciliation.highestCandidate(
-                        ResumeReconciliation.RoomScan.idle(OrchestrationStore.SIDE_CHAT, confirmation))));
+    @Test public void noValidSignalRetriesInsteadOfFailingAmbiguous() {
+        assertEquals(ResumeReconciliation.DecisionType.WAIT_FOR_IDLE,
+                decide(null, null).type);
     }
 
-    @Test
-    public void sourceFreshnessRejectsSameRankDifferentSignal() {
-        ResumeReconciliation.Candidate first = candidate(OrchestrationStore.SIDE_CHAT,
-                "[AR_SEND_WORK JOB-7 S004 R002]",
-                "[AUTOMATION_CHAT_REVIEW JOB-7 S004 R001]", 3, 8);
-        ResumeReconciliation.Candidate conflict = candidate(OrchestrationStore.SIDE_CHAT,
-                "[AR_SEND_WORK JOB-7 S004 R002]",
-                "[AUTOMATION_CONTINUE_SAME JOB-7 S004 R001]", 7, 12);
+    @Test public void numericStepThenRoundDeterminesFreshness() {
+        ResumeReconciliation.Candidate chat = candidate(OrchestrationStore.SIDE_CHAT,
+                "[AR_SEND_WORK JOB-7 S010 R001]");
+        ResumeReconciliation.Candidate work = candidate(OrchestrationStore.SIDE_WORK,
+                "[AR_SEND_CHAT JOB-7 S009 R999]");
+        assertSame(chat, decide(chat, work).selected);
+        chat = candidate(OrchestrationStore.SIDE_CHAT, "[AR_SEND_WORK JOB-7 S003 R010]");
+        work = candidate(OrchestrationStore.SIDE_WORK, "[AR_SEND_CHAT JOB-7 S003 R009]");
+        assertSame(chat, decide(chat, work).selected);
+    }
 
-        assertNull(ResumeReconciliation.highestCandidate(
-                ResumeReconciliation.RoomScan.idle(OrchestrationStore.SIDE_CHAT, first, conflict)));
+    @Test public void sameStepRoundChatUserActionWinsOtherwiseWorkWins() {
+        ResumeReconciliation.Candidate chat = candidate(OrchestrationStore.SIDE_CHAT,
+                "[AR_USER_ACTION_REQUIRED JOB-7 S003 R004 ACTION-1]");
+        ResumeReconciliation.Candidate work = candidate(OrchestrationStore.SIDE_WORK,
+                "[AR_SEND_CHAT JOB-7 S003 R004]");
+        ResumeReconciliation.Decision action = decide(chat, work);
+        assertEquals(ResumeReconciliation.DecisionType.USER_ACTION, action.type);
+        assertSame(chat, action.selected);
+
+        chat = candidate(OrchestrationStore.SIDE_CHAT, "[AR_SEND_WORK JOB-7 S005 R001]");
+        work = candidate(OrchestrationStore.SIDE_WORK, "[AR_SEND_CHAT JOB-7 S005 R001]");
+        assertSame(work, decide(chat, work).selected);
+    }
+
+    @Test public void recognizedPredecessorIsNotRequiredForValidAssistantSignal() {
+        assertNotNull(ResumeReconciliation.acceptCandidate(JOB, OrchestrationStore.SIDE_WORK,
+                "[AR_SEND_CHAT JOB-7 S001 R001]", "ordinary user text", "", -1, 4));
+    }
+
+    @Test public void duplicateSameSignalInOneRoomDeduplicatesByIdentity() {
+        ResumeReconciliation.Candidate first = ResumeReconciliation.acceptCandidate(JOB,
+                OrchestrationStore.SIDE_WORK, "[AR_SEND_CHAT JOB-7 S004 R002]", "", "", 1, 3);
+        ResumeReconciliation.Candidate later = ResumeReconciliation.acceptCandidate(JOB,
+                OrchestrationStore.SIDE_WORK, "[AR_SEND_CHAT JOB-7 S004 R002]", "", "", 7, 19);
+        ResumeReconciliation.Decision decision = ResumeReconciliation.select(
+                ResumeReconciliation.RoomScan.idle(OrchestrationStore.SIDE_CHAT),
+                ResumeReconciliation.RoomScan.idle(OrchestrationStore.SIDE_WORK, first, later));
+        assertEquals(ResumeReconciliation.DecisionType.ROUTE, decision.type);
+        assertEquals("[AR_SEND_CHAT JOB-7 S004 R002]", decision.selected.raw());
+    }
+
+    @Test public void conflictingSameRoomSignalsAtSamePositionFailClosed() {
+        ResumeReconciliation.Candidate send = candidate(OrchestrationStore.SIDE_CHAT,
+                "[AR_SEND_WORK JOB-7 S004 R002]");
+        ResumeReconciliation.Candidate cont = candidate(OrchestrationStore.SIDE_CHAT,
+                "[AR_CONTINUE_SAME JOB-7 S004 R002]");
+        assertEquals(ResumeReconciliation.DecisionType.AMBIGUOUS,
+                ResumeReconciliation.select(
+                        ResumeReconciliation.RoomScan.idle(OrchestrationStore.SIDE_CHAT, send, cont),
+                        ResumeReconciliation.RoomScan.idle(OrchestrationStore.SIDE_WORK)).type);
+    }
+
+    @Test public void malformedForeignWrongDirectionAndWorkTerminalAreExcluded() {
+        assertNull(candidate(OrchestrationStore.SIDE_CHAT, "[AR_SEND_WORK OTHER S001 R001]"));
+        assertNull(candidate(OrchestrationStore.SIDE_CHAT, "[AR_SEND_WORK JOB-7 S1 R001]"));
+        assertNull(candidate(OrchestrationStore.SIDE_WORK, "[AR_SEND_WORK JOB-7 S001 R001]"));
+        assertNull(candidate(OrchestrationStore.SIDE_WORK, "[AR_DONE JOB-7]"));
+    }
+
+    @Test public void chatTerminalStops() {
+        ResumeReconciliation.Candidate done = ResumeReconciliation.acceptCandidate(JOB,
+                OrchestrationStore.SIDE_CHAT, "[AR_DONE JOB-7]",
+                "[AUTOMATION_CHAT_REVIEW JOB-7 S004 R002]", "", 3, 5);
+        assertNotNull(done);
+        assertEquals(ResumeReconciliation.DecisionType.TERMINAL, decide(done, null).type);
     }
 }
