@@ -89,14 +89,16 @@ public final class AutomationScript {
         String requestedEffort = Schedule.normalizedReasoningEffort(schedule.experience, schedule.reasoningEffort);
         String modeSelection;
         if ("work".equals(schedule.experience)) {
+            // v0.1.15 baseline: click Work once, remember that action for this run,
+            // then continue on the next evaluation. The current ChatGPT project UI does
+            // not expose a reliable aria/data selected marker after the click.
             modeSelection =
                     "const mode=modeCandidate(['work','작업']);" +
-                    "let modeClicks=0;try{modeClicks=Math.max(0,Number(sessionStorage.getItem(modeKey)||0));}catch(_){}" +
+                    "let modePrior='';try{modePrior=sessionStorage.getItem(modeKey)||'';}catch(_){}" +
                     "const modeSelected=modeIsSelected(mode);" +
-                    "const modeDiagnostics={requested:'work',candidateFound:!!mode,candidateLabel:mode?clip(exactText((mode.innerText||'')+' '+(mode.getAttribute('aria-label')||'')),120):'',selected:modeSelected,clicked:false,clickCount:modeClicks};" +
-                    "if(mode&&!modeSelected){if(modeClicks>=3)return result('MODE_SELECTION_FAILED','Work 모드 실제 적용을 확인하지 못했습니다.',{...routeDiagnostics,mode:modeDiagnostics});modeClicks++;try{sessionStorage.setItem(modeKey,String(modeClicks));}catch(_){}mode.click();modeDiagnostics.clicked=true;modeDiagnostics.clickCount=modeClicks;}" +
-                    "if(modeDiagnostics.clicked)return result('RETRY','모드 전환 반영 대기',{...routeDiagnostics,mode:modeDiagnostics});" +
-                    "if(!modeSelected)return result('RETRY','Work 모드 실제 적용 상태 대기',{...routeDiagnostics,mode:modeDiagnostics});";
+                    "const modeDiagnostics={requested:'work',candidateFound:!!mode,candidateLabel:mode?clip(exactText((mode.innerText||'')+' '+(mode.getAttribute('aria-label')||'')),120):'',selected:modeSelected,clicked:false,priorClick:!!modePrior};" +
+                    "if(mode&&!modeSelected&&!modePrior){const value=JSON.stringify({at:Date.now(),label:modeDiagnostics.candidateLabel});try{sessionStorage.setItem(modeKey,value);}catch(_){}window[modeKey]=value;mode.click();modeDiagnostics.clicked=true;}" +
+                    "if(modeDiagnostics.clicked)return result('RETRY','모드 전환 반영 대기',{...routeDiagnostics,mode:modeDiagnostics});";
         } else {
             modeSelection =
                     "const mode=modeCandidate(['chat','채팅']);" +
