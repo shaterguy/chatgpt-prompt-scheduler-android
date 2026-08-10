@@ -28,34 +28,61 @@ jobs:
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
         with:
           gradle-version: '9.5.0'
-      - name: Apply NRV69Y recovery patch
-        run: |
-          set +e
-          set -u
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          rm -f tools/nrv69y_patch_error.txt
-          python tools/nrv69y_patch_plain1.py > /tmp/patch1.log 2>&1
-          rc1=$?
-          if [ "$rc1" -eq 0 ]; then python tools/nrv69y_patch_plain2.py > /tmp/patch2.log 2>&1; rc2=$?; else rc2=0; fi
-          if [ "$rc1" -ne 0 ] || [ "$rc2" -ne 0 ]; then
-            { echo "PATCH1_RC=$rc1"; cat /tmp/patch1.log; echo "PATCH2_RC=$rc2"; cat /tmp/patch2.log; } > tools/nrv69y_patch_error.txt
-            git add tools/nrv69y_patch_error.txt
-            if ! git diff --cached --quiet; then git commit -m 'Record NRV69Y readable patch failure'; git push origin HEAD:${{ github.head_ref }}; fi
-            exit 0
-          fi
-      - name: Diff check
-        run: git diff --check
-      - name: Unit tests
-        run: gradle --no-daemon --console=plain --stacktrace :app:testDebugUnitTest
-      - name: Build release
-        run: gradle --no-daemon --console=plain --stacktrace :app:assembleRelease
-      - name: Commit verified patch to branch
+      - name: Apply and materialize NRV69Y recovery patch
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add app/src/main/java app/src/test/java tools/nrv69y_patch_error.txt || true
-          if git diff --cached --quiet; then exit 0; fi
-          git commit -m 'Fix scheduler Work mode and autorun recovery'
-          git push origin HEAD:${{ github.head_ref }}
+          if grep -q 'ConversationTargetState' app/src/main/java/com/shaterguy/chatgptpromptscheduler/TargetParser.java; then
+            echo 'NRV69Y source already materialized; skipping patch scripts.'
+          else
+            rm -f tools/nrv69y_patch_error.txt
+            set +e
+            python tools/nrv69y_patch_plain1.py > /tmp/patch1.log 2>&1
+            rc1=$?
+            if [ "$rc1" -eq 0 ]; then
+              python tools/nrv69y_patch_plain2.py > /tmp/patch2.log 2>&1
+              rc2=$?
+            else
+              rc2=0
+            fi
+            set -e
+            if [ "$rc1" -ne 0 ] || [ "$rc2" -ne 0 ]; then
+              { echo "PATCH1_RC=$rc1"; cat /tmp/patch1.log; echo "PATCH2_RC=$rc2"; cat /tmp/patch2.log; } > tools/nrv69y_patch_error.txt
+              git add tools/nrv69y_patch_error.txt
+              if ! git diff --cached --quiet; then
+                git commit -m 'Record NRV69Y readable patch failure'
+                git push origin HEAD:${{ github.head_ref }}
+              fi
+              exit 1
+            fi
+            git diff --check
+            git add app/src/main/java app/src/test/java tools/nrv69y_patch_error.txt || true
+            if ! git diff --cached --quiet; then
+              git commit -m 'Materialize NRV69Y recovery patch'
+              git push origin HEAD:${{ github.head_ref }}
+            fi
+          fi
+      - name: Diff check
+        run: git diff --check
+      - name: Unit tests with persisted failure log
+        run: |
+          set +e
+          gradle --no-daemon --console=plain --stacktrace :app:testDebugUnitTest > /tmp/unit.log 2>&1
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            tail -n 500 /tmp/unit.log > tools/nrv69y_unit_failure.txt
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add tools/nrv69y_unit_failure.txt
+            if ! git diff --cached --quiet; then
+              git commit -m 'Record NRV69Y unit test failure'
+              git push origin HEAD:${{ github.head_ref }}
+            fi
+            cat /tmp/unit.log
+            exit "$rc"
+          fi
+          rm -f tools/nrv69y_unit_failure.txt
+      - name: Build release
+        run: gradle --no-daemon --console=plain --stacktrace :app:assembleRelease
