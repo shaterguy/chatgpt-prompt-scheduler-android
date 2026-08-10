@@ -4,6 +4,8 @@ import java.net.URI;
 import java.net.URISyntaxException;
 
 public final class TargetParser {
+    public enum ConversationTargetState { MATCH, TRANSIENT, DIFFERENT }
+
     private TargetParser() {}
 
     public static boolean isSupported(String url) {
@@ -39,8 +41,7 @@ public final class TargetParser {
 
         return switch (targetType) {
             case "existing" -> expectedConversation != null
-                    && expectedConversation.equals(actualConversation)
-                    && (expectedProject == null ? actualProject == null : expectedProject.equals(actualProject));
+                    && expectedConversation.equals(actualConversation);
             case "project" -> expectedProject != null
                     && expectedProject.equals(actualProject)
                     && actualConversation == null;
@@ -52,14 +53,36 @@ public final class TargetParser {
     }
 
     /**
+     * Conversation IDs are the canonical room identity. A temporary home/project-root/about:blank
+     * route is recoverable; only a concrete different /c/{id} proves a room change.
+     */
+    public static ConversationTargetState classifyConversationTarget(String expectedUrl, String actualUrl) {
+        String expectedConversation = conversationId(expectedUrl);
+        if (expectedConversation == null) return ConversationTargetState.DIFFERENT;
+        if (actualUrl == null || actualUrl.isBlank() || "about:blank".equalsIgnoreCase(actualUrl))
+            return ConversationTargetState.TRANSIENT;
+        if (!isSupported(actualUrl)) return ConversationTargetState.DIFFERENT;
+        String actualConversation = conversationId(actualUrl);
+        if (expectedConversation.equals(actualConversation)) return ConversationTargetState.MATCH;
+        if (actualConversation != null) return ConversationTargetState.DIFFERENT;
+        if (isHomePath(actualUrl)) return ConversationTargetState.TRANSIENT;
+        String expectedProject = projectId(expectedUrl);
+        String actualProject = projectId(actualUrl);
+        if (expectedProject != null && expectedProject.equals(actualProject) && isProjectHome(actualUrl))
+            return ConversationTargetState.TRANSIENT;
+        return ConversationTargetState.DIFFERENT;
+    }
+
+    public static boolean isTransientConversationRoute(String expectedUrl, String actualUrl) {
+        return classifyConversationTarget(expectedUrl, actualUrl) == ConversationTargetState.TRANSIENT;
+    }
+
+    /**
      * Startup-only identity check. ChatGPT may normalize a project conversation URL to another
      * SPA path while retaining the same /c/{conversationId}; that is still the same room.
      */
     public static boolean matchesConversationIdentity(String expectedUrl, String actualUrl) {
-        if (!isSupported(expectedUrl) || !isSupported(actualUrl)) return false;
-        String expectedConversation = conversationId(expectedUrl);
-        String actualConversation = conversationId(actualUrl);
-        return expectedConversation != null && expectedConversation.equals(actualConversation);
+        return classifyConversationTarget(expectedUrl, actualUrl) == ConversationTargetState.MATCH;
     }
 
     /** Accepts only the configured project and any conversation created inside that project. */
@@ -81,7 +104,15 @@ public final class TargetParser {
     }
 
     public static String mismatchDetail(String targetType, String expectedUrl, String actualUrl) {
-        return "type=" + targetType + " expected=" + expectedUrl + " actual=" + (actualUrl == null ? "" : actualUrl);
+        return "type=" + targetType
+                + " expected_project=" + value(projectId(expectedUrl))
+                + " expected_conversation=" + value(conversationId(expectedUrl))
+                + " actual_project=" + value(projectId(actualUrl))
+                + " actual_conversation=" + value(conversationId(actualUrl));
+    }
+
+    private static String value(String value) {
+        return value == null ? "" : value;
     }
 
     private static boolean isHomePath(String url) {

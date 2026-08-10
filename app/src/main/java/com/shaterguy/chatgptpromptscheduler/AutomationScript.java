@@ -72,7 +72,7 @@ public final class AutomationScript {
                 "const homePath=location.pathname==='/'||location.pathname==='';" +
                 "const routeDiagnostics={expectedType,expectedProject,expectedConversation,actualProject,actualConversation,afterSubmit,userMessages:users.length,promptAlreadyPresent};" +
                 "let targetOk=false;" +
-                "if(expectedType==='existing')targetOk=!!expectedConversation&&actualConversation===expectedConversation&&(expectedProject?actualProject===expectedProject:!actualProject);" +
+                "if(expectedType==='existing')targetOk=!!expectedConversation&&actualConversation===expectedConversation;" +
                 "else if(expectedType==='project')targetOk=!!expectedProject&&actualProject===expectedProject&&(!actualConversation||afterSubmit||promptAlreadyPresent||users.length===0);" +
                 "else if(expectedType==='general')targetOk=!actualProject&&((!actualConversation&&homePath)||(!!actualConversation&&(afterSubmit||promptAlreadyPresent||users.length===0)));" +
                 "if(!targetOk)return result('TARGET_CONTEXT_MISMATCH','expected='+expectedUrl+' actual='+location.href,routeDiagnostics);";
@@ -94,10 +94,10 @@ public final class AutomationScript {
                 "const forbiddenMode=/new chat|새 채팅|새 대화|new conversation/i;" +
                 "const modeCandidates=[...document.querySelectorAll('button,[role=\"button\"],[role=\"menuitemradio\"],[role=\"radio\"],[role=\"tab\"]')];" +
                 "const mode=modeCandidates.find(e=>{const inner=exactText(e.innerText||'');const aria=exactText(e.getAttribute('aria-label')||'');const combined=exactText(inner+' '+aria);if(forbiddenMode.test(combined))return false;const role=e.getAttribute('role')||'';const testId=exactText(e.dataset?.testid||'');const strong=e.hasAttribute('aria-pressed')||e.hasAttribute('aria-checked')||['menuitemradio','radio','tab'].includes(role)||e.getAttribute('aria-haspopup')==='menu'||/mode|experience/.test(testId);return strong&&(desiredModeLabels.includes(inner)||desiredModeLabels.includes(aria));});" +
-                "let modePrior='';try{modePrior=sessionStorage.getItem(modeKey)||'';}catch(_){}" +
+                "let modeClicks=0;try{modeClicks=Math.max(0,Number(sessionStorage.getItem(modeKey)||0));}catch(_){}" +
                 "const modeSelected=!!mode&&(mode.getAttribute('aria-pressed')==='true'||mode.getAttribute('aria-checked')==='true'||/active|selected|checked/.test(exactText(mode.dataset?.state||'')));" +
-                "const modeDiagnostics={requested:" + jsQuote(requestedMode) + ",candidateFound:!!mode,candidateLabel:mode?clip(exactText((mode.innerText||'')+' '+(mode.getAttribute('aria-label')||'')),120):'',selected:modeSelected,clicked:false,priorClick:!!modePrior};" +
-                "if(mode&&!modeSelected&&!modePrior){const value=JSON.stringify({at:Date.now(),label:modeDiagnostics.candidateLabel});try{sessionStorage.setItem(modeKey,value);}catch(_){}window[modeKey]=value;mode.click();modeDiagnostics.clicked=true;}" +
+                "const modeDiagnostics={requested:" + jsQuote(requestedMode) + ",candidateFound:!!mode,candidateLabel:mode?clip(exactText((mode.innerText||'')+' '+(mode.getAttribute('aria-label')||'')),120):'',selected:modeSelected,clicked:false,clickCount:modeClicks};" +
+                "if(mode&&!modeSelected){if(modeClicks>=3)return result('MODE_SELECTION_FAILED','Work/Chat 모드 실제 적용을 확인하지 못했습니다.',{...routeDiagnostics,mode:modeDiagnostics});modeClicks++;try{sessionStorage.setItem(modeKey,String(modeClicks));}catch(_){}mode.click();modeDiagnostics.clicked=true;modeDiagnostics.clickCount=modeClicks;}" +
                 "if(modeDiagnostics.clicked)return result('RETRY','모드 전환 반영 대기',{...routeDiagnostics,mode:modeDiagnostics});" +
                 ("work".equals(schedule.experience)
                         ? "if(!modeSelected)return result('RETRY','Work 모드 실제 적용 상태 대기',{...routeDiagnostics,mode:modeDiagnostics});"

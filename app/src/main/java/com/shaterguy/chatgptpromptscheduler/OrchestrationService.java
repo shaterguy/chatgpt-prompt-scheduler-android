@@ -236,7 +236,7 @@ public final class OrchestrationService extends Service implements AutomationRun
             settings.setAllowUniversalAccessFromFileURLs(false);
             settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
             String userAgent = settings.getUserAgentString();
-            settings.setUserAgentString(userAgent + " ChatGPTPromptScheduler/0.1.21 Orchestration/3.3.2");
+            settings.setUserAgentString(userAgent + " ChatGPTPromptScheduler/0.1.22 Orchestration/3.3.2");
             CookieManager.getInstance().setAcceptCookie(true);
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false);
             webView.setWebViewClient(new WebViewClient() {
@@ -248,12 +248,11 @@ public final class OrchestrationService extends Service implements AutomationRun
                     handler.removeCallbacks(stepRunnable);
                     log("WEBVIEW_PAGE_START", "generation=" + generation);
                     if (!matchesExpectedTarget(url)) {
-                        if (store.initialStartPending()) {
-                            // about:blank/home can be a transient SPA hop before ChatGPT restores
-                            // the requested conversation. Never authorize JS on this URL.
-                            log("INITIAL_START_TRANSIENT_ROUTE", "phase=page_start");
+                        if (store.initialStartPending() || isTransientExpectedTarget(url)) {
+                            log("TARGET_TRANSIENT_ROUTE", "phase=page_start");
+                            reloadInitialStartTarget("page_start");
                         } else {
-                            pauseWithError("TARGET_CHANGED", "중계 대상 대화가 바뀌었습니다.");
+                            pauseTargetChanged(url, "중계 대상 대화가 바뀌었습니다.");
                         }
                     }
                 }
@@ -261,8 +260,9 @@ public final class OrchestrationService extends Service implements AutomationRun
                 @Override
                 public void onPageFinished(WebView view, String url) {
                     if (!matchesExpectedTarget(url)) {
-                        if (store.initialStartPending()) reloadInitialStartTarget("page_finish");
-                        else pauseWithError("TARGET_CHANGED", "중계 대상 대화가 바뀌었습니다.");
+                        if (store.initialStartPending() || isTransientExpectedTarget(url))
+                            reloadInitialStartTarget("page_finish");
+                        else pauseTargetChanged(url, "중계 대상 대화가 바뀌었습니다.");
                         return;
                     }
                     resetInitialTargetRetry();
@@ -283,8 +283,14 @@ public final class OrchestrationService extends Service implements AutomationRun
                 @Override
                 public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
                     if (request.isForMainFrame()) {
-                        log("WEBVIEW_ERROR", "type=http;code=" + response.getStatusCode());
-                        pauseWithError("HTTP_ERROR", "중계 대화 서버가 오류 응답을 반환했습니다.");
+                        int code = response.getStatusCode();
+                        log("WEBVIEW_ERROR", "type=http;code=" + code);
+                        if (code == 429) {
+                            log("RATE_LIMIT_RETRY", "code=429");
+                            reloadInitialStartTarget("http_429");
+                        } else {
+                            pauseWithError("HTTP_ERROR", "중계 대화 서버가 오류 응답을 반환했습니다.");
+                        }
                     }
                 }
 
@@ -293,7 +299,9 @@ public final class OrchestrationService extends Service implements AutomationRun
                     if (!request.isForMainFrame()) return false;
                     String requested = String.valueOf(request.getUrl());
                     if (matchesExpectedTarget(requested)) return false;
-                    if (store.initialStartPending()) handler.post(() -> reloadInitialStartTarget("navigation"));
+                    if (store.initialStartPending() || isTransientExpectedTarget(requested))
+                        handler.post(() -> reloadInitialStartTarget("navigation"));
+                    else handler.post(() -> pauseTargetChanged(requested, "다른 대화로의 탐색을 차단했습니다."));
                     return true;
                 }
 
@@ -365,8 +373,9 @@ public final class OrchestrationService extends Service implements AutomationRun
         }
         String actualUrl = webView.getUrl();
         if (!matchesExpectedTarget(actualUrl)) {
-            if (store.initialStartPending()) reloadInitialStartTarget("step_guard");
-            else pauseWithError("TARGET_CHANGED", "중계 대상 대화가 바뀌어 자동 전송을 멈췄습니다.");
+            if (store.initialStartPending() || isTransientExpectedTarget(actualUrl))
+                reloadInitialStartTarget("step_guard");
+            else pauseTargetChanged(actualUrl, "중계 대상 대화가 바뀌어 자동 전송을 멈췄습니다.");
             return;
         }
 
@@ -441,8 +450,9 @@ public final class OrchestrationService extends Service implements AutomationRun
                 return;
             }
             if (!matchesExpectedTarget(active.getUrl())) {
-                if (store.initialStartPending()) reloadInitialStartTarget("evaluation_guard");
-                else pauseWithError("TARGET_CHANGED", "스크립트 실행 중 중계 대상 대화가 바뀌었습니다.");
+                if (store.initialStartPending() || isTransientExpectedTarget(active.getUrl()))
+                    reloadInitialStartTarget("evaluation_guard");
+                else pauseTargetChanged(active.getUrl(), "스크립트 실행 중 중계 대상 대화가 바뀌었습니다.");
                 return;
             }
             JSONObject result = parseObject(raw);
@@ -609,7 +619,9 @@ public final class OrchestrationService extends Service implements AutomationRun
                 return;
             }
             if (!matchesExpectedTarget(active.getUrl())) {
-                pauseReconciliationError("TARGET_CHANGED", "재개 재구성 중 대상 대화가 바뀌었습니다.");
+                if (isTransientExpectedTarget(active.getUrl()))
+                    reloadInitialStartTarget("reconcile_evaluation");
+                else pauseReconciliationError("TARGET_CHANGED", "재개 재구성 중 다른 대화 ID가 확인되었습니다.");
                 return;
             }
             JSONObject result = parseObject(raw);
@@ -642,23 +654,10 @@ public final class OrchestrationService extends Service implements AutomationRun
             return;
         }
         ResumeReconciliation.RoomScan scan = parseRoomScan(result, side);
-        if (scan.authRequired) {
-            pauseReconciliationError("AUTH_REQUIRED", "재개 재구성 중 명시적 로그인 화면을 확인했습니다.");
-            return;
-        }
         if (scan.generating) {
             log("RESUME_WAITING_FOR_IDLE", "side=" + safeCode(side));
             restartReconciliation("room_generating", true);
             scheduleReconciliationRetry("room_generating");
-            return;
-        }
-        String phase = store.reconciliationPhase();
-        if (OrchestrationStore.RECONCILIATION_CONFIRM_ROOMS.equals(phase)) {
-            handleReconciliationConfirmationRoom(scan, side);
-            return;
-        }
-        if (OrchestrationStore.RECONCILIATION_SOURCE_FRESHNESS.equals(phase)) {
-            handleReconciliationSourceFreshness(scan, side);
             return;
         }
         log("ROOM_IDLE_CONFIRMED", "side=" + safeCode(side));
@@ -667,15 +666,13 @@ public final class OrchestrationService extends Service implements AutomationRun
             reconciliationWorkScan = null;
             store.setReconciliationSide(OrchestrationStore.SIDE_WORK,
                     "재개 상태 재구성 중 · Work 대화 확인");
-            resetReconciliationPolling("discovery_room_switch");
+            resetReconciliationPolling("room_switch");
             cleanupWebView();
             handler.post(this::ensureEngine);
             return;
         }
         reconciliationWorkScan = scan;
-        ResumeReconciliation.Decision decision = ResumeReconciliation.select(
-                reconciliationChatScan, reconciliationWorkScan);
-        handleReconciliationDecision(decision);
+        handleReconciliationDecision(ResumeReconciliation.select(reconciliationChatScan, reconciliationWorkScan));
     }
 
     private void handleReconciliationConfirmationRoom(ResumeReconciliation.RoomScan scan, String side) {
@@ -779,9 +776,9 @@ public final class OrchestrationService extends Service implements AutomationRun
         }
         switch (decision.type) {
             case WAIT_FOR_IDLE -> {
-                log("RESUME_WAITING_FOR_IDLE", "side=both");
-                restartReconciliation("both_rooms_not_idle", true);
-                scheduleReconciliationRetry("both_rooms_not_idle");
+                log("RESUME_WAITING_FOR_IDLE", "side=both;reason=" + safeCode(decision.reason));
+                restartReconciliation(decision.reason, true);
+                scheduleReconciliationRetry(decision.reason);
             }
             case AMBIGUOUS -> {
                 store.reconciliationAmbiguous("RESUME_RECONCILE_AMBIGUOUS", decision.reason);
@@ -791,26 +788,30 @@ public final class OrchestrationService extends Service implements AutomationRun
                 stopRelay();
             }
             case USER_ACTION -> {
-                store.waitForUser(decision.selected.signal, decision.selected.sourceSide);
-                log("RESUME_STATE_REBUILT", "state=WAITING_USER;side="
-                        + safeCode(decision.selected.sourceSide));
-                NotificationHelper.orchestrationUserAction(this, decision.selected.sourceSide,
-                        store.runJobId(), decision.selected.signal.step, decision.selected.signal.round,
-                        decision.selected.signal.actionId);
-                stopRelay();
+                if (store.resumeUserActionRequested()) {
+                    store.rebuildForUserResolved(decision.selected.signal, decision.selected.sourceSide);
+                    log("RESUME_STATE_REBUILT", "state=USER_ACTION_REVALIDATION;side=CHAT");
+                    cleanupWebView();
+                    handler.post(this::ensureEngine);
+                } else {
+                    store.waitForUser(decision.selected.signal, decision.selected.sourceSide);
+                    log("RESUME_STATE_REBUILT", "state=WAITING_USER;side=" + safeCode(decision.selected.sourceSide));
+                    NotificationHelper.orchestrationUserAction(this, decision.selected.sourceSide,
+                            store.runJobId(), decision.selected.signal.step, decision.selected.signal.round,
+                            decision.selected.signal.actionId);
+                    stopRelay();
+                }
             }
             case TERMINAL -> {
                 store.finish(decision.selected.signal, decision.selected.sourceSide);
-                log("RESUME_STATE_REBUILT", "state=TERMINAL;type="
-                        + safeCode(decision.selected.signal.type.name()));
+                log("RESUME_STATE_REBUILT", "state=TERMINAL;type=" + safeCode(decision.selected.signal.type.name()));
                 NotificationHelper.orchestrationTerminal(this, decision.selected.signal.type, store.runJobId());
                 stopRelay();
             }
             case ROUTE -> {
-                reconciliationConfirmationChatScan = null;
-                reconciliationConfirmationWorkScan = null;
-                store.beginReconciliationConfirmation();
-                resetReconciliationPolling("confirmation_start");
+                String target = decision.targetSide();
+                store.setReconciliationTarget(target, OrchestrationStore.sideLabel(target) + " 재개 전달 중복 여부 확인");
+                resetReconciliationPolling("route_selected");
                 cleanupWebView();
                 handler.post(this::ensureEngine);
             }
@@ -820,99 +821,37 @@ public final class OrchestrationService extends Service implements AutomationRun
     private void handleReconciliationTarget(JSONObject result) {
         String status = result.optString("status", "SCRIPT_RESULT_INVALID");
         log("RESUME_TARGET_SCAN_RESULT", "status=" + safeCode(status));
-        if ("TARGET_CONTEXT_MISMATCH".equals(status) || "NETWORK_ERROR".equals(status)
-                || "AUTH_REQUIRED".equals(status)) {
+        if ("TARGET_CONTEXT_MISMATCH".equals(status) || "NETWORK_ERROR".equals(status) || "AUTH_REQUIRED".equals(status)) {
             pauseReconciliationError(status, fixedScriptMessage(status));
             return;
         }
-        if ("RETRY".equals(status)) {
-            scheduleReconciliationRetry("target_retry");
-            return;
-        }
-        if ("TARGET_GENERATING".equals(status)
-                || "TARGET_PROMPT_PRESENT_GENERATING".equals(status)) {
-            if ("TARGET_PROMPT_PRESENT_GENERATING".equals(status)) {
-                log("TARGET_PROMPT_ALREADY_PRESENT", "side=" + safeCode(store.reconciliationSide()));
-            }
-            log("RESUME_WAITING_FOR_IDLE", "side=" + safeCode(store.reconciliationSide()));
+        if ("RETRY".equals(status)) { scheduleReconciliationRetry("target_retry"); return; }
+        if ("TARGET_GENERATING".equals(status) || "TARGET_PROMPT_PRESENT_GENERATING".equals(status)) {
             restartReconciliation("target_generating", true);
             scheduleReconciliationRetry("target_generating");
             return;
         }
-        if ("TARGET_PROMPT_PRESENT_WITH_RESPONSE".equals(status)) {
-            log("TARGET_PROMPT_ALREADY_PRESENT", "side=" + safeCode(store.reconciliationSide()));
-            if (reconciliationRescanAttempts++ < 1) {
-                log("RESUME_RECONCILE_STARTED", "reason=target_response_recheck");
-                restartReconciliation("target_response_recheck", false);
-                cleanupWebView();
-                handler.post(this::ensureEngine);
-            } else {
-                pauseReconciliationAmbiguous("RESUME_TARGET_PROMPT_PRESENT_UNRESOLVED");
-            }
-            return;
+        if (reconciliationDecision == null || reconciliationDecision.selected == null) {
+            restartReconciliation("target_selection_missing"); return;
         }
         if ("TARGET_PROMPT_PRESENT_NO_RESPONSE".equals(status)) {
-            log("TARGET_PROMPT_ALREADY_PRESENT", "side=" + safeCode(store.reconciliationSide()));
-            log("RESUME_TARGET_PROMPT_PRESENT_NO_RESPONSE", "side=" + safeCode(store.reconciliationSide()));
-            if (reconciliationDecision == null || reconciliationDecision.selected == null) {
-                restartReconciliation("existing_prompt_selection_missing", false);
-                cleanupWebView();
-                handler.post(this::ensureEngine);
-                return;
-            }
-            if (!reconciliationFinalTargetScan) {
-                String source = reconciliationDecision.selected.sourceSide;
-                log("RESUME_SOURCE_FRESHNESS_CHECK", "side=" + safeCode(source)
-                        + ";reason=existing_prompt");
-                store.setReconciliationSourceFreshness(source,
-                        OrchestrationStore.sideLabel(source) + " 기존 프롬프트 복구 직전 후보 최신성 확인");
-                resetReconciliationPolling("source_freshness_start_existing_prompt");
-                cleanupWebView();
-                handler.post(this::ensureEngine);
-                return;
-            }
-            store.rebuildForExistingPrompt(reconciliationDecision.selected.signal,
-                    reconciliationDecision.selected.sourceSide);
+            store.rebuildForExistingPrompt(reconciliationDecision.selected.signal, reconciliationDecision.selected.sourceSide);
             reconciliationDeliveryInProgress = false;
             log("RESUME_STATE_REBUILT", "state=WAITING_RESPONSE;reason=existing_prompt");
-            log("RESUME_EXISTING_PROMPT_MONITOR", "side="
-                    + safeCode(reconciliationDecision.targetSide()));
-            cleanupWebView();
-            handler.post(this::ensureEngine);
-            return;
+            cleanupWebView(); handler.post(this::ensureEngine); return;
         }
-        if ("TARGET_PROMPT_MULTIPLE".equals(status)) {
-            log("TARGET_PROMPT_ALREADY_PRESENT", "side=" + safeCode(store.reconciliationSide()));
-            pauseReconciliationAmbiguous("RESUME_TARGET_PROMPT_MULTIPLE");
-            return;
+        if ("TARGET_PROMPT_PRESENT_WITH_RESPONSE".equals(status)) {
+            restartReconciliation("target_response_present", false);
+            cleanupWebView(); handler.post(this::ensureEngine); return;
         }
+        if ("TARGET_PROMPT_MULTIPLE".equals(status)) { pauseReconciliationAmbiguous("RESUME_TARGET_PROMPT_MULTIPLE"); return; }
         if (!"TARGET_PROMPT_ABSENT".equals(status)) {
-            pauseReconciliationError("RECONCILE_TARGET_SCAN_FAILED", "재개 대상 대화의 중복 여부를 확인하지 못했습니다.");
-            return;
+            pauseReconciliationError("RECONCILE_TARGET_SCAN_FAILED", "재개 대상 대화의 중복 여부를 확인하지 못했습니다."); return;
         }
-        if (reconciliationDecision == null || reconciliationDecision.selected == null) {
-            restartReconciliation("target_selection_missing");
-            return;
-        }
-        if (!reconciliationFinalTargetScan) {
-            String source = reconciliationDecision.selected.sourceSide;
-            log("RESUME_SOURCE_FRESHNESS_CHECK", "side=" + safeCode(source));
-            store.setReconciliationSourceFreshness(source,
-                    OrchestrationStore.sideLabel(source) + " 재개 후보 최신성 확인");
-            resetReconciliationPolling("source_freshness_start");
-            cleanupWebView();
-            handler.post(this::ensureEngine);
-            return;
-        }
-        log("RESUME_REPLAY_SUBMITTING", "side=" + safeCode(reconciliationDecision.targetSide())
-                + ";type=" + safeCode(reconciliationDecision.selected.signal.type.name()));
-        store.rebuildForReconciliation(reconciliationDecision.selected.signal,
-                reconciliationDecision.selected.sourceSide);
+        store.rebuildForReconciliation(reconciliationDecision.selected.signal, reconciliationDecision.selected.sourceSide);
         reconciliationDeliveryInProgress = true;
-        log("RESUME_STATE_REBUILT", "state=DELIVERY_PENDING;side="
-                + safeCode(reconciliationDecision.targetSide()));
-        cleanupWebView();
-        handler.post(this::ensureEngine);
+        log("RESUME_STATE_REBUILT", "state=DELIVERY_PENDING;side=" + safeCode(reconciliationDecision.targetSide()));
+        cleanupWebView(); handler.post(this::ensureEngine);
     }
 
     private void pauseReconciliationAmbiguous(String code) {
@@ -1428,12 +1367,11 @@ public final class OrchestrationService extends Service implements AutomationRun
      * wait until its conversation identity is visible instead of failing on transient SPA routes.
      */
     private void reloadInitialStartTarget(String reason) {
-        if (!store.initialStartPending() || webView == null || scheduleHasPriority()
-                || initialTargetReloadScheduled) return;
+        if (webView == null || scheduleHasPriority() || initialTargetReloadScheduled) return;
         AdaptivePolling.Decision decision = initialTargetPolling.onRetry(store.epoch());
         initialTargetReloadScheduled = true;
         initialTargetReloadReason = safeCode(reason.toUpperCase());
-        log("INITIAL_START_TARGET_RETRY", "reason=" + initialTargetReloadReason
+        log("TARGET_RETRY", "reason=" + initialTargetReloadReason
                 + ";retry=" + decision.retryCount + ";tier=" + decision.tier
                 + ";delay_ms=" + decision.delayMs);
         handler.postDelayed(initialTargetReloadRunnable, decision.delayMs);
@@ -1441,7 +1379,7 @@ public final class OrchestrationService extends Service implements AutomationRun
 
     private void performInitialTargetReload() {
         initialTargetReloadScheduled = false;
-        if (!store.initialStartPending() || webView == null) return;
+        if (webView == null) return;
         if (scheduleHasPriority()) {
             yieldForSchedule();
             return;
@@ -1451,9 +1389,13 @@ public final class OrchestrationService extends Service implements AutomationRun
             scheduleStep(500L);
             return;
         }
-        String expected = store.runChatUrl();
-        store.setStatus("일반 Chat 시작 대화 다시 여는 중");
-        log("INITIAL_START_TARGET_RELOAD", "reason=" + initialTargetReloadReason);
+        String expected = currentRelayTargetUrl();
+        if (expected.isEmpty()) {
+            pauseWithError("TARGET_URL_MISSING", "복구할 중계 대화 URL이 없습니다.");
+            return;
+        }
+        store.setStatus(OrchestrationStore.sideLabel(activeTargetSide()) + " 대화 다시 여는 중");
+        log("TARGET_RELOAD", "reason=" + initialTargetReloadReason);
         webView.stopLoading();
         webView.loadUrl(expected);
     }
@@ -1463,6 +1405,16 @@ public final class OrchestrationService extends Service implements AutomationRun
         initialTargetReloadScheduled = false;
         initialTargetReloadReason = "";
         initialTargetPolling.reset(store.epoch());
+    }
+
+    private boolean isTransientExpectedTarget(String actualUrl) {
+        if (store.bootstrapProvisioning()) return false;
+        return TargetParser.isTransientConversationRoute(currentRelayTargetUrl(), actualUrl);
+    }
+
+    private void pauseTargetChanged(String actualUrl, String detail) {
+        log("TARGET_MISMATCH", TargetParser.mismatchDetail("existing", currentRelayTargetUrl(), actualUrl));
+        pauseWithError("TARGET_CHANGED", detail);
     }
 
     private String activeTargetSide() {
