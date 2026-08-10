@@ -34,27 +34,16 @@ jobs:
           set -u
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          cat tools/nrv69y_patch_parts/[0-9][0-9].b64 | tr -d '\n' | base64 -d > /tmp/nrv69y_patch.py 2>/tmp/decode-error.txt
-          decode_rc=$?
-          if [ "$decode_rc" -ne 0 ]; then
-            { echo "BASE64_DECODE_FAILED rc=$decode_rc"; cat /tmp/decode-error.txt; } > tools/nrv69y_patch_error.txt
-            git add tools/nrv69y_patch_error.txt
-            if ! git diff --cached --quiet; then git commit -m 'Record NRV69Y patch decode failure'; git push origin HEAD:${{ github.head_ref }}; fi
-            exit 0
-          fi
-          {
-            echo "decoded_bytes=$(wc -c < /tmp/nrv69y_patch.py)"
-            echo "decoded_sha256=$(sha256sum /tmp/nrv69y_patch.py | awk '{print $1}')"
-          } > /tmp/patch-meta.txt
-          python /tmp/nrv69y_patch.py > /tmp/patch-log.txt 2>&1
-          patch_rc=$?
-          if [ "$patch_rc" -ne 0 ]; then
-            { cat /tmp/patch-meta.txt; echo "PATCH_FAILED rc=$patch_rc"; cat /tmp/patch-log.txt; } > tools/nrv69y_patch_error.txt
-            git add tools/nrv69y_patch_error.txt
-            if ! git diff --cached --quiet; then git commit -m 'Record NRV69Y patch failure'; git push origin HEAD:${{ github.head_ref }}; fi
-            exit 0
-          fi
           rm -f tools/nrv69y_patch_error.txt
+          python tools/nrv69y_patch_plain1.py > /tmp/patch1.log 2>&1
+          rc1=$?
+          if [ "$rc1" -eq 0 ]; then python tools/nrv69y_patch_plain2.py > /tmp/patch2.log 2>&1; rc2=$?; else rc2=0; fi
+          if [ "$rc1" -ne 0 ] || [ "$rc2" -ne 0 ]; then
+            { echo "PATCH1_RC=$rc1"; cat /tmp/patch1.log; echo "PATCH2_RC=$rc2"; cat /tmp/patch2.log; } > tools/nrv69y_patch_error.txt
+            git add tools/nrv69y_patch_error.txt
+            if ! git diff --cached --quiet; then git commit -m 'Record NRV69Y readable patch failure'; git push origin HEAD:${{ github.head_ref }}; fi
+            exit 0
+          fi
       - name: Diff check
         run: git diff --check
       - name: Unit tests
