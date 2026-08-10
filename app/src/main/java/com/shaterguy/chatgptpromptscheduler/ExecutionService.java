@@ -35,10 +35,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class ExecutionService extends Service {
     private static final int NOTIFICATION_ID = 7010;
-    private static final int MAX_ROUTE_RECOVERIES = 3;
+    private static final int MAX_ROUTE_RECOVERIES = CanonicalTargetRecoveryPolicy.MAX_REENTRIES;
     private static final int MAX_TRACE_EVENTS = 120;
     private static final long MAX_RATE_LIMIT_WAIT_MS = 45_000L;
-    private static final long MAX_UI_WAIT_MS = 45_000L;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final AtomicBoolean processing = new AtomicBoolean(false);
     private final Runnable automationRunnable = this::runAutomationStep;
@@ -46,7 +45,7 @@ public final class ExecutionService extends Service {
     private final Runnable rateLimitRecoveryRunnable = this::performRateLimitRecovery;
     private final Runnable targetRecoveryRunnable = this::performTargetRouteRecovery;
     private final RecoveryBackoff rateLimitBackoff = new RecoveryBackoff();
-    private final RecoveryBackoff targetRecoveryBackoff = new RecoveryBackoff();
+    private final RecoveryBackoff canonicalReentryBackoff = new RecoveryBackoff();
     private QueueStore queueStore;
     private ConfigStore configStore;
     private RunLogStore logStore;
@@ -74,6 +73,7 @@ public final class ExecutionService extends Service {
     private boolean rateLimitWaiting;
     private boolean rateLimitRecoveryScheduled;
     private boolean targetRecoveryScheduled;
+    private boolean canonicalReentryForced;
     private JSONArray traceEvents = new JSONArray();
 
     @Override
@@ -170,8 +170,9 @@ public final class ExecutionService extends Service {
         rateLimitWaiting = false;
         rateLimitRecoveryScheduled = false;
         targetRecoveryScheduled = false;
+        canonicalReentryForced = false;
         rateLimitBackoff.reset();
-        targetRecoveryBackoff.reset();
+        canonicalReentryBackoff.reset();
         stampedPrompt = recoveredSubmission ? persistedPrompt : TimestampUtil.prefix(startedAt, currentSchedule.prompt);
         trace("RUN_STARTED", object("timeoutSeconds", Math.max(1L, (deadline - startedAt) / 1000L),
                 "promptLength", stampedPrompt.length(), "recoveredSubmission", recoveredSubmission));
@@ -530,8 +531,18 @@ public final class ExecutionService extends Service {
         lastRetryDetail = detail;
         trace("UI_WAIT", object("detail", detail, "attempt", uiWaitAttempts,
                 "elapsedMs", Math.max(0L, now - uiWaitStartedAt)));
-        if (now - uiWaitStartedAt >= MAX_UI_WAIT_MS || now >= deadline) {
+        if (now >= deadline) {
             finish(false, "UI_NOT_READY", contextualDetail(detail));
+            return;
+        }
+        CanonicalTargetRecoveryPolicy.Decision decision = CanonicalTargetRecoveryPolicy.decide(
+                now, uiWaitStartedAt, true, true, false, false, routeRecoveryAttempts);
+        if (decision == CanonicalTargetRecoveryPolicy.Decision.REENTER) {
+            recoverTargetRoute("UI readiness grace exceeded: " + valueOrEmpty(detail), true);
+            return;
+        }
+        if (decision == CanonicalTargetRecoveryPolicy.Decision.EXHAUSTED) {
+            finish(false, "TARGET_ROUTE_RECOVERY_FAILED", contextualDetail("canonical target re-entry budget exhausted"));
             return;
         }
         scheduleAutomationStep(Math.min(1_500L, RecoveryBackoff.delayForAttempt(uiWaitAttempts)));
@@ -539,7 +550,7 @@ public final class ExecutionService extends Service {
 
     private void recoverFromRateLimit(String source, String detail) {
         if (currentItem == null) return;
-        clearTargetRecovery("rate_limit_detected");
+        suspendTargetRecoveryForRateLimit();
         long now = System.currentTimeMillis();
         if (rateLimitStartedAt == 0L) {
             rateLimitStartedAt = now;
@@ -574,21 +585,22 @@ public final class ExecutionService extends Service {
             recoverEngine("RATE_LIMIT_WEBVIEW_MISSING", "rate-limit recovery lost the WebView");
             return;
         }
-        if (webView.getProgress() < 100) {
-            recoverFromRateLimit("REOBSERVE_LOADING", "rate-limit recovery is still observing page load");
-            return;
-        }
         String actual = valueOrEmpty(webView.getUrl());
         lastObservedUrl = actual;
-        if (matchesCurrentTarget(actual)) {
+        boolean pageFinished = webView.getProgress() >= 100;
+        boolean targetReady = matchesCurrentTarget(actual);
+        if (targetReady && pageFinished) {
             clearRateLimitRecovery("target_reobserved");
+            clearTargetRecovery("rate_limit_target_reobserved");
             trace("RATE_LIMIT_REOBSERVED", object("url", actual, "progress", webView.getProgress()));
             scheduleAutomationStep(0L);
             return;
         }
         boolean recoverable = isRecoverableTarget(actual);
         clearRateLimitRecovery(recoverable ? "target_restore_after_wait" : "target_changed_after_wait");
-        if (recoverable) recoverTargetRoute("rate-limit recovery target reobserve");
+        if (recoverable) {
+            recoverTargetRoute("rate-limit recovery target reobserve", !pageFinished);
+        }
         else finish(false, "TARGET_CHANGED", contextualDetail("rate-limit recovery observed a different conversation"));
     }
 
@@ -614,13 +626,28 @@ public final class ExecutionService extends Service {
 
     private void clearTargetRecovery(String reason) {
         if (targetRecoveryStartedAt != 0L || targetRecoveryScheduled) {
-            trace("TARGET_RECOVERY_CLEAR", object("reason", reason, "attempt", targetRecoveryBackoff.attempt()));
+            trace("TARGET_RECOVERY_CLEAR", object("reason", reason, "attempt", canonicalReentryBackoff.attempt(),
+                    "reentries", routeRecoveryAttempts));
         }
         handler.removeCallbacks(targetRecoveryRunnable);
         targetRecoveryScheduled = false;
         targetRecoveryStartedAt = 0L;
-        targetRecoveryBackoff.reset();
+        canonicalReentryBackoff.reset();
         routeRecoveryAttempts = 0;
+        canonicalReentryForced = false;
+    }
+
+    /** Cancel only the pending target callback; preserve the shared re-entry budget. */
+    private void suspendTargetRecoveryForRateLimit() {
+        if (targetRecoveryScheduled || targetRecoveryStartedAt != 0L) {
+            trace("TARGET_RECOVERY_SUSPEND", object("reason", "rate_limit",
+                    "reentries", routeRecoveryAttempts,
+                    "backoffAttempt", canonicalReentryBackoff.attempt()));
+        }
+        handler.removeCallbacks(targetRecoveryRunnable);
+        targetRecoveryScheduled = false;
+        targetRecoveryStartedAt = 0L;
+        canonicalReentryForced = false;
     }
 
     private boolean matchesCurrentTarget(String actualUrl) {
@@ -640,14 +667,20 @@ public final class ExecutionService extends Service {
     }
 
     private void recoverTargetRoute(String detail) {
+        recoverTargetRoute(detail, false);
+    }
+
+    private void recoverTargetRoute(String detail, boolean forceReentry) {
         lastRetryDetail = detail;
+        canonicalReentryForced = canonicalReentryForced || forceReentry;
         trace("TARGET_ROUTE_MISMATCH", object("detail", detail, "attempt", routeRecoveryAttempts,
                 "requested", currentSchedule == null ? "" : currentSchedule.targetUrl, "actual", lastObservedUrl));
         if (currentSchedule == null || !isRecoverableTarget(lastObservedUrl)) {
             finish(false, "TARGET_CHANGED", contextualDetail(detail));
             return;
         }
-        if (routeRecoveryAttempts >= MAX_ROUTE_RECOVERIES || System.currentTimeMillis() >= deadline) {
+        if (!CanonicalTargetRecoveryPolicy.canReenter(routeRecoveryAttempts)
+                || System.currentTimeMillis() >= deadline) {
             finish(false, "TARGET_ROUTE_RECOVERY_FAILED", contextualDetail(detail));
             return;
         }
@@ -657,15 +690,15 @@ public final class ExecutionService extends Service {
             return;
         }
         if (targetRecoveryScheduled) return;
-        routeRecoveryAttempts++;
         pageAttempts = 0;
         clearUiWaitRecovery("target_restore");
-        startAsForeground(currentSchedule.name + " 대상 대화 복구 중 " + routeRecoveryAttempts + "/" + MAX_ROUTE_RECOVERIES);
+        int nextAttempt = routeRecoveryAttempts + 1;
+        startAsForeground(currentSchedule.name + " 대상 대화 복구 중 " + nextAttempt + "/" + MAX_ROUTE_RECOVERIES);
         cancelAutomationStep();
         stepInFlight = false;
-        RecoveryBackoff.Decision decision = targetRecoveryBackoff.next();
+        RecoveryBackoff.Decision decision = canonicalReentryBackoff.next();
         targetRecoveryScheduled = true;
-        trace("TARGET_ROUTE_RECOVERY_WAIT", object("attempt", routeRecoveryAttempts,
+        trace("TARGET_ROUTE_RECOVERY_WAIT", object("attempt", nextAttempt,
                 "backoffAttempt", decision.attempt, "delayMs", decision.delayMs,
                 "requested", currentSchedule.targetUrl, "actual", lastObservedUrl));
         handler.postDelayed(targetRecoveryRunnable, decision.delayMs);
@@ -682,22 +715,40 @@ public final class ExecutionService extends Service {
         }
         String actual = valueOrEmpty(webView.getUrl());
         lastObservedUrl = actual;
-        if (matchesCurrentTarget(actual)) {
+        if (matchesCurrentTarget(actual) && !canonicalReentryForced) {
             clearTargetRecovery("target_reobserved");
             trace("TARGET_ROUTE_REOBSERVED", object("url", actual, "progress", webView.getProgress()));
             scheduleAutomationStep(0L);
             return;
         }
-        if (webView.getProgress() < 100) {
-            recoverTargetRoute("target restoration is still loading");
+        if (!isRecoverableTarget(actual)) {
+            clearTargetRecovery("target_changed_before_reentry");
+            finish(false, "TARGET_CHANGED", contextualDetail("target restoration observed a different conversation"));
             return;
         }
         clearRateLimitRecovery("target_restore_navigation");
+        reenterCanonicalTargetUrl("target_restore", actual);
+    }
+
+    /** The only recovery navigation side effect for scheduled execution. */
+    private void reenterCanonicalTargetUrl(String reason, String actualUrl) {
+        if (webView == null || currentSchedule == null) return;
+        if (!CanonicalTargetRecoveryPolicy.canReenter(routeRecoveryAttempts)) {
+            finish(false, "TARGET_ROUTE_RECOVERY_FAILED", contextualDetail("canonical target re-entry budget exhausted"));
+            return;
+        }
+        String canonicalUrl = currentSchedule.targetUrl;
+        if (canonicalUrl == null || canonicalUrl.isBlank()) {
+            finish(false, "TARGET_URL_INVALID", "복구할 canonical target URL이 없습니다.");
+            return;
+        }
+        routeRecoveryAttempts++;
         navigationGeneration++;
         stepInFlight = false;
-        trace("TARGET_ROUTE_RESTORE", object("attempt", routeRecoveryAttempts,
-                "requested", currentSchedule.targetUrl, "actual", actual));
-        webView.loadUrl(currentSchedule.targetUrl);
+        canonicalReentryForced = false;
+        trace("CANONICAL_TARGET_REENTRY", object("reason", reason, "attempt", routeRecoveryAttempts,
+                "requested", canonicalUrl, "actual", actualUrl, "progress", webView.getProgress()));
+        webView.loadUrl(canonicalUrl);
     }
 
     private String retryFailureStatus(String detail) {
@@ -857,7 +908,8 @@ public final class ExecutionService extends Service {
         rateLimitStartedAt = 0L;
         targetRecoveryStartedAt = 0L;
         rateLimitBackoff.reset();
-        targetRecoveryBackoff.reset();
+        canonicalReentryBackoff.reset();
+        canonicalReentryForced = false;
         navigationGeneration++;
         stepInFlight = false;
         if (webViewHost != null) {
