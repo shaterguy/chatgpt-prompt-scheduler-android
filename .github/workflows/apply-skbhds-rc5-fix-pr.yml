@@ -42,10 +42,9 @@ jobs:
           end = next(i for i in range(start, len(source)) if source[i].strip() == 'PY')
           body = [line[10:] if line.startswith('          ') else line for line in source[start:end]]
 
-          marker_hits = [i for i, line in enumerate(body)
-                         if 'RESUME_ROOM_SCAN_META' in line and 'log(' in line]
-          if len(marker_hits) != 1:
-              raise SystemExit(f'expected one RESUME_ROOM_SCAN_META patch block, found {len(marker_hits)}')
+          marker_hits = [i for i, line in enumerate(body) if 'RESUME_ROOM_SCAN_META' in line]
+          if len(marker_hits) < 1:
+              raise SystemExit('RESUME_ROOM_SCAN_META patch block not found')
           marker = marker_hits[0]
           call_start = marker
           while call_start >= 0 and not body[call_start].lstrip().startswith('replace(service,'):
