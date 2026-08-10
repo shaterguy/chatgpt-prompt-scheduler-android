@@ -1,4 +1,4 @@
-name: NRV69Y RC4 Resume Recovery Fix
+name: SKBHDS RC6 WAITING_USER Resume Fix
 on:
   pull_request:
     branches: [main]
@@ -6,7 +6,7 @@ permissions:
   contents: write
 jobs:
   patch-and-test:
-    if: github.head_ref == 'fix/nrv69y-resume-target-v0.1.22'
+    if: github.head_ref == 'fix/skbhds-rc4-recovery-followup'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -26,30 +26,28 @@ jobs:
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
         with:
           gradle-version: '9.5.0'
-      - name: Apply RC4 resume recovery fix
+      - name: Apply RC6 WAITING_USER resume fix
         run: |
           set -euo pipefail
-          python tools/nrv69y_rc4_resume_fix.py
+          python tools/skbhds_rc6_waiting_user_resume_fix.py
           git diff --check
       - name: Unit tests
         run: gradle --no-daemon --console=plain --stacktrace :app:testDebugUnitTest
       - name: Release build
         run: gradle --no-daemon --console=plain --stacktrace :app:assembleRelease
-      - name: Commit tested RC4 source changes
+      - name: Commit tested RC6 source changes
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add app/build.gradle \
-            app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationScript.java \
-            app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationService.java \
-            app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationStore.java \
-            app/src/test/java/com/shaterguy/chatgptpromptscheduler/OrchestrationSignalTest.java \
-            app/src/test/java/com/shaterguy/chatgptpromptscheduler/ResumeReconciliationTest.java
+            app/src/main/java/com/shaterguy/chatgptpromptscheduler/OrchestrationActivity.java \
+            app/src/test/java/com/shaterguy/chatgptpromptscheduler/UnifiedResumeTest.java \
+            app/src/test/java/com/shaterguy/chatgptpromptscheduler/Rc6WaitingUserResumeRegressionTest.java
           git diff --cached --check
           if git diff --cached --quiet; then
-            echo 'RC4 source already materialized'
+            echo 'RC6 source already materialized'
           else
-            git commit -m 'Fix autorun Resume reconciliation loop for RC4'
+            git commit -m 'Fix WAITING_USER resume routing for RC6'
             git push origin HEAD:${{ github.head_ref }}
           fi
