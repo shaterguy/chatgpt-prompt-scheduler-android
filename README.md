@@ -2,14 +2,16 @@
 
 ChatGPT 웹 세션에 예약 프롬프트를 자동 전송하는 독립 Android 앱입니다. Chrome 확장프로그램이나 외부 브라우저에 의존하지 않습니다.
 
-- versionName: `0.1.21`
-- versionCode: `22`
+- versionName: `2100000000`
+- versionCode: `2100000000`
 - Application ID: `com.shaterguy.chatgptpromptscheduler`
 - Android 8.0 이상
 
+v2100000000은 v0.1.21의 기능 코드와 동작을 그대로 유지하면서, 사용자 실기기 재설치 성공이 확인된 최대 versionCode/versionName으로 버전 메타데이터만 상향한 정식 릴리스입니다.
+
 일반·프로젝트·기존 대화, Chat·Work 모드, 일회성·매일·매주·분 간격 반복, 기존 입력 교체, 설정 JSON 내보내기·가져오기, 스마트폰·태블릿 UI를 지원합니다.
 
-v0.1.21의 Protocol 3.3 오토런은 앱이 bootstrap 권한을 가집니다. Job ID를 자동 생성하고 지정 프로젝트에 실행 전용 일반 Chat을 만든 뒤, 첫 `AR_SEND_WORK` 때 같은 프로젝트에 Work를 지연 생성합니다. 두 대화의 실제 URL은 첫 사용자 턴과 프로젝트 경로를 함께 확인한 뒤 저장합니다. 기존 예약 생성·저장·알림·실행 경로와 JSON 형식은 변경하지 않았습니다.
+기능 기준은 v0.1.21과 동일합니다. Protocol 3.3 오토런은 앱이 bootstrap 권한을 가집니다. Job ID를 자동 생성하고 지정 프로젝트에 실행 전용 일반 Chat을 만든 뒤, 첫 `AR_SEND_WORK` 때 같은 프로젝트에 Work를 지연 생성합니다. 두 대화의 실제 URL은 첫 사용자 턴과 프로젝트 경로를 함께 확인한 뒤 저장합니다. 기존 예약 생성·저장·알림·실행 경로와 JSON 형식은 변경하지 않았습니다.
 
 ## 오토런 중계 사용
 
