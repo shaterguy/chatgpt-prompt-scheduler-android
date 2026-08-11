@@ -6,7 +6,7 @@ import java.util.regex.Pattern;
 
 /** Strict, bounded Protocol 3.x control-signal parser with safe diagnostics. */
 public final class OrchestrationSignal {
-    public enum Type { SEND_WORK, SEND_CHAT, CONTINUE_SAME, USER_ACTION_REQUIRED, DONE, PAUSE, ABORTED }
+    public enum Type { SEND_WORK, SEND_CHAT, USER_ACTION_REQUIRED, DONE, PAUSE, ABORTED }
 
     public enum ErrorCode {
         NONE,
@@ -35,7 +35,6 @@ public final class OrchestrationSignal {
     private static final String JOB = "([A-Za-z0-9][A-Za-z0-9._-]{0,63})";
     private static final String ACTION = "([A-Za-z0-9][A-Za-z0-9._-]{0,63})";
     private static final Pattern ROUTE = Pattern.compile("^\\[AR_(SEND_WORK|SEND_CHAT) " + JOB + " (S\\d{3}) (R\\d{3})]$");
-    private static final Pattern CONTINUE_SAME = Pattern.compile("^\\[AR_CONTINUE_SAME " + JOB + " (S\\d{3}) (R\\d{3})]$");
     private static final Pattern USER_ACTION = Pattern.compile("^\\[AR_USER_ACTION_REQUIRED " + JOB + " (S\\d{3}) (R\\d{3}) " + ACTION + "]$");
     private static final Pattern TERMINAL = Pattern.compile("^\\[AR_(DONE|PAUSE|ABORTED) " + JOB + "]$");
     private static final Pattern ANY_CONTROL = Pattern.compile("^\\[AR_[^\\r\\n]{1,256}]$");
@@ -84,12 +83,6 @@ public final class OrchestrationSignal {
             Type type = "SEND_WORK".equals(route.group(1)) ? Type.SEND_WORK : Type.SEND_CHAT;
             return ok(new OrchestrationSignal(type, job, route.group(3), route.group(4), "", raw));
         }
-        Matcher same = CONTINUE_SAME.matcher(raw);
-        if (same.matches()) {
-            String job = same.group(1);
-            if (!job.equals(expectedJobId)) return error(ErrorCode.WRONG_JOB);
-            return ok(new OrchestrationSignal(Type.CONTINUE_SAME, job, same.group(2), same.group(3), "", raw));
-        }
         Matcher userAction = USER_ACTION.matcher(raw);
         if (userAction.matches()) {
             String job = userAction.group(1);
@@ -109,29 +102,12 @@ public final class OrchestrationSignal {
 
     public static ParseResult validate(String response, String expectedJobId, String sourceSide,
                                        String previousStep, String previousRound, String lastSignal) {
-        return validate(response, expectedJobId, sourceSide, previousStep, previousRound, lastSignal,
-                Long.MIN_VALUE, Long.MIN_VALUE);
-    }
-
-    /**
-     * Validates a response against the durable response epoch. A repeated SAME-SIDE signal is
-     * still rejected within one assistant response, but the same raw signal is valid again after
-     * a later response epoch because it is a continuation trigger rather than a global nonce.
-     */
-    public static ParseResult validate(String response, String expectedJobId, String sourceSide,
-                                       String previousStep, String previousRound, String lastSignal,
-                                       long responseEpoch, long lastSignalResponseEpoch) {
         ParseResult parsed = parseDetailed(response, expectedJobId);
         if (!parsed.isValid()) return parsed;
         OrchestrationSignal signal = parsed.signal;
         // Re-validation may legitimately return the same unresolved ACTION_ID after USER_RESOLVED.
-        if (signal.raw.equals(lastSignal) && signal.type != Type.USER_ACTION_REQUIRED) {
-            boolean laterSameSideEpoch = signal.type == Type.CONTINUE_SAME
-                    && responseEpoch != Long.MIN_VALUE
-                    && lastSignalResponseEpoch != Long.MIN_VALUE
-                    && responseEpoch != lastSignalResponseEpoch;
-            if (!laterSameSideEpoch) return error(ErrorCode.DUPLICATE);
-        }
+        if (signal.raw.equals(lastSignal) && signal.type != Type.USER_ACTION_REQUIRED)
+            return error(ErrorCode.DUPLICATE);
         if (signal.isOlderThan(previousStep, previousRound)) return error(ErrorCode.STALE);
         if ((signal.type == Type.DONE || signal.type == Type.PAUSE || signal.type == Type.ABORTED)
                 && OrchestrationStore.SIDE_WORK.equals(sourceSide)) return error(ErrorCode.WORK_TERMINAL);
@@ -139,24 +115,6 @@ public final class OrchestrationSignal {
         if (!signal.routesFrom(sourceSide)) return error(ErrorCode.WRONG_DIRECTION);
         if (!signal.isValidNextRoute(sourceSide, previousStep, previousRound))
             return error(ErrorCode.WRONG_STEP_ROUND);
-        return parsed;
-    }
-
-    /**
-     * One-shot validation for the first General Chat response after a confirmed START turn.
-     * The General Chat may recover an existing Drive position, so sequence ordering is deliberately
-     * not compared until this response seeds the durable local baseline.
-     */
-    public static ParseResult validateBootstrap(String response, String expectedJobId,
-                                                String sourceSide, String lastSignal) {
-        ParseResult parsed = parseDetailed(response, expectedJobId);
-        if (!parsed.isValid()) return parsed;
-        OrchestrationSignal signal = parsed.signal;
-        if (signal.raw.equals(lastSignal)) return error(ErrorCode.DUPLICATE);
-        if (!OrchestrationStore.SIDE_CHAT.equals(sourceSide)) return error(ErrorCode.WRONG_DIRECTION);
-        if (signal.type == Type.DONE || signal.type == Type.PAUSE || signal.type == Type.ABORTED)
-            return parsed;
-        if (!signal.routesFrom(sourceSide)) return error(ErrorCode.WRONG_DIRECTION);
         return parsed;
     }
 
@@ -170,17 +128,11 @@ public final class OrchestrationSignal {
     public boolean routesFrom(String currentSide) {
         return (type == Type.SEND_WORK && OrchestrationStore.SIDE_CHAT.equals(currentSide))
                 || (type == Type.SEND_CHAT && OrchestrationStore.SIDE_WORK.equals(currentSide))
-                || (type == Type.CONTINUE_SAME && (OrchestrationStore.SIDE_CHAT.equals(currentSide)
-                || OrchestrationStore.SIDE_WORK.equals(currentSide)))
                 || (type == Type.USER_ACTION_REQUIRED && OrchestrationStore.SIDE_CHAT.equals(currentSide));
     }
 
     public boolean isValidNextRoute(String currentSide, String previousStep, String previousRound) {
         if (!routesFrom(currentSide)) return false;
-        if (type == Type.CONTINUE_SAME) {
-            return previousStep != null && !previousStep.isEmpty()
-                    && step.equals(previousStep) && round.equals(Objects.requireNonNullElse(previousRound, ""));
-        }
         boolean hasPrevious = previousStep != null && !previousStep.isEmpty();
         if (type == Type.SEND_CHAT) {
             return hasPrevious && compareSequence(step, round, previousStep, previousRound) == 0;

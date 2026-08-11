@@ -21,8 +21,6 @@
 
         <activity android:name=".SettingsActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".LogsActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
-        <activity android:name=".OrchestrationLogsActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
-        <activity android:name=".OrchestrationHistoryActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".LoginActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".ScheduleEditorActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".OrchestrationActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
@@ -57,7 +55,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Bootstraps and relays Protocol 3.3 control turns between app-provisioned ChatGPT conversations; always yields to scheduled prompt execution." />
+                android:value="Relays explicit Protocol 3.0 control turns between two user-configured ChatGPT conversations; always yields to scheduled prompt execution." />
         </service>
     </application>
 </manifest>

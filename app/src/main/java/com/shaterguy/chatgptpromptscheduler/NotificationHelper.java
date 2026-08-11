@@ -94,31 +94,6 @@ public final class NotificationHelper {
         context.getSystemService(NotificationManager.class).notify((int) (System.currentTimeMillis() & 0x7fffffff), notification);
     }
 
-    public static void orchestrationTerminal(Context context, OrchestrationSignal.Type type, String jobId) {
-        String title = terminalTitle(type);
-        String message = terminalMessage(type, jobId);
-        orchestrationResult(context, type == OrchestrationSignal.Type.DONE, title, message);
-    }
-
-    public static String terminalTitle(OrchestrationSignal.Type type) {
-        switch (type) {
-            case DONE -> { return "오토런 작업 완료"; }
-            case PAUSE -> { return "오토런 작업 일시정지"; }
-            case ABORTED -> { return "오토런 작업 중단"; }
-            default -> throw new IllegalArgumentException("terminal 신호가 아닙니다.");
-        }
-    }
-
-    public static String terminalMessage(OrchestrationSignal.Type type, String jobId) {
-        String safeJob = safeId(jobId);
-        switch (type) {
-            case DONE -> { return "Job " + safeJob + " 작업이 완료되었습니다."; }
-            case PAUSE -> { return "Job " + safeJob + " 작업이 일시정지되었습니다."; }
-            case ABORTED -> { return "Job " + safeJob + " 작업이 중단되었습니다."; }
-            default -> throw new IllegalArgumentException("terminal 신호가 아닙니다.");
-        }
-    }
-
     public static void orchestrationError(Context context, String side, String jobId,
                                           String step, String round, String detail) {
         String sideLabel = OrchestrationStore.sideLabel(side);
