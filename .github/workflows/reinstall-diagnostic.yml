@@ -14,10 +14,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      APK_NAME: chatgpt-prompt-scheduler-android-v0.1.21-reinstall1-vc29.apk
+      APK_NAME: chatgpt-prompt-scheduler-android-v0.1.21-max-vc2100000000.apk
       PACKAGE_NAME: com.shaterguy.chatgptpromptscheduler
-      VERSION_CODE: '29'
-      VERSION_NAME: '0.1.21-reinstall1'
+      VERSION_CODE: '2100000000'
+      VERSION_NAME: '2100000000'
       EXPECTED_PUBLIC_CERT_SHA256: '3cfe95acd09077a89cd8de85434cbd5d8bb3e2021d8e9eacb804a8da9ccce52a'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -73,7 +73,7 @@ jobs:
       - name: Upload signed diagnostic APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: scheduler-v0.1.21-reinstall-vc29-public-signed
+          name: scheduler-v0.1.21-max-vc2100000000-public-signed
           path: dist/*
           if-no-files-found: error
           retention-days: 7
