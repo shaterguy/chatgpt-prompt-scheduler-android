@@ -218,9 +218,9 @@ jobs:
               raise SystemExit('forbidden same-signature trust construct')
           expected = {
               'activity': {'com.shaterguy.chatgptpromptscheduler.SettingsActivity': False, 'com.shaterguy.chatgptpromptscheduler.LogsActivity': False, 'com.shaterguy.chatgptpromptscheduler.LoginActivity': False,
-                           'com.shaterguy.chatgptpromptscheduler.ScheduleEditorActivity': False, 'com.shaterguy.chatgptpromptscheduler.OrchestrationActivity': False, 'com.shaterguy.chatgptpromptscheduler.MainActivity': True},
+                           'com.shaterguy.chatgptpromptscheduler.ScheduleEditorActivity': False, 'com.shaterguy.chatgptpromptscheduler.MainActivity': True},
               'receiver': {'com.shaterguy.chatgptpromptscheduler.AlarmReceiver': False, 'com.shaterguy.chatgptpromptscheduler.BootReceiver': False},
-              'service': {'com.shaterguy.chatgptpromptscheduler.ExecutionService': False, 'com.shaterguy.chatgptpromptscheduler.OrchestrationService': False},
+              'service': {'com.shaterguy.chatgptpromptscheduler.ExecutionService': False},
           }
           found = {k: {} for k in expected}
           current = None
