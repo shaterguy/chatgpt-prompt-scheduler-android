@@ -20,11 +20,12 @@ public final class AutomationScript {
                 "const expectedCanonical=canonical(expected),userTexts=users.map(e=>canonical(e.innerText||e.textContent));" +
                 "const occurrences=(text,needle)=>{if(!needle)return 0;let count=0,index=0;while((index=text.indexOf(needle,index))>=0){count++;index+=needle.length;}return count;};" +
                 "const matchCounts=userTexts.map(text=>occurrences(text,expectedCanonical));" +
-                "const promptAlreadyPresent=matchCounts.some(count=>count===1);" +                targetGuard(schedule, false) +
+                "const promptAlreadyPresent=matchCounts.some(count=>count===1);" +
+                targetGuard(schedule, false) +
                 "if(expectedType!=='existing'&&promptAlreadyPresent)return result('SUBMITTED','동일 실행 프롬프트가 이미 새 대화에 존재합니다.',{...routeDiagnostics,recoveredAfterNavigation:true});" +
                 "const body=(document.body?.innerText||'').toLowerCase();" +
                 "if(body.includes('log in')||body.includes('sign up')||body.includes('로그인'))return result('AUTH_REQUIRED','ChatGPT 로그인이 필요합니다.');" +
-                preferenceScript(schedule, run) +
+                preferenceScript(schedule, runId) +
                 "const selectors=['textarea#prompt-textarea','textarea[data-testid=\"prompt-textarea\"]','div#prompt-textarea[contenteditable=\"true\"]','[contenteditable=\"true\"][data-lexical-editor=\"true\"]','main form [contenteditable=\"true\"]'];" +
                 "let selector='';let composer=null;for(const s of selectors){const candidates=[...document.querySelectorAll(s)];const found=candidates.find(e=>e&&e.isConnected&&e.offsetParent!==null);if(found){selector=s;composer=found;break;}}" +
                 "if(!composer)return result('RETRY','입력창 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics,selectors,readyState:document.readyState,activeTag:document.activeElement?.tagName||'',forms:document.forms.length});" +
@@ -78,17 +79,19 @@ public final class AutomationScript {
                 "if(!targetOk)return result('TARGET_CONTEXT_MISMATCH','expected='+expectedUrl+' actual='+location.href,routeDiagnostics);";
     }
 
-    private static String preferenceScript(Schedule schedule, String run) {
+    private static String preferenceScript(Schedule schedule, String runId) {
         if ("existing".equals(schedule.targetType)) {
             return "const modeDiagnostics={requested:'inherit',ready:true,action:'',skipped:true};" +
                     "const modelDiagnostics={requested:'inherit',ready:true,action:'',skipped:true};" +
                     "const reasoningDiagnostics={requested:'inherit',ready:true,action:'',skipped:true};";
         }
+        String run = jsQuote(runId);
         String requestedMode = "work".equals(schedule.experience) ? "work" : "chat";
         String modeLabels = "work".equals(schedule.experience) ? "['work','작업']" : "['chat','채팅']";
         String requestedModel = Schedule.normalizedWorkModel(schedule.experience, schedule.workModel);
         String requestedEffort = Schedule.normalizedReasoningEffort(schedule.experience, schedule.reasoningEffort);
-        return "const modeKey='chatgpt-prompt-scheduler:mode:' + " + run + ";" +
+        String requestedChatReasoning = Schedule.normalizedChatReasoning(schedule.experience, schedule.chatReasoning);
+        String common = "const modeKey='chatgpt-prompt-scheduler:mode:' + " + run + ";" +
                 "const exactText=s=>String(s??'').replace(/\\s+/g,' ').trim().toLowerCase();" +
                 "const desiredModeLabels=" + modeLabels + ";" +
                 "const forbiddenMode=/new chat|새 채팅|새 대화|new conversation/i;" +
@@ -105,9 +108,13 @@ public final class AutomationScript {
                 "const composerForm=composerInput?.closest?.('form')||null;" +
                 "const inComposer=e=>{if(!e||!composerInput)return false;if(composerForm)return composerForm.contains(e);const a=e.getBoundingClientRect(),b=composerInput.getBoundingClientRect();return a.bottom>=b.top-240&&a.top<=b.bottom+240&&a.right>=b.left-320&&a.left<=b.right+320;};" +
                 "const selectedState=e=>!!e&&(e.getAttribute('aria-checked')==='true'||e.getAttribute('aria-pressed')==='true'||e.getAttribute('aria-selected')==='true'||/^(checked|selected|active|on)$/.test(exactText(e.dataset?.state||'')));" +
-                "const openMenu=e=>{if(!e)return;e.focus?.();const init={bubbles:true,cancelable:true,composed:true,button:0,buttons:1,pointerId:1,pointerType:'mouse',isPrimary:true};if(typeof PointerEvent==='function')e.dispatchEvent(new PointerEvent('pointerdown',init));else e.dispatchEvent(new MouseEvent('mousedown',init));};" +
-                modelScript(requestedModel) +
-                reasoningScript(requestedEffort);
+                "const openMenu=e=>{if(!e)return;e.focus?.();const init={bubbles:true,cancelable:true,composed:true,button:0,buttons:1,pointerId:1,pointerType:'mouse',isPrimary:true};if(typeof PointerEvent==='function')e.dispatchEvent(new PointerEvent('pointerdown',init));else e.dispatchEvent(new MouseEvent('mousedown',init));};";
+        if ("work".equals(schedule.experience)) {
+            return common + modelScript(requestedModel) + reasoningScript(requestedEffort);
+        }
+        return common +
+                "const modelDiagnostics={requested:'inherit',ready:true,action:'',skipped:true};" +
+                ChatReasoningScript.inline(requestedChatReasoning, runId);
     }
 
     private static String modelScript(String requestedModel) {
@@ -132,6 +139,7 @@ public final class AutomationScript {
                 "if(modelAction)return result('RETRY','Work 모델 반영 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics});" +
                 "if(!modelReady)return result('RETRY','Work 모델 선택 요소 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics});";
     }
+
     private static String reasoningScript(String requestedEffort) {
         if ("inherit".equals(requestedEffort)) {
             return "const reasoningDiagnostics={requested:'inherit',ready:true,action:'',skipped:true};";
