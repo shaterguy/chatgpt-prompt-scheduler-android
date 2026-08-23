@@ -10,7 +10,6 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.Switch;
-import android.widget.TextView;
 import android.widget.Toast;
 
 import java.util.ArrayList;
@@ -32,8 +31,11 @@ public final class ScheduleEditorActivity extends Activity {
     private EditText name;
     private Spinner targetType;
     private EditText targetUrl;
-    private TextView targetUrlLabel;
     private LinearLayout targetUrlSection;
+    private LinearLayout projectTargetSection;
+    private Spinner projectTarget;
+    private ProjectCatalog projectCatalog;
+    private List<ProjectUrlPolicy.ProjectRef> projectEntries = new ArrayList<>();
     private Spinner experience;
     private LinearLayout experienceSection;
     private Spinner workModel;
@@ -59,6 +61,9 @@ public final class ScheduleEditorActivity extends Activity {
         String id = getIntent().getStringExtra("scheduleId");
         schedule = id == null ? new Schedule() : store.findSchedule(id);
         if (schedule == null) schedule = new Schedule();
+        projectCatalog = new ProjectCatalog(this);
+        projectCatalog.seedFromSchedules(store.loadSchedules());
+        projectEntries = projectCatalog.entries();
         buildUi();
     }
 
@@ -73,12 +78,26 @@ public final class ScheduleEditorActivity extends Activity {
         name = edit(root, "예약 이름", schedule.name, false);
         targetType = spinner(root, "대상 유형", new String[]{"general", "project", "existing"}, schedule.targetType);
 
+        projectTargetSection = section(root);
+        projectTargetSection.addView(Ui.body(this, "프로젝트"));
+        projectTarget = new Spinner(this);
+        List<String> projectLabels = new ArrayList<>();
+        for (ProjectUrlPolicy.ProjectRef ref : projectEntries) projectLabels.add(projectCatalog.displayName(ref));
+        if (projectLabels.isEmpty()) projectLabels.add("등록된 프로젝트가 없습니다");
+        projectTarget.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, projectLabels));
+        int selectedProject = selectedProjectIndex(schedule.targetUrl);
+        if (selectedProject >= 0) projectTarget.setSelection(selectedProject);
+        projectTargetSection.addView(projectTarget);
+        projectTargetSection.addView(Ui.body(this, projectEntries.isEmpty()
+                ? "메인 화면의 로그인/세션에서 ChatGPT 프로젝트를 한 번 여세요. 주소가 자동 등록됩니다."
+                : "프로젝트 주소는 로그인/세션 WebView에서 자동 등록됩니다."));
+
         targetUrlSection = section(root);
-        targetUrlLabel = Ui.body(this, "대상 URL");
-        targetUrlSection.addView(targetUrlLabel);
+        targetUrlSection.addView(Ui.body(this, "기존 대화 URL"));
         targetUrl = new EditText(this);
         targetUrl.setSingleLine(true);
         targetUrl.setText(schedule.targetUrl);
+        targetUrl.setHint("https://chatgpt.com/.../c/<conversation-id>");
         targetUrlSection.addView(targetUrl);
 
         experienceSection = section(root);
@@ -104,27 +123,12 @@ public final class ScheduleEditorActivity extends Activity {
                 Schedule.normalizedReasoningEffort(schedule.experience, schedule.reasoningEffort));
 
         targetType.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                updateTargetOptionVisibility();
-            }
-
-            @Override
-            public void onNothingSelected(AdapterView<?> parent) {
-                updateTargetOptionVisibility();
-            }
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) { updateTargetOptionVisibility(); }
+            @Override public void onNothingSelected(AdapterView<?> parent) { updateTargetOptionVisibility(); }
         });
-
         experience.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                updateTargetOptionVisibility();
-            }
-
-            @Override
-            public void onNothingSelected(AdapterView<?> parent) {
-                updateTargetOptionVisibility();
-            }
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) { updateTargetOptionVisibility(); }
+            @Override public void onNothingSelected(AdapterView<?> parent) { updateTargetOptionVisibility(); }
         });
 
         prompt = edit(root, "프롬프트", schedule.prompt, true);
@@ -132,25 +136,16 @@ public final class ScheduleEditorActivity extends Activity {
 
         timesSection = section(root);
         times = edit(timesSection, "실행 시각 · 쉼표 구분 (예: 08:00,17:00)", String.join(",", schedule.times), false);
-
         weekdaysSection = section(root);
         weekdays = edit(weekdaysSection, "주간 요일 · 1=월∼7=일 (예: 1,2,3,4,5)", joinInts(schedule.weekdays), false);
-
         intervalSection = section(root);
         intervalMinutes = edit(intervalSection,
                 "분 간격 · 이전 실행 완료 후 (15∼10080)",
                 String.valueOf(Schedule.normalizedIntervalMinutes(schedule.intervalMinutes)), false);
 
         recurrence.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                updateRecurrenceOptionVisibility();
-            }
-
-            @Override
-            public void onNothingSelected(AdapterView<?> parent) {
-                updateRecurrenceOptionVisibility();
-            }
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) { updateRecurrenceOptionVisibility(); }
+            @Override public void onNothingSelected(AdapterView<?> parent) { updateRecurrenceOptionVisibility(); }
         });
 
         retryCount = edit(root, "웹 엔진 재시도 횟수 (0∼5)", String.valueOf(schedule.retryCount), false);
@@ -158,7 +153,6 @@ public final class ScheduleEditorActivity extends Activity {
         enabled.setText("예약 활성화");
         enabled.setChecked(schedule.enabled);
         root.addView(enabled);
-
         root.addView(Ui.actionGrid(this,
                 Ui.button(this, "저장", v -> save()),
                 Ui.button(this, "취소", v -> finish())));
@@ -166,6 +160,13 @@ public final class ScheduleEditorActivity extends Activity {
         updateTargetOptionVisibility();
         updateRecurrenceOptionVisibility();
         Ui.setContent(this, scroll);
+    }
+
+    private int selectedProjectIndex(String url) {
+        for (int i = 0; i < projectEntries.size(); i++) {
+            if (ProjectUrlPolicy.sameProject(projectEntries.get(i).canonicalUrl, url)) return i;
+        }
+        return projectEntries.isEmpty() ? -1 : 0;
     }
 
     private LinearLayout section(LinearLayout root) {
@@ -178,18 +179,11 @@ public final class ScheduleEditorActivity extends Activity {
     private void updateTargetOptionVisibility() {
         String type = selected(targetType);
         String mode = selected(experience);
-        boolean showUrl = requiresTargetUrl(type);
-        targetUrlSection.setVisibility(showUrl ? View.VISIBLE : View.GONE);
+        projectTargetSection.setVisibility(requiresProjectSelection(type) ? View.VISIBLE : View.GONE);
+        targetUrlSection.setVisibility(requiresManualTargetUrl(type) ? View.VISIBLE : View.GONE);
         experienceSection.setVisibility(showsExperience(type) ? View.VISIBLE : View.GONE);
         chatReasoningSection.setVisibility(showsChatReasoning(type, mode) ? View.VISIBLE : View.GONE);
         workReasoningSection.setVisibility(showsReasoningEffort(type, mode) ? View.VISIBLE : View.GONE);
-        if (showUrl) {
-            boolean existing = "existing".equals(type);
-            targetUrlLabel.setText(existing ? "기존 대화 URL" : "프로젝트 URL");
-            targetUrl.setHint(existing
-                    ? "https://chatgpt.com/.../c/<conversation-id>"
-                    : "https://chatgpt.com/g/<project-id>");
-        }
     }
 
     private void updateRecurrenceOptionVisibility() {
@@ -201,6 +195,14 @@ public final class ScheduleEditorActivity extends Activity {
 
     static boolean requiresTargetUrl(String targetType) {
         return "project".equals(targetType) || "existing".equals(targetType);
+    }
+
+    static boolean requiresManualTargetUrl(String targetType) {
+        return "existing".equals(targetType);
+    }
+
+    static boolean requiresProjectSelection(String targetType) {
+        return "project".equals(targetType);
     }
 
     static boolean showsExperience(String targetType) {
@@ -230,9 +232,7 @@ public final class ScheduleEditorActivity extends Activity {
     static boolean isTargetValidForType(String targetType, String url) {
         if ("general".equals(targetType)) return true;
         if (!TargetParser.isSupported(url)) return false;
-        if ("project".equals(targetType)) {
-            return TargetParser.projectId(url) != null && TargetParser.conversationId(url) == null;
-        }
+        if ("project".equals(targetType)) return TargetParser.projectId(url) != null && TargetParser.conversationId(url) == null;
         if ("existing".equals(targetType)) return TargetParser.conversationId(url) != null;
         return false;
     }
@@ -271,8 +271,7 @@ public final class ScheduleEditorActivity extends Activity {
         return spinner;
     }
 
-    private Spinner mappedSpinner(LinearLayout root, String label, String[] values,
-                                  String[] labels, String selectedValue) {
+    private Spinner mappedSpinner(LinearLayout root, String label, String[] values, String[] labels, String selectedValue) {
         root.addView(Ui.body(this, label));
         Spinner spinner = new Spinner(this);
         spinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels));
@@ -283,15 +282,27 @@ public final class ScheduleEditorActivity extends Activity {
 
     private void save() {
         String type = selected(targetType);
-        String url = "general".equals(type) ? "https://chatgpt.com/" : targetUrl.getText().toString().trim();
-        if (!isTargetValidForType(type, url)) {
-            if ("project".equals(type)) {
-                toast("프로젝트 새 대화는 대화방이 아닌 프로젝트 홈 URL을 입력하세요.");
-            } else if ("existing".equals(type)) {
-                toast("기존 대화 URL에는 /c/<conversation-id>가 필요합니다.");
-            } else {
-                toast("chatgpt.com의 올바른 HTTPS URL을 입력하세요.");
+        String url;
+        if ("general".equals(type)) {
+            url = "https://chatgpt.com/";
+        } else if ("project".equals(type)) {
+            int index = projectTarget == null ? -1 : projectTarget.getSelectedItemPosition();
+            if (projectEntries.isEmpty() || index < 0 || index >= projectEntries.size()) {
+                toast("로그인/세션 화면에서 예약할 ChatGPT 프로젝트를 먼저 한 번 여세요.");
+                return;
             }
+            url = projectEntries.get(index).canonicalUrl;
+            ProjectUrlPolicy.ProjectRef strict = ProjectUrlPolicy.parseProject(url);
+            if (strict == null || !strict.conversationId.isEmpty()) {
+                toast("등록된 프로젝트 주소가 올바르지 않습니다. 로그인/세션에서 프로젝트를 다시 여세요.");
+                return;
+            }
+        } else {
+            url = targetUrl.getText().toString().trim();
+        }
+        if (!isTargetValidForType(type, url)) {
+            if ("existing".equals(type)) toast("기존 대화 URL에는 /c/<conversation-id>가 필요합니다.");
+            else toast("chatgpt.com의 올바른 대상 URL이 필요합니다.");
             return;
         }
         if (prompt.getText().toString().trim().isEmpty()) {
@@ -327,12 +338,9 @@ public final class ScheduleEditorActivity extends Activity {
         schedule.targetType = type;
         schedule.targetUrl = url;
         schedule.experience = Schedule.normalizedExperience(type, selected(experience));
-        schedule.workModel = Schedule.normalizedWorkModel(
-                schedule.experience, selected(workModel));
-        schedule.reasoningEffort = Schedule.normalizedReasoningEffort(
-                schedule.experience, reasoningEffortValue(selected(reasoningEffort)));
-        schedule.chatReasoning = Schedule.normalizedChatReasoning(
-                schedule.experience, chatReasoningValue(selected(chatReasoning)));
+        schedule.workModel = Schedule.normalizedWorkModel(schedule.experience, selected(workModel));
+        schedule.reasoningEffort = Schedule.normalizedReasoningEffort(schedule.experience, reasoningEffortValue(selected(reasoningEffort)));
+        schedule.chatReasoning = Schedule.normalizedChatReasoning(schedule.experience, chatReasoningValue(selected(chatReasoning)));
         schedule.prompt = prompt.getText().toString();
         schedule.recurrence = recurrenceValue;
         schedule.intervalMinutes = Schedule.normalizedIntervalMinutes(parsedInterval);

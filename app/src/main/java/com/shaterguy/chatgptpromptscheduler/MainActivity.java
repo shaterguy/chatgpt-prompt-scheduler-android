@@ -36,15 +36,16 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         store = new ConfigStore(this);
+        new ProjectCatalog(this).seedFromSchedules(store.loadSchedules());
         NotificationHelper.ensureChannels(this);
         requestNotificationPermission();
         render();
-        recoverOrchestrationService();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        if (store != null) new ProjectCatalog(this).seedFromSchedules(store.loadSchedules());
         if (root != null) render();
     }
 
@@ -57,11 +58,7 @@ public final class MainActivity extends Activity {
         root.setPadding(Ui.dp(this, 18), Ui.dp(this, 12), Ui.dp(this, 18), Ui.dp(this, 24));
         scroll.addView(root);
         root.addView(Ui.title(this, "ChatGPT Prompt Scheduler"));
-        root.addView(Ui.body(this, "v0.1.15 · 화면을 열지 않고 예약 프롬프트를 실행하는 Android 앱"));
-
-        root.addView(Ui.section(this, "선택 기능 · 오토런 중계"));
-        root.addView(Ui.body(this, "예약 실행과 분리된 Protocol 3.x 중계입니다. 예약 작업이 항상 우선합니다."));
-        root.addView(Ui.button(this, "오토런 중계 열기", v -> startActivity(new Intent(this, OrchestrationActivity.class))));
+        root.addView(Ui.body(this, "v0.3.0-dev4 · 화면을 열지 않고 예약 프롬프트를 실행하는 Android 앱"));
 
         root.addView(Ui.section(this, "실행 준비 상태"));
         AlarmManager alarmManager = getSystemService(AlarmManager.class);
@@ -70,7 +67,7 @@ public final class MainActivity extends Activity {
         boolean battery = power.isIgnoringBatteryOptimizations(getPackageName());
         root.addView(Ui.body(this, (exact ? "✓" : "✕") + " 정확한 알람 권한"));
         root.addView(Ui.body(this, (battery ? "✓" : "✕") + " 배터리 최적화 제외"));
-        root.addView(Ui.body(this, "로그인 세션은 아래 ‘ChatGPT 로그인/세션’ 화면에서 확인합니다."));
+        root.addView(Ui.body(this, "로그인 세션 확인과 프로젝트 등록은 아래 ‘로그인/세션’ 화면에서 수행합니다."));
 
         root.addView(Ui.actionGrid(this,
                 Ui.button(this, "알람 권한", v -> requestExactAlarm()),
@@ -96,26 +93,6 @@ public final class MainActivity extends Activity {
         scroll.post(() -> {
             if (scrollView == scroll) scroll.scrollTo(0, previousScrollY);
         });
-    }
-
-    /** Process/force-stop recovery after the user directly reopens the app; never mutates relay state. */
-    private void recoverOrchestrationService() {
-        OrchestrationStore relay = new OrchestrationStore(this);
-        String delivery = relay.deliveryState();
-        if (!relay.active() || relay.paused() || relay.terminal() || relay.waitingForUser()
-                || OrchestrationStore.DELIVERY_AMBIGUOUS.equals(delivery)
-                || OrchestrationStore.DELIVERY_FAILED.equals(delivery)
-                || !NotificationHelper.orchestrationAlertsEnabled(this)) return;
-        Intent service = new Intent(this, OrchestrationService.class).setAction(OrchestrationService.ACTION_RUN);
-        try {
-            if (Build.VERSION.SDK_INT >= 26) startForegroundService(service); else startService(service);
-        } catch (RuntimeException ignored) {
-            relay.fail("SERVICE_RECOVERY_FAILED", "앱 재실행 후 오토런 중계 서비스를 복구하지 못했습니다.");
-            if (NotificationHelper.orchestrationAlertsEnabled(this)) {
-                NotificationHelper.orchestrationError(this, relay.monitoringSide(), relay.runJobId(),
-                        relay.currentStep(), relay.currentRound(), "앱 재실행 후 중계 서비스를 복구하지 못했습니다.");
-            }
-        }
     }
 
     private void addScheduleCard(Schedule schedule, long now) {
@@ -155,16 +132,13 @@ public final class MainActivity extends Activity {
     private void runNow(String scheduleId) {
         QueueStore queueStore = new QueueStore(this);
         QueueStore.EnqueueResult result;
-        AutomationRuntimeGate.setScheduleActive(true);
         try {
             result = queueStore.enqueue(scheduleId, true);
         } catch (RuntimeException error) {
-            AutomationRuntimeGate.setScheduleActive(false);
             toast("실행 대기열 저장 실패: " + error.getMessage());
             return;
         }
         if (!result.added) {
-            AutomationRuntimeGate.setScheduleActive(queueStore.hasActive());
             toast("이미 실행 중이거나 대기 중인 예약입니다.");
             return;
         }
@@ -175,7 +149,6 @@ public final class MainActivity extends Activity {
             toast("실행 대기열에 추가했습니다.");
         } catch (RuntimeException error) {
             queueStore.finish(result.runId);
-            AutomationRuntimeGate.setScheduleActive(queueStore.hasActive());
             toast("실행 서비스 시작 실패: " + error.getMessage());
         }
     }
@@ -221,6 +194,7 @@ public final class MainActivity extends Activity {
                         .setNegativeButton("취소", null).setPositiveButton("교체", (dialog, which) -> {
                             try {
                                 int imported = store.importPortable(incoming);
+                                new ProjectCatalog(this).seedFromSchedules(store.loadSchedules());
                                 AlarmEngine.rebuildAll(this);
                                 toast(imported + "개 예약을 가져왔습니다.");
                                 render();
