@@ -68,8 +68,8 @@ jobs:
           HEAD_BRANCH="$(jq -r '.head_branch' "$RUN_JSON")"
           HEAD_SHA="$(jq -r '.head_sha' "$RUN_JSON")"
           [[ "$HEAD_BRANCH" =~ ^v0\.3\.0-dev([1-9][0-9]*)$ ]]
-          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
           DEV_NUMBER="${BASH_REMATCH[1]}"
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
           VERSION_NAME="${HEAD_BRANCH#v}"
           VERSION_CODE="$((3000000 + DEV_NUMBER))"
           EXPECTED_ARTIFACT="chatgpt-prompt-scheduler-dev-${VERSION_NAME}-unsigned"
