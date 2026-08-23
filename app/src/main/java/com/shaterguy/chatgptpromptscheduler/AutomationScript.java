@@ -69,9 +69,10 @@ public final class AutomationScript {
         return "const expectedType=" + type + ",expectedUrl=" + expectedUrl + ",expectedProject=" + expectedProject + ",expectedConversation=" + expectedConversation + ",afterSubmit=" + after + ";" +
                 "const parts=location.pathname.split('/').filter(Boolean);" +
                 "const segmentAfter=k=>{const i=parts.indexOf(k);return i>=0&&i+1<parts.length?parts[i+1]:'';};" +
-                "const actualProject=segmentAfter('g'),actualConversation=segmentAfter('c');" +
+                "const canonicalProject=value=>{const prefix='g-p-',tokenLength=32,end=prefix.length+tokenLength;if(value.length>160||!value.startsWith(prefix)||value.length<=end+1||value.charAt(end)!=='-')return value;const token=value.slice(prefix.length,end),slug=value.slice(end+1);return /^[0-9a-fA-F]{32}$/.test(token)&&/^[A-Za-z0-9_-]+$/.test(slug)?value.slice(0,end):value;};" +
+                "const rawActualProject=segmentAfter('g'),actualProject=canonicalProject(rawActualProject),actualConversation=segmentAfter('c');" +
                 "const homePath=location.pathname==='/'||location.pathname==='';" +
-                "const routeDiagnostics={expectedType,expectedProject,expectedConversation,actualProject,actualConversation,afterSubmit,userMessages:users.length,promptAlreadyPresent};" +
+                "const routeDiagnostics={expectedType,expectedProject,expectedConversation,rawActualProject,actualProject,actualConversation,afterSubmit,userMessages:users.length,promptAlreadyPresent};" +
                 "let targetOk=false;" +
                 "if(expectedType==='existing')targetOk=!!expectedConversation&&actualConversation===expectedConversation&&(expectedProject?actualProject===expectedProject:!actualProject);" +
                 "else if(expectedType==='project')targetOk=!!expectedProject&&actualProject===expectedProject&&(!actualConversation||afterSubmit||promptAlreadyPresent||users.length===0);" +
