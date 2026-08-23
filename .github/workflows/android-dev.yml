@@ -12,11 +12,10 @@ permissions:
 
 env:
   DEV_PACKAGE: com.shaterguy.chatgptpromptscheduler.dev
-  DEV_VERSION_CODE: '3000002'
-  DEV_VERSION_NAME: 0.3.0-dev2
+  DEV_VERSION_CODE: '3000003'
+  DEV_VERSION_NAME: 0.3.0-dev3
   DEV_APP_LABEL: ChatGPT Prompt Scheduler DEV
-  DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.3.0-dev2-unsigned.apk
-  DEV_APK_NAME: chatgpt-prompt-scheduler-dev-v0.3.0-dev2.apk
+  DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.3.0-dev3-unsigned.apk
 
 concurrency:
   group: chatgpt-prompt-scheduler-dev-${{ github.ref }}
@@ -40,6 +39,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
         with:
           gradle-version: '9.5.0'
+          cache-read-only: true
       - name: Test and build unsigned DEV candidate
         shell: bash
         run: |
@@ -54,6 +54,7 @@ jobs:
           grep -Fq "versionName='$DEV_VERSION_NAME'" <<<"$BADGING"
           grep -Fq "application-label:'$DEV_APP_LABEL'" <<<"$BADGING"
           unzip -t "$UNSIGNED" >/dev/null
+          rm -rf dev-unsigned
           mkdir -p dev-unsigned
           cp "$UNSIGNED" "dev-unsigned/$DEV_UNSIGNED_NAME"
           (
@@ -80,126 +81,3 @@ jobs:
             app/build/reports/tests/testDebugUnitTest/**
           if-no-files-found: warn
           retention-days: 7
-
-  sign-dev:
-    needs: build-dev
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    environment: dev-signing
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
-        with:
-          cmdline-tools-version: '11076708'
-          log-accepted-android-sdk-licenses: 'false'
-          packages: 'platform-tools build-tools;36.0.0'
-      - name: Download immutable unsigned candidate
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
-        with:
-          name: chatgpt-prompt-scheduler-dev-${{ env.DEV_VERSION_NAME }}-unsigned
-          path: candidate
-      - name: Verify unsigned candidate before exposing signing secret
-        shell: bash
-        run: |
-          set -euo pipefail
-          BT="$ANDROID_HOME/build-tools/36.0.0"
-          UNSIGNED="$(find candidate -type f -name "$DEV_UNSIGNED_NAME" -print -quit)"
-          SUM_FILE="$(find candidate -type f -name 'UNSIGNED_SHA256SUMS.txt' -print -quit)"
-          SOURCE_FILE="$(find candidate -type f -name 'SOURCE_COMMIT.txt' -print -quit)"
-          test -s "$UNSIGNED"
-          test -s "$SUM_FILE"
-          test -s "$SOURCE_FILE"
-          [[ "$(tr -d '[:space:]' < "$SOURCE_FILE")" == "$GITHUB_SHA" ]]
-          (
-            cd "$(dirname "$UNSIGNED")"
-            sha256sum --check --strict "$(basename "$SUM_FILE")"
-          )
-          BADGING="$($BT/aapt dump badging "$UNSIGNED")"
-          grep -Fq "package: name='$DEV_PACKAGE'" <<<"$BADGING"
-          grep -Fq "versionCode='$DEV_VERSION_CODE'" <<<"$BADGING"
-          grep -Fq "versionName='$DEV_VERSION_NAME'" <<<"$BADGING"
-          grep -Fq "application-label:'$DEV_APP_LABEL'" <<<"$BADGING"
-          unzip -t "$UNSIGNED" >/dev/null
-      - name: Sign isolated DEV APK
-        shell: bash
-        env:
-          SIGNING_BUNDLE_BASE64: ${{ secrets.CHATGPT_PROMPT_SCHEDULER_DEV_SIGNING_BUNDLE_BASE64 }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${SIGNING_BUNDLE_BASE64:-}" ]]; then
-            echo '::error::Missing dev-signing environment secret CHATGPT_PROMPT_SCHEDULER_DEV_SIGNING_BUNDLE_BASE64'
-            exit 1
-          fi
-          umask 077
-          WORK="$RUNNER_TEMP/chatgpt-prompt-scheduler-dev-signing"
-          cleanup() { rm -rf "$WORK"; }
-          trap cleanup EXIT HUP INT TERM
-          rm -rf "$WORK"
-          mkdir -p "$WORK" signed-output
-          printf '%s' "$SIGNING_BUNDLE_BASE64" | base64 --decode > "$WORK/bundle.tar.gz"
-          MEMBERS="$(tar -tzf "$WORK/bundle.tar.gz")"
-          if grep -Eq '(^/|(^|/)\.\.(/|$))' <<<"$MEMBERS"; then
-            echo '::error::Unsafe path in signing bundle'
-            exit 1
-          fi
-          grep -Fxq 'key.pk8' <<<"$MEMBERS"
-          grep -Fxq 'cert.pem' <<<"$MEMBERS"
-          tar -xzf "$WORK/bundle.tar.gz" -C "$WORK"
-          test -s "$WORK/key.pk8"
-          test -s "$WORK/cert.pem"
-          openssl x509 -in "$WORK/cert.pem" -noout >/dev/null
-          UNSIGNED="$(find candidate -type f -name "$DEV_UNSIGNED_NAME" -print -quit)"
-          test -s "$UNSIGNED"
-          BT="$ANDROID_HOME/build-tools/36.0.0"
-          ALIGNED="$WORK/aligned.apk"
-          APK="signed-output/$DEV_APK_NAME"
-          "$BT/zipalign" -p -f 4 "$UNSIGNED" "$ALIGNED"
-          "$BT/zipalign" -c -v 4 "$ALIGNED" >/dev/null
-          "$BT/apksigner" sign \
-            --key "$WORK/key.pk8" \
-            --cert "$WORK/cert.pem" \
-            --out "$APK" \
-            "$ALIGNED"
-          test -s "$APK"
-      - name: Verify signed DEV artifact after secret cleanup
-        shell: bash
-        run: |
-          set -euo pipefail
-          BT="$ANDROID_HOME/build-tools/36.0.0"
-          APK="signed-output/$DEV_APK_NAME"
-          test -s "$APK"
-          "$BT/apksigner" verify --verbose --print-certs "$APK" | tee signed-output/APK_CERT.txt
-          grep -Fq 'Verified using v2 scheme (APK Signature Scheme v2): true' signed-output/APK_CERT.txt
-          grep -Fq 'Verified using v3 scheme (APK Signature Scheme v3): true' signed-output/APK_CERT.txt
-          CERT_SHA256="$(awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print $2; exit}' signed-output/APK_CERT.txt | tr -d '[:space:]:' | tr '[:upper:]' '[:lower:]')"
-          [[ "$CERT_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          printf '%s\n' "$CERT_SHA256" > signed-output/DEV_SIGNING_CERT_SHA256.txt
-          "$BT/aapt" dump badging "$APK" | tee signed-output/APK_BADGING.txt
-          grep -Fq "package: name='$DEV_PACKAGE'" signed-output/APK_BADGING.txt
-          grep -Fq "versionCode='$DEV_VERSION_CODE'" signed-output/APK_BADGING.txt
-          grep -Fq "versionName='$DEV_VERSION_NAME'" signed-output/APK_BADGING.txt
-          grep -Fq "application-label:'$DEV_APP_LABEL'" signed-output/APK_BADGING.txt
-          "$BT/zipalign" -c -v 4 "$APK" > signed-output/ZIPALIGN_VERIFY.txt
-          unzip -t "$APK" >/dev/null
-          (
-            cd signed-output
-            sha256sum "$DEV_APK_NAME" > SHA256SUMS.txt
-            printf '%s\n' "$GITHUB_SHA" > SOURCE_COMMIT.txt
-          )
-      - name: Upload signed DEV APK
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: chatgpt-prompt-scheduler-dev-${{ env.DEV_VERSION_NAME }}-signed
-          path: |
-            signed-output/${{ env.DEV_APK_NAME }}
-            signed-output/SHA256SUMS.txt
-            signed-output/APK_CERT.txt
-            signed-output/DEV_SIGNING_CERT_SHA256.txt
-            signed-output/APK_BADGING.txt
-            signed-output/ZIPALIGN_VERIFY.txt
-            signed-output/SOURCE_COMMIT.txt
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 30
