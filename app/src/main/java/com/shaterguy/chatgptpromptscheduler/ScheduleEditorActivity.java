@@ -245,6 +245,11 @@ public final class ScheduleEditorActivity extends Activity {
         return "울트라".equals(label) ? "ultra" : label;
     }
 
+    static String chatReasoningValue(String label) {
+        int index = Arrays.asList(CHAT_REASONING_LABELS).indexOf(label);
+        return index >= 0 ? CHAT_REASONING_VALUES[index] : "keep";
+    }
+
     private EditText edit(LinearLayout root, String label, String value, boolean multiline) {
         root.addView(Ui.body(this, label));
         EditText edit = new EditText(this);
@@ -327,7 +332,7 @@ public final class ScheduleEditorActivity extends Activity {
         schedule.reasoningEffort = Schedule.normalizedReasoningEffort(
                 schedule.experience, reasoningEffortValue(selected(reasoningEffort)));
         schedule.chatReasoning = Schedule.normalizedChatReasoning(
-                schedule.experience, selected(chatReasoning));
+                schedule.experience, chatReasoningValue(selected(chatReasoning)));
         schedule.prompt = prompt.getText().toString();
         schedule.recurrence = recurrenceValue;
         schedule.intervalMinutes = Schedule.normalizedIntervalMinutes(parsedInterval);
