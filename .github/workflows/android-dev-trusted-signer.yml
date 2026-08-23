@@ -338,7 +338,7 @@ jobs:
           grep -Fq "application-label:'$DEV_APP_LABEL'" signed-output/APK_BADGING.txt
           "$BT/zipalign" -c -v 4 "$APK" > signed-output/ZIPALIGN_VERIFY.txt
           unzip -t "$APK" >/dev/null
-          sha256sum "$APK" > signed-output/SHA256SUMS.txt
+          (cd signed-output && sha256sum "$SIGNED_NAME" > SHA256SUMS.txt)
           printf '%s\n' "$HEAD_SHA" > signed-output/SOURCE_COMMIT.txt
           printf '%s\n' "$SOURCE_RUN_ID" > signed-output/SOURCE_RUN_ID.txt
 
