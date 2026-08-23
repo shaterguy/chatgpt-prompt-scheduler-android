@@ -75,7 +75,6 @@ public final class ExecutionService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        AutomationRuntimeGate.setScheduleActive(true);
         String scheduleId = intent == null ? null : intent.getStringExtra("scheduleId");
         boolean manual = intent != null && intent.getBooleanExtra("manual", false);
         if (scheduleId != null && !scheduleId.isBlank()) queueStore.enqueue(scheduleId, manual);
@@ -97,20 +96,17 @@ public final class ExecutionService extends Service {
         try {
             currentItem = queueStore.claimNext();
         } catch (RuntimeException error) {
-            AutomationRuntimeGate.setScheduleActive(false);
             processing.set(false);
             stopForeground(STOP_FOREGROUND_REMOVE);
             stopSelf();
             return;
         }
         if (currentItem == null) {
-            AutomationRuntimeGate.setScheduleActive(false);
             processing.set(false);
             stopForeground(STOP_FOREGROUND_REMOVE);
             stopSelf();
             return;
         }
-        AutomationRuntimeGate.setScheduleActive(true);
         startedAt = 0L;
         resetTrace();
         trace("QUEUE_CLAIMED", object("runId", currentItem.optString("runId"), "manual", currentItem.optBoolean("manual", false)));
@@ -196,7 +192,7 @@ public final class ExecutionService extends Service {
             String desktopUserAgent = settings.getUserAgentString()
                     .replaceFirst("\\([^)]*Android[^)]*\\)", "(X11; Linux x86_64)")
                     .replace(" Version/4.0", "");
-            settings.setUserAgentString(desktopUserAgent + " ChatGPTPromptScheduler/0.1.14");
+            settings.setUserAgentString(desktopUserAgent + " ChatGPTPromptScheduler/" + BuildConfig.VERSION_NAME);
             CookieManager.getInstance().setAcceptCookie(true);
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
             webView.setWebChromeClient(new WebChromeClient() {
@@ -267,7 +263,8 @@ public final class ExecutionService extends Service {
                         webViewHost.destroy();
                         webViewHost = null;
                     }
-                    recoverEngine("RENDER_PROCESS_GONE", detail.didCrash() ? "WebView 렌더러가 비정상 종료되었습니다." : "WebView 렌더러가 종료되었습니다.");
+                    recoverEngine("RENDER_PROCESS_GONE", detail.didCrash()
+                            ? "WebView 렌더러가 비정상 종료되었습니다." : "WebView 렌더러가 종료되었습니다.");
                     return true;
                 }
             });
@@ -374,7 +371,8 @@ public final class ExecutionService extends Service {
             case "RETRY" -> {
                 pageAttempts++;
                 lastRetryDetail = detail;
-                if (pageAttempts > 45) finish(false, "SUBMIT_VERIFICATION_FAILED", contextualDetail("전송된 사용자 메시지를 확인하지 못했습니다."));
+                if (pageAttempts > 45) finish(false, "SUBMIT_VERIFICATION_FAILED",
+                        contextualDetail("전송된 사용자 메시지를 확인하지 못했습니다."));
                 else scheduleAutomationStep(1400L);
             }
             case "TARGET_CONTEXT_MISMATCH" -> finish(false, "SUBMIT_CONTEXT_LOST", contextualDetail(detail));
@@ -456,7 +454,8 @@ public final class ExecutionService extends Service {
         String effectiveDetail = detail == null ? "" : detail;
         try {
             logStore.append(runId, scheduleId, currentSchedule == null ? "예약" : currentSchedule.name, status, effectiveDetail,
-                    startedAt == 0 ? finishedAt : startedAt, finishedAt, currentSchedule == null ? "" : currentSchedule.targetUrl,
+                    startedAt == 0 ? finishedAt : startedAt, finishedAt,
+                    currentSchedule == null ? "" : currentSchedule.targetUrl,
                     success, traceEvents, environment());
         } catch (RuntimeException logError) {
             effectiveStatus = status + "_LOG_SAVE_FAILED";
@@ -469,8 +468,10 @@ public final class ExecutionService extends Service {
             configStore.saveSchedule(currentSchedule);
             if (currentSchedule.enabled) AlarmEngine.scheduleNext(this, currentSchedule, finishedAt + 1000L);
             JSONObject settings = configStore.settings();
-            if ((success && settings.optBoolean("notifySuccess", true)) || (!success && settings.optBoolean("notifyFailure", true))) {
-                NotificationHelper.result(this, success, success ? "예약 프롬프트 전송 완료" : "예약 프롬프트 실행 실패",
+            if ((success && settings.optBoolean("notifySuccess", true))
+                    || (!success && settings.optBoolean("notifyFailure", true))) {
+                NotificationHelper.result(this, success,
+                        success ? "예약 프롬프트 전송 완료" : "예약 프롬프트 실행 실패",
                         currentSchedule.name + " · " + effectiveStatus, runId);
             }
         }
@@ -502,7 +503,8 @@ public final class ExecutionService extends Service {
             }
             value.put("traceDropped", traceDropped);
         } catch (Exception error) {
-            try { value.put("environmentError", valueOrEmpty(error.getMessage())); } catch (JSONException ignored) {}
+            try { value.put("environmentError", valueOrEmpty(error.getMessage())); }
+            catch (JSONException ignored) {}
         }
         return value;
     }
@@ -587,7 +589,6 @@ public final class ExecutionService extends Service {
     @Override
     public void onDestroy() {
         cleanupEngine();
-        AutomationRuntimeGate.setScheduleActive(false);
         super.onDestroy();
     }
 

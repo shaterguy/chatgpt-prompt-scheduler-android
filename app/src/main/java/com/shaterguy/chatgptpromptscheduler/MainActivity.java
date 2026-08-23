@@ -39,7 +39,6 @@ public final class MainActivity extends Activity {
         NotificationHelper.ensureChannels(this);
         requestNotificationPermission();
         render();
-        recoverOrchestrationService();
     }
 
     @Override
@@ -57,11 +56,7 @@ public final class MainActivity extends Activity {
         root.setPadding(Ui.dp(this, 18), Ui.dp(this, 12), Ui.dp(this, 18), Ui.dp(this, 24));
         scroll.addView(root);
         root.addView(Ui.title(this, "ChatGPT Prompt Scheduler"));
-        root.addView(Ui.body(this, "v0.1.15 · 화면을 열지 않고 예약 프롬프트를 실행하는 Android 앱"));
-
-        root.addView(Ui.section(this, "선택 기능 · 오토런 중계"));
-        root.addView(Ui.body(this, "예약 실행과 분리된 Protocol 3.x 중계입니다. 예약 작업이 항상 우선합니다."));
-        root.addView(Ui.button(this, "오토런 중계 열기", v -> startActivity(new Intent(this, OrchestrationActivity.class))));
+        root.addView(Ui.body(this, "v" + BuildConfig.VERSION_NAME + " · 화면을 열지 않고 예약 프롬프트를 실행하는 Android 앱"));
 
         root.addView(Ui.section(this, "실행 준비 상태"));
         AlarmManager alarmManager = getSystemService(AlarmManager.class);
@@ -70,7 +65,7 @@ public final class MainActivity extends Activity {
         boolean battery = power.isIgnoringBatteryOptimizations(getPackageName());
         root.addView(Ui.body(this, (exact ? "✓" : "✕") + " 정확한 알람 권한"));
         root.addView(Ui.body(this, (battery ? "✓" : "✕") + " 배터리 최적화 제외"));
-        root.addView(Ui.body(this, "로그인 세션은 아래 ‘ChatGPT 로그인/세션’ 화면에서 확인합니다."));
+        root.addView(Ui.body(this, "로그인 세션과 프로젝트 등록은 아래 ‘로그인/세션’ 화면에서 확인합니다."));
 
         root.addView(Ui.actionGrid(this,
                 Ui.button(this, "알람 권한", v -> requestExactAlarm()),
@@ -98,32 +93,13 @@ public final class MainActivity extends Activity {
         });
     }
 
-    /** Process/force-stop recovery after the user directly reopens the app; never mutates relay state. */
-    private void recoverOrchestrationService() {
-        OrchestrationStore relay = new OrchestrationStore(this);
-        String delivery = relay.deliveryState();
-        if (!relay.active() || relay.paused() || relay.terminal() || relay.waitingForUser()
-                || OrchestrationStore.DELIVERY_AMBIGUOUS.equals(delivery)
-                || OrchestrationStore.DELIVERY_FAILED.equals(delivery)
-                || !NotificationHelper.orchestrationAlertsEnabled(this)) return;
-        Intent service = new Intent(this, OrchestrationService.class).setAction(OrchestrationService.ACTION_RUN);
-        try {
-            if (Build.VERSION.SDK_INT >= 26) startForegroundService(service); else startService(service);
-        } catch (RuntimeException ignored) {
-            relay.fail("SERVICE_RECOVERY_FAILED", "앱 재실행 후 오토런 중계 서비스를 복구하지 못했습니다.");
-            if (NotificationHelper.orchestrationAlertsEnabled(this)) {
-                NotificationHelper.orchestrationError(this, relay.monitoringSide(), relay.runJobId(),
-                        relay.currentStep(), relay.currentRound(), "앱 재실행 후 중계 서비스를 복구하지 못했습니다.");
-            }
-        }
-    }
-
     private void addScheduleCard(Schedule schedule, long now) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(Ui.dp(this, 12), Ui.dp(this, 10), Ui.dp(this, 12), Ui.dp(this, 10));
         card.setBackgroundResource(R.drawable.panel_background);
-        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         cardParams.setMargins(0, Ui.dp(this, 6), 0, Ui.dp(this, 6));
         root.addView(card, cardParams);
         card.addView(Ui.section(this, schedule.name));
@@ -147,7 +123,8 @@ public final class MainActivity extends Activity {
             button.setText(checked ? "활성" : "비활성");
         });
         card.addView(Ui.actionGrid(this, toggle,
-                Ui.button(this, "편집", v -> startActivity(new Intent(this, ScheduleEditorActivity.class).putExtra("scheduleId", schedule.id))),
+                Ui.button(this, "편집", v -> startActivity(new Intent(this, ScheduleEditorActivity.class)
+                        .putExtra("scheduleId", schedule.id))),
                 Ui.button(this, "지금 실행", v -> runNow(schedule.id)),
                 Ui.button(this, "삭제", v -> confirmDelete(schedule))));
     }
@@ -155,16 +132,13 @@ public final class MainActivity extends Activity {
     private void runNow(String scheduleId) {
         QueueStore queueStore = new QueueStore(this);
         QueueStore.EnqueueResult result;
-        AutomationRuntimeGate.setScheduleActive(true);
         try {
             result = queueStore.enqueue(scheduleId, true);
         } catch (RuntimeException error) {
-            AutomationRuntimeGate.setScheduleActive(false);
             toast("실행 대기열 저장 실패: " + error.getMessage());
             return;
         }
         if (!result.added) {
-            AutomationRuntimeGate.setScheduleActive(queueStore.hasActive());
             toast("이미 실행 중이거나 대기 중인 예약입니다.");
             return;
         }
@@ -175,7 +149,6 @@ public final class MainActivity extends Activity {
             toast("실행 대기열에 추가했습니다.");
         } catch (RuntimeException error) {
             queueStore.finish(result.runId);
-            AutomationRuntimeGate.setScheduleActive(queueStore.hasActive());
             toast("실행 서비스 시작 실패: " + error.getMessage());
         }
     }
@@ -190,12 +163,14 @@ public final class MainActivity extends Activity {
     }
 
     private void exportConfig() {
-        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("application/json").putExtra(Intent.EXTRA_TITLE, "chatgpt-prompt-scheduler-settings.json");
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("application/json")
+                .putExtra(Intent.EXTRA_TITLE, "chatgpt-prompt-scheduler-settings.json");
         startActivityForResult(intent, REQUEST_EXPORT);
     }
 
     private void importConfig() {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("application/json").addCategory(Intent.CATEGORY_OPENABLE);
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("application/json")
+                .addCategory(Intent.CATEGORY_OPENABLE);
         startActivityForResult(intent, REQUEST_IMPORT);
     }
 
@@ -210,14 +185,16 @@ public final class MainActivity extends Activity {
                 toast("설정 JSON을 저장했습니다.");
             } catch (Exception error) { toast("내보내기 실패: " + error.getMessage()); }
         } else if (requestCode == REQUEST_IMPORT) {
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(getContentResolver().openInputStream(uri), StandardCharsets.UTF_8))) {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                    getContentResolver().openInputStream(uri), StandardCharsets.UTF_8))) {
                 StringBuilder text = new StringBuilder();
                 String line;
                 while ((line = reader.readLine()) != null) text.append(line).append('\n');
                 JSONObject incoming = new JSONObject(text.toString());
                 int count = incoming.optJSONArray("schedules") == null ? 0 : incoming.optJSONArray("schedules").length();
                 new AlertDialog.Builder(this).setTitle("설정 가져오기")
-                        .setMessage("현재 예약과 설정을 교체하고 " + count + "개 예약을 가져옵니다. 로그인 쿠키와 실행 기록은 변경하지 않습니다.")
+                        .setMessage("현재 예약과 설정을 교체하고 " + count
+                                + "개 예약을 가져옵니다. 로그인 쿠키와 실행 기록은 변경하지 않습니다.")
                         .setNegativeButton("취소", null).setPositiveButton("교체", (dialog, which) -> {
                             try {
                                 int imported = store.importPortable(incoming);
@@ -232,18 +209,22 @@ public final class MainActivity extends Activity {
 
     private void requestExactAlarm() {
         if (Build.VERSION.SDK_INT >= 31) {
-            Intent intent = new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:" + getPackageName()));
+            Intent intent = new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                    Uri.parse("package:" + getPackageName()));
             startActivity(intent);
         } else toast("이 Android 버전에서는 별도 권한이 필요하지 않습니다.");
     }
 
     private void requestBatteryExemption() {
-        Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName()));
-        try { startActivity(intent); } catch (Exception error) { startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); }
+        Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Uri.parse("package:" + getPackageName()));
+        try { startActivity(intent); }
+        catch (Exception error) { startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); }
     }
 
     private void requestNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 4001);
         }
     }
