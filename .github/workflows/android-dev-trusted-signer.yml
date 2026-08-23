@@ -50,9 +50,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: |
           set -euo pipefail
           [[ "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$SOURCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
           RUN_JSON="$RUNNER_TEMP/source-run.json"
           gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" > "$RUN_JSON"
           [[ "$(jq -r '.repository.id' "$RUN_JSON")" == "$TRUSTED_REPOSITORY_ID" ]]
@@ -64,6 +66,7 @@ jobs:
           [[ "$(jq -r '.actor.id' "$RUN_JSON")" == "$TRUSTED_ACTOR_ID" ]]
           [[ "$(jq -r '.triggering_actor.login' "$RUN_JSON")" == "$TRUSTED_ACTOR" ]]
           [[ "$(jq -r '.triggering_actor.id' "$RUN_JSON")" == "$TRUSTED_ACTOR_ID" ]]
+          [[ "$(jq -r '.run_attempt' "$RUN_JSON")" == "$SOURCE_RUN_ATTEMPT" ]]
 
           HEAD_BRANCH="$(jq -r '.head_branch' "$RUN_JSON")"
           HEAD_SHA="$(jq -r '.head_sha' "$RUN_JSON")"
@@ -72,7 +75,7 @@ jobs:
           [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
           VERSION_NAME="${HEAD_BRANCH#v}"
           VERSION_CODE="$((3000000 + DEV_NUMBER))"
-          EXPECTED_ARTIFACT="chatgpt-prompt-scheduler-dev-${VERSION_NAME}-unsigned"
+          EXPECTED_ARTIFACT="chatgpt-prompt-scheduler-dev-${VERSION_NAME}-unsigned-attempt-${SOURCE_RUN_ATTEMPT}"
           UNSIGNED_NAME="chatgpt-prompt-scheduler-dev-v${VERSION_NAME}-unsigned.apk"
           SIGNED_NAME="chatgpt-prompt-scheduler-dev-v${VERSION_NAME}.apk"
           CURRENT_SHA="$(gh api "/repos/$GITHUB_REPOSITORY/git/ref/heads/$HEAD_BRANCH" --jq '.object.sha')"
@@ -80,6 +83,7 @@ jobs:
 
           printf 'head_branch=%s\n' "$HEAD_BRANCH" >> "$GITHUB_OUTPUT"
           printf 'head_sha=%s\n' "$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          printf 'run_attempt=%s\n' "$SOURCE_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
           printf 'version_name=%s\n' "$VERSION_NAME" >> "$GITHUB_OUTPUT"
           printf 'version_code=%s\n' "$VERSION_CODE" >> "$GITHUB_OUTPUT"
           printf 'artifact_name=%s\n' "$EXPECTED_ARTIFACT" >> "$GITHUB_OUTPUT"
@@ -314,6 +318,7 @@ jobs:
           VERSION_CODE: ${{ steps.source.outputs.version_code }}
           SIGNED_NAME: ${{ steps.source.outputs.signed_name }}
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_RUN_ATTEMPT: ${{ steps.source.outputs.run_attempt }}
         run: |
           set -euo pipefail
           BT="$ANDROID_HOME/build-tools/36.0.0"
@@ -341,6 +346,7 @@ jobs:
           (cd signed-output && sha256sum "$SIGNED_NAME" > SHA256SUMS.txt)
           printf '%s\n' "$HEAD_SHA" > signed-output/SOURCE_COMMIT.txt
           printf '%s\n' "$SOURCE_RUN_ID" > signed-output/SOURCE_RUN_ID.txt
+          printf '%s\n' "$SOURCE_RUN_ATTEMPT" > signed-output/SOURCE_RUN_ATTEMPT.txt
 
       - name: Upload signed DEV APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
