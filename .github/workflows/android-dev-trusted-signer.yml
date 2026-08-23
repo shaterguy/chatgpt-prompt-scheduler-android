@@ -217,10 +217,10 @@ jobs:
           if 'android:sharedUserId' in joined or re.search(r'android:protectionLevel.*(?:signature|knownSigner)', joined, re.I):
               raise SystemExit('forbidden same-signature trust construct')
           expected = {
-              'activity': {'.SettingsActivity': False, '.LogsActivity': False, '.LoginActivity': False,
-                           '.ScheduleEditorActivity': False, '.OrchestrationActivity': False, '.MainActivity': True},
-              'receiver': {'.AlarmReceiver': False, '.BootReceiver': False},
-              'service': {'.ExecutionService': False, '.OrchestrationService': False},
+              'activity': {'com.shaterguy.chatgptpromptscheduler.SettingsActivity': False, 'com.shaterguy.chatgptpromptscheduler.LogsActivity': False, 'com.shaterguy.chatgptpromptscheduler.LoginActivity': False,
+                           'com.shaterguy.chatgptpromptscheduler.ScheduleEditorActivity': False, 'com.shaterguy.chatgptpromptscheduler.OrchestrationActivity': False, 'com.shaterguy.chatgptpromptscheduler.MainActivity': True},
+              'receiver': {'com.shaterguy.chatgptpromptscheduler.AlarmReceiver': False, 'com.shaterguy.chatgptpromptscheduler.BootReceiver': False},
+              'service': {'com.shaterguy.chatgptpromptscheduler.ExecutionService': False, 'com.shaterguy.chatgptpromptscheduler.OrchestrationService': False},
           }
           found = {k: {} for k in expected}
           current = None
