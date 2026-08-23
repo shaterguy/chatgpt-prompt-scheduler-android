@@ -1,7 +1,7 @@
 {
   "repository": "shaterguy/chatgpt-prompt-scheduler-android",
-  "observed_run_id": "32634340177",
-  "source_sha": "1c93033b69a4a9ad73830853f84fb9e08e46d372",
+  "observed_run_id": "32644098396",
+  "source_sha": "fa2dd48b176f06d375a2dd769430b8e4af4b6df4",
   "workflow_conclusion": "success",
   "mode": "persistent-public-signing",
   "public_certificate_sha256": "3cfe95acd09077a89cd8de85434cbd5d8bb3e2021d8e9eacb804a8da9ccce52a",
@@ -9,5 +9,5 @@
   "future_public_updates_supported_after_successful_baseline": true,
   "external_private_repo_dependency": false,
   "repository_secret_name": "CHATGPT_PUBLIC_SIGNING_BUNDLE_BASE64",
-  "completed_at_utc": "2026-08-23T10:42:11Z"
+  "completed_at_utc": "2026-08-23T14:03:16Z"
 }
