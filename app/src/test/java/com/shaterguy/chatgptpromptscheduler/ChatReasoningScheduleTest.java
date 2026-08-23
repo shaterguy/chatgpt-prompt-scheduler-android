@@ -52,6 +52,22 @@ public final class ChatReasoningScheduleTest {
     }
 
     @Test
+    public void chatReasoningLabelsMapBackToPersistedValues() {
+        assertEquals("keep", ScheduleEditorActivity.chatReasoningValue("현재 Chat 설정 유지"));
+        assertEquals("instant", ScheduleEditorActivity.chatReasoningValue("Instant"));
+        assertEquals("medium", ScheduleEditorActivity.chatReasoningValue("Medium"));
+        assertEquals("high", ScheduleEditorActivity.chatReasoningValue("High"));
+        assertEquals("xhigh", ScheduleEditorActivity.chatReasoningValue("Extra High"));
+        assertEquals("pro", ScheduleEditorActivity.chatReasoningValue("Pro"));
+        assertEquals("keep", ScheduleEditorActivity.chatReasoningValue("unknown"));
+
+        assertEquals("xhigh", Schedule.normalizedChatReasoning(
+                "chat", ScheduleEditorActivity.chatReasoningValue("Extra High")));
+        assertEquals("pro", Schedule.normalizedChatReasoning(
+                "chat", ScheduleEditorActivity.chatReasoningValue("Pro")));
+    }
+
+    @Test
     public void editorShowsChatReasoningOnlyForSelectableChatMode() {
         assertTrue(ScheduleEditorActivity.showsChatReasoning("general", "chat"));
         assertTrue(ScheduleEditorActivity.showsChatReasoning("project", "chat"));
