@@ -1,0 +1,135 @@
+name: Publish verified DEV APK delivery
+
+on:
+  push:
+    branches:
+      - 'delivery/v0.3.0-dev3'
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          cmdline-tools-version: '11076708'
+          log-accepted-android-sdk-licenses: 'false'
+          packages: 'platform-tools build-tools;36.0.0'
+      - name: Retrieve and verify trusted signed APK
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: '9492270672'
+          SIGNER_RUN_ID: '32635820713'
+          SOURCE_RUN_ID: '32635758003'
+          SOURCE_COMMIT: '447b7be8c8174ce07c2346181903d412621ca50d'
+          SIGNER_MAIN_SHA: '4ea4e8a792c2ea9e1cc7b8251453176b5a894813'
+          ARTIFACT_ZIP_SHA256: '816974336ddb972bbdcfb3a055f5b1af6dc62c4bf25ec04b333cecc22906026a'
+          EXPECTED_CERT_SHA256: '3cfe95acd09077a89cd8de85434cbd5d8bb3e2021d8e9eacb804a8da9ccce52a'
+          APK_NAME: 'chatgpt-prompt-scheduler-dev-v0.3.0-dev3.apk'
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY_ID" == '1325378971' ]]
+          [[ "$GITHUB_REF_NAME" == 'delivery/v0.3.0-dev3' ]]
+
+          META="$RUNNER_TEMP/artifact.json"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" > "$META"
+          [[ "$(jq -r '.id')" == "$ARTIFACT_ID" ]]
+          [[ "$(jq -r '.name')" == 'chatgpt-prompt-scheduler-dev-0.3.0-dev3-signed' ]]
+          [[ "$(jq -r '.expired')" == 'false' ]]
+          [[ "$(jq -r '.workflow_run.id')" == "$SIGNER_RUN_ID" ]]
+          [[ "$(jq -r '.workflow_run.repository_id')" == '1325378971' ]]
+          [[ "$(jq -r '.workflow_run.head_repository_id')" == '1325378971' ]]
+          [[ "$(jq -r '.workflow_run.head_branch')" == 'main' ]]
+          [[ "$(jq -r '.workflow_run.head_sha')" == "$SIGNER_MAIN_SHA" ]]
+
+          ARCHIVE="$RUNNER_TEMP/signed-artifact.zip"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" \
+            --output "$ARCHIVE"
+          test -s "$ARCHIVE"
+          [[ "$(sha256sum "$ARCHIVE" | awk '{print $1}')" == "$ARTIFACT_ZIP_SHA256" ]]
+
+          OUT="$RUNNER_TEMP/signed"
+          mkdir -p "$OUT"
+          python3 - "$ARCHIVE" "$OUT" <<'PY'
+          import pathlib, stat, sys, zipfile
+          archive, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+          with zipfile.ZipFile(archive) as zf:
+              infos = [i for i in zf.infolist() if not i.is_dir()]
+              if not infos:
+                  raise SystemExit('empty signed artifact')
+              for info in infos:
+                  path = pathlib.PurePosixPath(info.filename)
+                  if path.is_absolute() or '..' in path.parts or len(path.parts) != 1:
+                      raise SystemExit(f'unsafe artifact path: {info.filename}')
+                  if ((info.external_attr >> 16) & 0o170000) == stat.S_IFLNK:
+                      raise SystemExit(f'symlink forbidden: {info.filename}')
+                  target = out / info.filename
+                  with zf.open(info) as src, target.open('wb') as dst:
+                      while chunk := src.read(1024 * 1024):
+                          dst.write(chunk)
+          PY
+
+          APK="$OUT/$APK_NAME"
+          test -s "$APK"
+          test -s "$OUT/SHA256SUMS.txt"
+          [[ "$(tr -d '[:space:]' < "$OUT/SOURCE_COMMIT.txt")" == "$SOURCE_COMMIT" ]]
+          [[ "$(tr -d '[:space:]' < "$OUT/SOURCE_RUN_ID.txt")" == "$SOURCE_RUN_ID" ]]
+          [[ "$(tr -d '[:space:]' < "$OUT/DEV_SIGNING_CERT_SHA256.txt")" == "$EXPECTED_CERT_SHA256" ]]
+          (cd "$OUT" && sha256sum --check --strict SHA256SUMS.txt)
+
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/apksigner" verify --verbose --print-certs "$APK" > "$RUNNER_TEMP/apk-cert.txt"
+          grep -Fq 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/apk-cert.txt"
+          grep -Fq 'Verified using v3 scheme (APK Signature Scheme v3): true' "$RUNNER_TEMP/apk-cert.txt"
+          CERT_SHA="$(awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print $2; exit}' "$RUNNER_TEMP/apk-cert.txt" | tr -d '[:space:]:' | tr '[:upper:]' '[:lower:]')"
+          [[ "$CERT_SHA" == "$EXPECTED_CERT_SHA256" ]]
+          BADGING="$($BT/aapt dump badging "$APK")"
+          grep -Fq "package: name='com.shaterguy.chatgptpromptscheduler.dev'" <<<"$BADGING"
+          grep -Fq "versionCode='3000003'" <<<"$BADGING"
+          grep -Fq "versionName='0.3.0-dev3'" <<<"$BADGING"
+          grep -Fq "application-label:'ChatGPT Prompt Scheduler DEV'" <<<"$BADGING"
+          "$BT/zipalign" -c -v 4 "$APK" >/dev/null
+          unzip -t "$APK" >/dev/null
+
+          APK_SHA="$(sha256sum "$APK" | awk '{print $1}')"
+          mkdir -p delivery
+          cp "$APK" "delivery/$APK_NAME"
+          printf '%s  %s\n' "$APK_SHA" "$APK_NAME" > "delivery/$APK_NAME.sha256"
+          printf '%s\n' "$EXPECTED_CERT_SHA256" > "delivery/$APK_NAME.cert-sha256"
+          printf '%s\n' "$SOURCE_COMMIT" > "delivery/$APK_NAME.source-commit"
+          printf 'APK_SHA256=%s\n' "$APK_SHA"
+
+      - name: Publish bare APK to delivery branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/publish-verified-dev-apk.yml
+          git add delivery/chatgpt-prompt-scheduler-dev-v0.3.0-dev3.apk \
+                  delivery/chatgpt-prompt-scheduler-dev-v0.3.0-dev3.apk.sha256 \
+                  delivery/chatgpt-prompt-scheduler-dev-v0.3.0-dev3.apk.cert-sha256 \
+                  delivery/chatgpt-prompt-scheduler-dev-v0.3.0-dev3.apk.source-commit
+          git diff --cached --check
+          mapfile -t CHANGED < <(git diff --cached --name-only | sort)
+          EXPECTED=(
+            '.github/workflows/publish-verified-dev-apk.yml'
+            'delivery/chatgpt-prompt-scheduler-dev-v0.3.0-dev3.apk'
+            'delivery/chatgpt-prompt-scheduler-dev-v0.3.0-dev3.apk.cert-sha256'
+            'delivery/chatgpt-prompt-scheduler-dev-v0.3.0-dev3.apk.sha256'
+            'delivery/chatgpt-prompt-scheduler-dev-v0.3.0-dev3.apk.source-commit'
+          )
+          [[ "${#CHANGED[@]}" -eq "${#EXPECTED[@]}" ]]
+          for i in "${!EXPECTED[@]}"; do [[ "${CHANGED[$i]}" == "${EXPECTED[$i]}" ]]; done
+          git commit -m 'Publish verified 0.3.0-dev3 APK for direct testing'
+          git push origin HEAD:"$GITHUB_REF_NAME"
