@@ -12,10 +12,10 @@ permissions:
 
 env:
   DEV_PACKAGE: com.shaterguy.chatgptpromptscheduler.dev
-  DEV_VERSION_CODE: '3000007'
-  DEV_VERSION_NAME: 0.3.0-dev7
+  DEV_VERSION_CODE: '3000008'
+  DEV_VERSION_NAME: 0.3.0-dev8
   DEV_APP_LABEL: ChatGPT Prompt Scheduler DEV
-  DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.3.0-dev7-unsigned.apk
+  DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.3.0-dev8-unsigned.apk
 
 concurrency:
   group: chatgpt-prompt-scheduler-dev-${{ github.ref }}
@@ -35,11 +35,27 @@ jobs:
         with:
           cmdline-tools-version: '11076708'
           log-accepted-android-sdk-licenses: 'false'
-          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0 emulator system-images;android-35;google_apis;x86_64'
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
         with:
           gradle-version: '9.5.0'
           cache-read-only: true
+      - name: Run Android WebView regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -e /dev/kvm ]]; then sudo chmod 666 /dev/kvm; fi
+          echo 'no' | avdmanager create avd --force --name cps-ci --package 'system-images;android-35;google_apis;x86_64'
+          "$ANDROID_HOME/emulator/emulator" -avd cps-ci -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -wipe-data > "$RUNNER_TEMP/cps-emulator.log" 2>&1 &
+          EMULATOR_PID=$!
+          trap 'kill "$EMULATOR_PID" >/dev/null 2>&1 || true' EXIT
+          adb wait-for-device
+          timeout 300 bash -c 'until [[ "$(adb shell getprop sys.boot_completed | tr -d "\r")" == "1" ]]; do sleep 5; done'
+          adb shell settings put global window_animation_scale 0
+          adb shell settings put global transition_animation_scale 0
+          adb shell settings put global animator_duration_scale 0
+          gradle --no-daemon --console=plain --stacktrace :app:connectedDebugAndroidTest
+          adb emu kill >/dev/null 2>&1 || true
       - name: Test and build unsigned DEV candidate
         shell: bash
         run: |
@@ -70,14 +86,16 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
-      - name: Upload DEV unit-test reports
+      - name: Upload DEV test reports
         if: always()
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: chatgpt-prompt-scheduler-dev-${{ env.DEV_VERSION_NAME }}-test-reports
+          name: chatgpt-prompt-scheduler-dev-${{ env.DEV_VERSION_NAME }}-test-reports-attempt-${{ github.run_attempt }}
           path: |
             app/build/test-results/testDebugUnitTest/**
             app/build/reports/tests/testDebugUnitTest/**
+            app/build/outputs/androidTest-results/connected/**
+            app/build/reports/androidTests/connected/**
           if-no-files-found: warn
           retention-days: 7
