@@ -35,81 +35,30 @@ jobs:
         with:
           cmdline-tools-version: '11076708'
           log-accepted-android-sdk-licenses: 'false'
-          packages: 'platform-tools platforms;android-36 build-tools;36.0.0 emulator system-images;android-35;google_apis;x86_64'
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
         with:
           gradle-version: '9.5.0'
           cache-read-only: true
-      - name: Run Android WebView regression tests
+      - name: Enable hardware acceleration
         shell: bash
         run: |
           set -euo pipefail
-          EMULATOR_LOG="$RUNNER_TEMP/cps-emulator.log"
-
-          dump_emulator_diagnostics() {
-            echo 'EMULATOR_DIAGNOSTICS_BEGIN' >&2
-            adb devices -l >&2 || true
-            if [[ -n "${EMULATOR_PID:-}" ]]; then
-              ps -p "$EMULATOR_PID" -o pid=,stat=,etime=,cmd= >&2 || true
-            fi
-            if [[ -s "$EMULATOR_LOG" ]]; then
-              cat "$EMULATOR_LOG" >&2
-            else
-              echo "emulator log missing or empty: $EMULATOR_LOG" >&2
-            fi
-            echo 'EMULATOR_DIAGNOSTICS_END' >&2
-          }
-
-          wait_for_emulator_device() {
-            local deadline=$((SECONDS + 90)) state
-            while (( SECONDS < deadline )); do
-              if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then
-                echo 'Android emulator exited before becoming visible to adb' >&2
-                dump_emulator_diagnostics
-                return 1
-              fi
-              state="$(timeout --foreground 10s adb get-state 2>/dev/null || true)"
-              if [[ "$state" == 'device' ]]; then
-                return 0
-              fi
-              sleep 2
-            done
-            echo 'Android emulator was not visible to adb within 90 seconds' >&2
-            dump_emulator_diagnostics
-            return 1
-          }
-
-          wait_for_android_boot() {
-            local deadline=$((SECONDS + 300)) boot_completed
-            while (( SECONDS < deadline )); do
-              if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then
-                echo 'Android emulator exited before boot completed' >&2
-                dump_emulator_diagnostics
-                return 1
-              fi
-              boot_completed="$(timeout --foreground 10s adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
-              if [[ "$boot_completed" == '1' ]]; then
-                return 0
-              fi
-              sleep 5
-            done
-            echo 'Android emulator boot did not complete within 300 seconds' >&2
-            dump_emulator_diagnostics
-            return 1
-          }
-
-          if [[ -e /dev/kvm ]]; then sudo chmod 666 /dev/kvm; fi
-          echo 'no' | avdmanager create avd --force --name cps-ci --package 'system-images;android-35;google_apis;x86_64'
-          "$ANDROID_HOME/emulator/emulator" -avd cps-ci -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -wipe-data > "$EMULATOR_LOG" 2>&1 &
-          EMULATOR_PID=$!
-          trap 'kill "$EMULATOR_PID" >/dev/null 2>&1 || true' EXIT
-          wait_for_emulator_device
-          wait_for_android_boot
-          timeout --foreground 30s adb shell settings put global window_animation_scale 0
-          timeout --foreground 30s adb shell settings put global transition_animation_scale 0
-          timeout --foreground 30s adb shell settings put global animator_duration_scale 0
-          gradle --no-daemon --console=plain --stacktrace :app:connectedDebugAndroidTest
-          timeout --foreground 30s adb emu kill >/dev/null 2>&1 || true
+          test -c /dev/kvm
+          sudo chmod 0666 /dev/kvm
+      - name: Run Android WebView regression tests
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          emulator-boot-timeout: 600
+          emulator-options: >-
+            -no-window -gpu swiftshader_indirect -accel on -no-snapshot -noaudio -no-boot-anim
+            -camera-back none -camera-front none -memory 2048
+          disable-animations: true
+          script: gradle --no-daemon --console=plain --stacktrace :app:connectedDebugAndroidTest
       - name: Test and build unsigned DEV candidate
         shell: bash
         run: |
@@ -151,14 +100,5 @@ jobs:
             app/build/reports/tests/testDebugUnitTest/**
             app/build/outputs/androidTest-results/connected/**
             app/build/reports/androidTests/connected/**
-          if-no-files-found: warn
-          retention-days: 7
-      - name: Upload DEV emulator diagnostics
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: chatgpt-prompt-scheduler-dev-${{ env.DEV_VERSION_NAME }}-emulator-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/cps-emulator.log
           if-no-files-found: warn
           retention-days: 7
