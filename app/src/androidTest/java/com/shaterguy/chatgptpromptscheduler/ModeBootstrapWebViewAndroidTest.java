@@ -1,12 +1,12 @@
 package com.shaterguy.chatgptpromptscheduler;
 
-import android.view.View;
-import android.view.ViewGroup;
+import android.content.Context;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
-import androidx.test.core.app.ActivityScenario;
+import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.platform.app.InstrumentationRegistry;
 
 import org.json.JSONObject;
 import org.json.JSONTokener;
@@ -21,69 +21,65 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
-/** Exercises the scheduler's real AutomationScript in Android System WebView fixtures. */
+/** Exercises the real scheduler AutomationScript in the same headless WebView host used by schedules. */
 @RunWith(AndroidJUnit4.class)
 public final class ModeBootstrapWebViewAndroidTest {
     private static final String PROJECT_URL = "https://chatgpt.com/g/g-p-test/project";
 
     @Test
     public void alreadyChatSkipsModeClickAndSubmitsAfterReasoningSelection() throws Exception {
-        try (ActivityScenario<LoginActivity> scenario = ActivityScenario.launch(LoginActivity.class)) {
-            AtomicReference<WebView> web = new AtomicReference<>();
-            load(scenario, web, fixture(false, false));
-            String runId = "CPS-CHAT-READY";
-
-            JSONObject submitted = runToSubmitted(scenario, web, runId);
+        Fixture fixture = load(fixture(false, false));
+        try {
+            JSONObject submitted = runToSubmitted(fixture.web, "CPS-CHAT-READY");
 
             assertEquals("SUBMITTED", submitted.getString("status"));
-            assertEquals("0", read(scenario, web, "String(window.chatClicks)"));
-            assertEquals("1", read(scenario, web, "String(window.instantClicks)"));
-            assertEquals("1", read(scenario, web, "String(window.sendClicks)"));
+            assertEquals("0", read(fixture.web, "String(window.chatClicks)"));
+            assertEquals("1", read(fixture.web, "String(window.instantClicks)"));
+            assertEquals("1", read(fixture.web, "String(window.sendClicks)"));
+        } finally {
+            destroy(fixture.host);
         }
     }
 
     @Test
     public void workToChatClicksModeExactlyOnceBeforeReasoningAndSubmit() throws Exception {
-        try (ActivityScenario<LoginActivity> scenario = ActivityScenario.launch(LoginActivity.class)) {
-            AtomicReference<WebView> web = new AtomicReference<>();
-            load(scenario, web, fixture(true, false));
-            String runId = "CPS-WORK-TO-CHAT";
-
-            JSONObject submitted = runToSubmitted(scenario, web, runId);
+        Fixture fixture = load(fixture(true, false));
+        try {
+            JSONObject submitted = runToSubmitted(fixture.web, "CPS-WORK-TO-CHAT");
 
             assertEquals("SUBMITTED", submitted.getString("status"));
-            assertEquals("1", read(scenario, web, "String(window.chatClicks)"));
-            assertEquals("1", read(scenario, web, "String(window.instantClicks)"));
-            assertEquals("1", read(scenario, web, "String(window.sendClicks)"));
+            assertEquals("1", read(fixture.web, "String(window.chatClicks)"));
+            assertEquals("1", read(fixture.web, "String(window.instantClicks)"));
+            assertEquals("1", read(fixture.web, "String(window.sendClicks)"));
+        } finally {
+            destroy(fixture.host);
         }
     }
 
     @Test
     public void confirmedChatSurvivesReasoningPickerRemovingModeSelectedSignals() throws Exception {
-        try (ActivityScenario<LoginActivity> scenario = ActivityScenario.launch(LoginActivity.class)) {
-            AtomicReference<WebView> web = new AtomicReference<>();
-            load(scenario, web, fixture(false, true));
+        Fixture fixture = load(fixture(false, true));
+        try {
             String runId = "CPS-MODE-LATCH";
-
-            JSONObject submitted = runToSubmitted(scenario, web, runId);
+            JSONObject submitted = runToSubmitted(fixture.web, runId);
 
             assertEquals("SUBMITTED", submitted.getString("status"));
-            assertEquals("0", read(scenario, web, "String(window.chatClicks)"));
-            assertEquals("1", read(scenario, web, "String(window.instantClicks)"));
-            assertEquals("1", read(scenario, web, "String(window.sendClicks)"));
-            assertEquals("MODE_CONFIRMED", read(scenario, web,
+            assertEquals("0", read(fixture.web, "String(window.chatClicks)"));
+            assertEquals("1", read(fixture.web, "String(window.instantClicks)"));
+            assertEquals("1", read(fixture.web, "String(window.sendClicks)"));
+            assertEquals("MODE_CONFIRMED", read(fixture.web,
                     "(()=>{const k='chatgpt-prompt-scheduler:mode-stage:" + runId
                             + "';const v=localStorage.getItem(k)||sessionStorage.getItem(k);return JSON.parse(v).stage;})()"));
+        } finally {
+            destroy(fixture.host);
         }
     }
 
-    private static JSONObject runToSubmitted(ActivityScenario<LoginActivity> scenario,
-                                               AtomicReference<WebView> web,
-                                               String runId) throws Exception {
+    private static JSONObject runToSubmitted(WebView web, String runId) throws Exception {
         JSONObject result = null;
         Schedule schedule = schedule();
         for (int attempt = 0; attempt < 14; attempt++) {
-            result = evaluate(scenario, web, AutomationScript.build(schedule, "hello", runId, attempt));
+            result = evaluate(web, AutomationScript.build(schedule, "hello", runId, attempt));
             String status = result.getString("status");
             if ("SUBMITTED".equals(status)) break;
             assertEquals(result.toString(), "RETRY", status);
@@ -139,45 +135,39 @@ public final class ModeBootstrapWebViewAndroidTest {
                 .replace("__DROP__", dropModeSignalsOnReasoningOpen ? "true" : "false");
     }
 
-    private static void load(ActivityScenario<LoginActivity> scenario,
-                             AtomicReference<WebView> web,
-                             String html) throws Exception {
+    private static Fixture load(String html) throws Exception {
         CountDownLatch loaded = new CountDownLatch(1);
-        scenario.onActivity(activity -> {
-            WebView view = findWebView(activity.getWindow().getDecorView());
-            if (view == null) throw new AssertionError("LoginActivity WebView not found");
-            view.stopLoading();
-            view.getSettings().setJavaScriptEnabled(true);
-            view.getSettings().setDomStorageEnabled(true);
-            view.setWebViewClient(new WebViewClient() {
+        AtomicReference<Fixture> fixture = new AtomicReference<>();
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            Context context = ApplicationProvider.getApplicationContext();
+            HeadlessWebViewHost host = HeadlessWebViewHost.create(context);
+            WebView web = host.webView();
+            web.getSettings().setJavaScriptEnabled(true);
+            web.getSettings().setDomStorageEnabled(true);
+            web.setWebViewClient(new WebViewClient() {
                 @Override public void onPageFinished(WebView ignored, String url) {
                     if (url != null && url.startsWith(PROJECT_URL)) loaded.countDown();
                 }
             });
-            web.set(view);
-            view.loadDataWithBaseURL(PROJECT_URL, html, "text/html", "UTF-8", null);
+            fixture.set(new Fixture(host, web));
+            web.loadDataWithBaseURL(PROJECT_URL, html, "text/html", "UTF-8", null);
         });
-        assertTrue("Scheduler WebView fixture did not load", loaded.await(15, TimeUnit.SECONDS));
+        assertTrue("Scheduler headless WebView fixture did not load", loaded.await(15, TimeUnit.SECONDS));
+        Fixture value = fixture.get();
+        assertNotNull(value);
+        assertTrue("Scheduler automation must test a window-attached WebView", value.host.isWindowAttached());
         assertNotNull("Android System WebView must be available", WebView.getCurrentWebViewPackage());
+        return value;
     }
 
-    private static WebView findWebView(View view) {
-        if (view instanceof WebView) return (WebView) view;
-        if (!(view instanceof ViewGroup)) return null;
-        ViewGroup group = (ViewGroup) view;
-        for (int i = 0; i < group.getChildCount(); i++) {
-            WebView found = findWebView(group.getChildAt(i));
-            if (found != null) return found;
-        }
-        return null;
+    private static void destroy(HeadlessWebViewHost host) {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(host::destroy);
     }
 
-    private static JSONObject evaluate(ActivityScenario<LoginActivity> scenario,
-                                       AtomicReference<WebView> web,
-                                       String script) throws Exception {
+    private static JSONObject evaluate(WebView web, String script) throws Exception {
         CountDownLatch complete = new CountDownLatch(1);
         AtomicReference<String> raw = new AtomicReference<>();
-        scenario.onActivity(activity -> web.get().evaluateJavascript(script, value -> {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> web.evaluateJavascript(script, value -> {
             raw.set(value);
             complete.countDown();
         }));
@@ -186,16 +176,16 @@ public final class ModeBootstrapWebViewAndroidTest {
         return new JSONObject(String.valueOf(decoded));
     }
 
-    private static String read(ActivityScenario<LoginActivity> scenario,
-                               AtomicReference<WebView> web,
-                               String expression) throws Exception {
+    private static String read(WebView web, String expression) throws Exception {
         CountDownLatch complete = new CountDownLatch(1);
         AtomicReference<String> raw = new AtomicReference<>();
-        scenario.onActivity(activity -> web.get().evaluateJavascript(expression, value -> {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> web.evaluateJavascript(expression, value -> {
             raw.set(value);
             complete.countDown();
         }));
         assertTrue("WebView read timed out", complete.await(15, TimeUnit.SECONDS));
         return String.valueOf(new JSONTokener(raw.get()).nextValue());
     }
+
+    private record Fixture(HeadlessWebViewHost host, WebView web) {}
 }
