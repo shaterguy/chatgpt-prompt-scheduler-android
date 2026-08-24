@@ -95,21 +95,25 @@ public final class ChatReasoningScheduleTest {
     }
 
     @Test
-    public void chatModeWaitsForSelectedReadbackWithoutRepeatingModeClick() {
+    public void chatModeUsesBoundedRetryBeforeReasoning() {
         Schedule schedule = new Schedule();
         schedule.targetType = "general";
         schedule.experience = "chat";
         schedule.chatReasoning = "medium";
 
         String script = AutomationScript.build(schedule, "hello", "run-mode-readback", 0);
-        String clickGate = "if(mode&&!modeSelected&&!modePrior)";
+        String firstClickGate = "if(mode&&!modeSelected&&!modePrior&&!__cpmRecentClick&&Number(__cpmState.clickAttempts)<2)";
+        String retryClickGate = "else if(mode&&!modeSelected&&modePrior&&!__cpmRecentClick&&Number(__cpmState.clickAttempts)<2)";
         String readbackGate = "if(modeDiagnostics.priorClick&&!modeDiagnostics.selected)return result('RETRY','Chat 모드 선택 상태 확인 대기'";
 
-        assertTrue(script.contains(clickGate));
+        assertTrue(script.contains(firstClickGate));
+        assertTrue(script.contains(retryClickGate));
+        assertTrue(script.contains("MODE_CONFIRMED"));
+        assertTrue(script.contains("CHAT_MODE_READBACK_FAILED"));
         assertTrue(script.contains("priorClick:!!modePrior"));
         assertTrue(script.contains(readbackGate));
-        assertFalse(script.contains("if(modeDiagnostics.candidateFound&&!modeDiagnostics.selected)return result('RETRY','Chat 모드 선택 상태 확인 대기'"));
-        assertTrue(script.indexOf(clickGate) < script.indexOf(readbackGate));
+        assertTrue(script.indexOf(firstClickGate) < script.indexOf(retryClickGate));
+        assertTrue(script.indexOf(retryClickGate) < script.indexOf(readbackGate));
         assertTrue(script.indexOf(readbackGate) < script.indexOf("const __cpsWanted=\"medium\""));
     }
 
