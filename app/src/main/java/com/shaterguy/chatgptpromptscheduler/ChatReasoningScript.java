@@ -11,7 +11,7 @@ final class ChatReasoningScript {
 
     static String inline(String selection, String runId) {
         String wanted = Schedule.normalizedChatReasoning("chat", selection);
-        String modeReadbackGate = "if(modeDiagnostics.candidateFound&&!modeDiagnostics.selected)return result('RETRY','Chat 모드 선택 상태 확인 대기',{...routeDiagnostics,mode:modeDiagnostics});";
+        String modeReadbackGate = "if(modeDiagnostics.priorClick&&!modeDiagnostics.selected)return result('RETRY','Chat 모드 선택 상태 확인 대기',{...routeDiagnostics,mode:modeDiagnostics});";
         if ("keep".equals(wanted)) {
             return modeReadbackGate + "const reasoningDiagnostics={requested:'keep',ready:true,action:'',skipped:true};";
         }
@@ -66,6 +66,16 @@ final class ChatReasoningScript {
                   const __cpsTrigger=__cpsExactTrigger||__cpsTriggerEntries[0]?.element||null;
                   const __cpsTriggerLevel=__cpsTrigger?__cpsLevel(__cpsLabel(__cpsTrigger)):'';
                   const __cpsTriggerOpen=!!__cpsTrigger&&(__cpsTrigger.getAttribute?.('aria-expanded')==='true'||exactText(__cpsTrigger.dataset?.state||'')==='open');
+                  const __cpsStateKey='chatgpt-prompt-scheduler:chat-reasoning:'+__cpsRunId;
+                  const __cpsNow=Date.now(),__cpsOverallTimeoutMs=24000,__cpsRenderTimeoutMs=9000,__cpsRetryMs=3600,__cpsMaxAttempts=28;
+                  let __cpsState={startedAt:0,requested:'',attempts:0,triggerClicks:0,advancedClicks:0,reasoningClicks:0,optionClicks:0,closeAttempts:0,pending:false,lastAction:'',lastActionAt:0};
+                  try{const saved=sessionStorage.getItem(__cpsStateKey)||localStorage.getItem(__cpsStateKey)||'';if(saved)__cpsState={...__cpsState,...JSON.parse(saved)};}catch(_){}
+                  if(__cpsState.requested&&__cpsState.requested!==__cpsWanted)__cpsState={startedAt:0,requested:__cpsWanted,attempts:0,triggerClicks:0,advancedClicks:0,reasoningClicks:0,optionClicks:0,closeAttempts:0,pending:false,lastAction:'',lastActionAt:0};
+                  if(!(Number(__cpsState.startedAt)>0))__cpsState.startedAt=__cpsNow;
+                  __cpsState.requested=__cpsWanted;__cpsState.attempts=Math.max(0,Number(__cpsState.attempts)||0)+1;
+                  const __cpsElapsedMs=Math.max(0,__cpsNow-Number(__cpsState.startedAt||__cpsNow));
+                  const __cpsSinceActionMs=Number(__cpsState.lastActionAt)>0?Math.max(0,__cpsNow-Number(__cpsState.lastActionAt)):Number.MAX_SAFE_INTEGER;
+                  const __cpsInteractionStarted=__cpsTriggerOpen||Number(__cpsState.triggerClicks)>0||Number(__cpsState.advancedClicks)>0||Number(__cpsState.reasoningClicks)>0||Number(__cpsState.optionClicks)>0||!!__cpsState.pending;
                   const __cpsControlledIds=__cpsTrigger?String(__cpsTrigger.getAttribute('aria-controls')||__cpsTrigger.getAttribute('aria-owns')||'').split(/\\s+/).filter(Boolean):[];
                   const __cpsControlled=__cpsControlledIds.map(id=>document.getElementById(id)).find(visible)||null;
                   const __cpsOpenPopups=[...document.querySelectorAll(__cpsPopupSelector)].filter(visible);
@@ -79,7 +89,7 @@ final class ChatReasoningScript {
                     const levels=[...new Set(elements.map(__cpsDirectLevel).filter(Boolean))];
                     return levels.length>=2;
                   };
-                  const __cpsFallbackPopups=__cpsTriggerOpen?__cpsOpenPopups.filter(__cpsReasoningPopup):[];
+                  const __cpsFallbackPopups=__cpsInteractionStarted?__cpsOpenPopups.filter(__cpsReasoningPopup):[];
                   const __cpsPopups=[__cpsControlled,...__cpsFallbackPopups].filter((popup,index,all)=>popup&&all.indexOf(popup)===index);
                   const __cpsPopupElements=[];
                   for(const popup of __cpsPopups)for(const owner of __cpsPopupOwners(popup))if(!__cpsPopupElements.includes(owner))__cpsPopupElements.push(owner);
@@ -92,19 +102,10 @@ final class ChatReasoningScript {
                   const __cpsDirectEntries=__cpsPopupElements.map((element,index)=>({element,index,level:__cpsDirectLevel(element)})).filter(entry=>!!entry.level);
                   const __cpsWantedOption=__cpsDirectEntries.find(entry=>entry.level===__cpsWanted)||null;
                   const __cpsSelectedLevels=[...new Set(__cpsDirectEntries.filter(entry=>selectedState(entry.element)).map(entry=>entry.level))];
-                  const __cpsStateKey='chatgpt-prompt-scheduler:chat-reasoning:'+__cpsRunId;
-                  const __cpsNow=Date.now(),__cpsOverallTimeoutMs=24000,__cpsRenderTimeoutMs=9000,__cpsRetryMs=3600,__cpsMaxAttempts=28;
-                  let __cpsState={startedAt:0,requested:'',attempts:0,triggerClicks:0,advancedClicks:0,reasoningClicks:0,optionClicks:0,closeAttempts:0,pending:false,lastAction:'',lastActionAt:0};
-                  try{const saved=sessionStorage.getItem(__cpsStateKey)||localStorage.getItem(__cpsStateKey)||'';if(saved)__cpsState={...__cpsState,...JSON.parse(saved)};}catch(_){}
-                  if(__cpsState.requested&&__cpsState.requested!==__cpsWanted)__cpsState={startedAt:0,requested:__cpsWanted,attempts:0,triggerClicks:0,advancedClicks:0,reasoningClicks:0,optionClicks:0,closeAttempts:0,pending:false,lastAction:'',lastActionAt:0};
-                  if(!(Number(__cpsState.startedAt)>0))__cpsState.startedAt=__cpsNow;
-                  __cpsState.requested=__cpsWanted;__cpsState.attempts=Math.max(0,Number(__cpsState.attempts)||0)+1;
-                  const __cpsElapsedMs=Math.max(0,__cpsNow-Number(__cpsState.startedAt||__cpsNow));
-                  const __cpsSinceActionMs=Number(__cpsState.lastActionAt)>0?Math.max(0,__cpsNow-Number(__cpsState.lastActionAt)):Number.MAX_SAFE_INTEGER;
                   const __cpsSave=()=>{const value=JSON.stringify(__cpsState);try{sessionStorage.setItem(__cpsStateKey,value);}catch(_){}try{localStorage.setItem(__cpsStateKey,value);}catch(_){}};
                   const __cpsClear=()=>{try{sessionStorage.removeItem(__cpsStateKey);}catch(_){}try{localStorage.removeItem(__cpsStateKey);}catch(_){}};
                   const __cpsStage=__cpsWantedOption?'OPTION':(__cpsAdvancedButton?'ADVANCED_BUTTON':(__cpsReasoningRow?'REASONING_MENU':(__cpsSliderObserved?'SLIDER_SHEET':(__cpsPopups.length?'UNKNOWN_POPUP':'TRIGGER'))));
-                  const __cpsDiagnostics=extra=>({strategy:'advanced-menu',stage:__cpsStage,requested:__cpsWanted,triggerFound:!!__cpsTrigger,exactAnimatedTrigger:!!__cpsExactTrigger,triggerCandidates:__cpsTriggerEntries.length,triggerLabel:__cpsTrigger?__cpsLabel(__cpsTrigger):'',triggerLevel:__cpsTriggerLevel,triggerExpanded:__cpsTrigger?.getAttribute?.('aria-expanded')||'',triggerState:__cpsTrigger?.getAttribute?.('data-state')||'',triggerOpen:__cpsTriggerOpen,globalPopupCandidates:__cpsOpenPopups.length,fallbackPopupCandidates:__cpsFallbackPopups.length,popupCandidates:__cpsPopups.length,sliderObserved:__cpsSliderObserved,advancedButtonFound:!!__cpsAdvancedButton,reasoningRowFound:!!__cpsReasoningRow,directOptionCandidates:__cpsDirectEntries.length,wantedOptionFound:!!__cpsWantedOption,selectedLevels:__cpsSelectedLevels,attempts:__cpsState.attempts,triggerClicks:__cpsState.triggerClicks,advancedClicks:__cpsState.advancedClicks,reasoningClicks:__cpsState.reasoningClicks,optionClicks:__cpsState.optionClicks,closeAttempts:__cpsState.closeAttempts,pending:!!__cpsState.pending,lastAction:__cpsState.lastAction||'',elapsedMs:__cpsElapsedMs,overallTimeoutMs:__cpsOverallTimeoutMs,...extra});
+                  const __cpsDiagnostics=extra=>({strategy:'advanced-menu',stage:__cpsStage,requested:__cpsWanted,triggerFound:!!__cpsTrigger,exactAnimatedTrigger:!!__cpsExactTrigger,triggerCandidates:__cpsTriggerEntries.length,triggerLabel:__cpsTrigger?__cpsLabel(__cpsTrigger):'',triggerLevel:__cpsTriggerLevel,triggerExpanded:__cpsTrigger?.getAttribute?.('aria-expanded')||'',triggerState:__cpsTrigger?.getAttribute?.('data-state')||'',triggerOpen:__cpsTriggerOpen,interactionStarted:__cpsInteractionStarted,globalPopupCandidates:__cpsOpenPopups.length,fallbackPopupCandidates:__cpsFallbackPopups.length,popupCandidates:__cpsPopups.length,sliderObserved:__cpsSliderObserved,advancedButtonFound:!!__cpsAdvancedButton,reasoningRowFound:!!__cpsReasoningRow,directOptionCandidates:__cpsDirectEntries.length,wantedOptionFound:!!__cpsWantedOption,selectedLevels:__cpsSelectedLevels,attempts:__cpsState.attempts,triggerClicks:__cpsState.triggerClicks,advancedClicks:__cpsState.advancedClicks,reasoningClicks:__cpsState.reasoningClicks,optionClicks:__cpsState.optionClicks,closeAttempts:__cpsState.closeAttempts,pending:!!__cpsState.pending,lastAction:__cpsState.lastAction||'',elapsedMs:__cpsElapsedMs,overallTimeoutMs:__cpsOverallTimeoutMs,...extra});
                   const __cpsReady=(observed,extra={})=>{const diagnostics=__cpsDiagnostics({observed,...extra});__cpsClear();return{kind:'ready',detail:'Chat 추론 고급 메뉴 의미값 적용 확인',diagnostics};};
                   const __cpsWait=(detail,extra={})=>{__cpsSave();return{kind:'retry',detail,diagnostics:__cpsDiagnostics(extra)};};
                   const __cpsFail=(code,detail,extra={})=>{__cpsSave();return{kind:'error',code,detail,diagnostics:__cpsDiagnostics(extra)};};
