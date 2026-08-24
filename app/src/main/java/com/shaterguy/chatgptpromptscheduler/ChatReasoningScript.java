@@ -11,10 +11,11 @@ final class ChatReasoningScript {
 
     static String inline(String selection, String runId) {
         String wanted = Schedule.normalizedChatReasoning("chat", selection);
+        String modeReadbackGate = "if(modeDiagnostics.candidateFound&&!modeDiagnostics.selected)return result('RETRY','Chat 모드 선택 상태 확인 대기',{...routeDiagnostics,mode:modeDiagnostics});";
         if ("keep".equals(wanted)) {
-            return "const reasoningDiagnostics={requested:'keep',ready:true,action:'',skipped:true};";
+            return modeReadbackGate + "const reasoningDiagnostics={requested:'keep',ready:true,action:'',skipped:true};";
         }
-        return """
+        String script = """
                 const __cpsWanted=__WANTED__,__cpsRunId=__RUN_ID__;
                 const __cpsReasoningOutcome=(()=>{
                   const __cpsLevel=source=>{
@@ -64,12 +65,24 @@ final class ChatReasoningScript {
                   const __cpsExactTrigger=__cpsAnimatedTrigger&&visible(__cpsAnimatedTrigger)&&!__cpsAnimatedTrigger.closest(__cpsPopupSelector)&&!__cpsForbidden(__cpsAnimatedTrigger)&&__cpsNear(__cpsAnimatedTrigger)?__cpsAnimatedTrigger:null;
                   const __cpsTrigger=__cpsExactTrigger||__cpsTriggerEntries[0]?.element||null;
                   const __cpsTriggerLevel=__cpsTrigger?__cpsLevel(__cpsLabel(__cpsTrigger)):'';
+                  const __cpsTriggerOpen=!!__cpsTrigger&&(__cpsTrigger.getAttribute?.('aria-expanded')==='true'||exactText(__cpsTrigger.dataset?.state||'')==='open');
                   const __cpsControlledIds=__cpsTrigger?String(__cpsTrigger.getAttribute('aria-controls')||__cpsTrigger.getAttribute('aria-owns')||'').split(/\\s+/).filter(Boolean):[];
                   const __cpsControlled=__cpsControlledIds.map(id=>document.getElementById(id)).find(visible)||null;
                   const __cpsOpenPopups=[...document.querySelectorAll(__cpsPopupSelector)].filter(visible);
-                  const __cpsPopups=[__cpsControlled,...__cpsOpenPopups].filter((popup,index,all)=>popup&&all.indexOf(popup)===index);
+                  const __cpsPopupOwners=popup=>{const owners=[];for(const raw of popup.querySelectorAll(__cpsInteractive)){const owner=__cpsOwner(raw);if(owner&&visible(owner)&&__cpsActiveView(owner)&&!owners.includes(owner))owners.push(owner);}return owners;};
+                  const __cpsReasoningPopup=popup=>{
+                    if(!popup)return false;
+                    if(!!popup.querySelector('[role="slider"],input[type="range"]'))return true;
+                    const elements=__cpsPopupOwners(popup);
+                    if(elements.some(element=>__cpsShowAdvancedLabel(__cpsLabel(element))&&!__cpsDirectLevel(element)))return true;
+                    if(elements.some(element=>__cpsReasoningRowLabel(__cpsLabel(element))&&!__cpsDirectLevel(element)))return true;
+                    const levels=[...new Set(elements.map(__cpsDirectLevel).filter(Boolean))];
+                    return levels.length>=2;
+                  };
+                  const __cpsFallbackPopups=__cpsTriggerOpen?__cpsOpenPopups.filter(__cpsReasoningPopup):[];
+                  const __cpsPopups=[__cpsControlled,...__cpsFallbackPopups].filter((popup,index,all)=>popup&&all.indexOf(popup)===index);
                   const __cpsPopupElements=[];
-                  for(const popup of __cpsPopups)for(const raw of popup.querySelectorAll(__cpsInteractive)){const owner=__cpsOwner(raw);if(owner&&visible(owner)&&__cpsActiveView(owner)&&!__cpsPopupElements.includes(owner))__cpsPopupElements.push(owner);}
+                  for(const popup of __cpsPopups)for(const owner of __cpsPopupOwners(popup))if(!__cpsPopupElements.includes(owner))__cpsPopupElements.push(owner);
                   const __cpsSliders=[...document.querySelectorAll('[role="slider"],input[type="range"]')].filter(visible);
                   const __cpsSliderObserved=__cpsSliders.some(slider=>__cpsPopups.some(popup=>popup.contains(slider)));
                   const __cpsAdvancedButtons=__cpsPopupElements.filter(element=>__cpsShowAdvancedLabel(__cpsLabel(element))&&!__cpsDirectLevel(element));
@@ -91,7 +104,7 @@ final class ChatReasoningScript {
                   const __cpsSave=()=>{const value=JSON.stringify(__cpsState);try{sessionStorage.setItem(__cpsStateKey,value);}catch(_){}try{localStorage.setItem(__cpsStateKey,value);}catch(_){}};
                   const __cpsClear=()=>{try{sessionStorage.removeItem(__cpsStateKey);}catch(_){}try{localStorage.removeItem(__cpsStateKey);}catch(_){}};
                   const __cpsStage=__cpsWantedOption?'OPTION':(__cpsAdvancedButton?'ADVANCED_BUTTON':(__cpsReasoningRow?'REASONING_MENU':(__cpsSliderObserved?'SLIDER_SHEET':(__cpsPopups.length?'UNKNOWN_POPUP':'TRIGGER'))));
-                  const __cpsDiagnostics=extra=>({strategy:'advanced-menu',stage:__cpsStage,requested:__cpsWanted,triggerFound:!!__cpsTrigger,exactAnimatedTrigger:!!__cpsExactTrigger,triggerCandidates:__cpsTriggerEntries.length,triggerLabel:__cpsTrigger?__cpsLabel(__cpsTrigger):'',triggerLevel:__cpsTriggerLevel,triggerExpanded:__cpsTrigger?.getAttribute?.('aria-expanded')||'',triggerState:__cpsTrigger?.getAttribute?.('data-state')||'',popupCandidates:__cpsPopups.length,sliderObserved:__cpsSliderObserved,advancedButtonFound:!!__cpsAdvancedButton,reasoningRowFound:!!__cpsReasoningRow,directOptionCandidates:__cpsDirectEntries.length,wantedOptionFound:!!__cpsWantedOption,selectedLevels:__cpsSelectedLevels,attempts:__cpsState.attempts,triggerClicks:__cpsState.triggerClicks,advancedClicks:__cpsState.advancedClicks,reasoningClicks:__cpsState.reasoningClicks,optionClicks:__cpsState.optionClicks,closeAttempts:__cpsState.closeAttempts,pending:!!__cpsState.pending,lastAction:__cpsState.lastAction||'',elapsedMs:__cpsElapsedMs,overallTimeoutMs:__cpsOverallTimeoutMs,...extra});
+                  const __cpsDiagnostics=extra=>({strategy:'advanced-menu',stage:__cpsStage,requested:__cpsWanted,triggerFound:!!__cpsTrigger,exactAnimatedTrigger:!!__cpsExactTrigger,triggerCandidates:__cpsTriggerEntries.length,triggerLabel:__cpsTrigger?__cpsLabel(__cpsTrigger):'',triggerLevel:__cpsTriggerLevel,triggerExpanded:__cpsTrigger?.getAttribute?.('aria-expanded')||'',triggerState:__cpsTrigger?.getAttribute?.('data-state')||'',triggerOpen:__cpsTriggerOpen,globalPopupCandidates:__cpsOpenPopups.length,fallbackPopupCandidates:__cpsFallbackPopups.length,popupCandidates:__cpsPopups.length,sliderObserved:__cpsSliderObserved,advancedButtonFound:!!__cpsAdvancedButton,reasoningRowFound:!!__cpsReasoningRow,directOptionCandidates:__cpsDirectEntries.length,wantedOptionFound:!!__cpsWantedOption,selectedLevels:__cpsSelectedLevels,attempts:__cpsState.attempts,triggerClicks:__cpsState.triggerClicks,advancedClicks:__cpsState.advancedClicks,reasoningClicks:__cpsState.reasoningClicks,optionClicks:__cpsState.optionClicks,closeAttempts:__cpsState.closeAttempts,pending:!!__cpsState.pending,lastAction:__cpsState.lastAction||'',elapsedMs:__cpsElapsedMs,overallTimeoutMs:__cpsOverallTimeoutMs,...extra});
                   const __cpsReady=(observed,extra={})=>{const diagnostics=__cpsDiagnostics({observed,...extra});__cpsClear();return{kind:'ready',detail:'Chat 추론 고급 메뉴 의미값 적용 확인',diagnostics};};
                   const __cpsWait=(detail,extra={})=>{__cpsSave();return{kind:'retry',detail,diagnostics:__cpsDiagnostics(extra)};};
                   const __cpsFail=(code,detail,extra={})=>{__cpsSave();return{kind:'error',code,detail,diagnostics:__cpsDiagnostics(extra)};};
@@ -155,7 +168,8 @@ final class ChatReasoningScript {
                 if(__cpsReasoningOutcome.kind==='retry')return result('RETRY',__cpsReasoningOutcome.detail,{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:__cpsReasoningOutcome.diagnostics});
                 if(__cpsReasoningOutcome.kind==='error')return result(__cpsReasoningOutcome.code,__cpsReasoningOutcome.detail,{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:__cpsReasoningOutcome.diagnostics});
                 const reasoningDiagnostics=__cpsReasoningOutcome.diagnostics;
-                """
+                """;
+        return modeReadbackGate + script
                 .replace("__WANTED__", quote(wanted))
                 .replace("__RUN_ID__", quote(runId));
     }

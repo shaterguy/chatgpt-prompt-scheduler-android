@@ -85,6 +85,7 @@ public final class ChatReasoningScheduleTest {
 
         String script = AutomationScript.build(schedule, "[2026.08.23 | 13:00:00]\nhello", "run-chat", 0);
 
+        assertTrue(script.contains("if(modeDiagnostics.candidateFound&&!modeDiagnostics.selected)return result('RETRY','Chat 모드 선택 상태 확인 대기'"));
         assertTrue(script.contains("const __cpsWanted=\"xhigh\""));
         assertTrue(script.contains("chatgpt-prompt-scheduler:chat-reasoning:"));
         assertTrue(script.contains("data-animated-slider-trigger"));
@@ -94,12 +95,67 @@ public final class ChatReasoningScheduleTest {
     }
 
     @Test
+    public void chatModeWaitsForSelectedReadbackWithoutRepeatingModeClick() {
+        Schedule schedule = new Schedule();
+        schedule.targetType = "general";
+        schedule.experience = "chat";
+        schedule.chatReasoning = "medium";
+
+        String script = AutomationScript.build(schedule, "hello", "run-mode-readback", 0);
+        String clickGate = "if(mode&&!modeSelected&&!modePrior)";
+        String readbackGate = "if(modeDiagnostics.candidateFound&&!modeDiagnostics.selected)return result('RETRY','Chat 모드 선택 상태 확인 대기'";
+
+        assertTrue(script.contains(clickGate));
+        assertTrue(script.contains("priorClick:!!modePrior"));
+        assertTrue(script.contains(readbackGate));
+        assertTrue(script.indexOf(clickGate) < script.indexOf(readbackGate));
+        assertTrue(script.indexOf(readbackGate) < script.indexOf("const __cpsWanted=\"medium\""));
+    }
+
+    @Test
+    public void chatReasoningScopesFallbackPopupsToOpenReasoningUi() {
+        Schedule schedule = new Schedule();
+        schedule.targetType = "general";
+        schedule.experience = "chat";
+        schedule.chatReasoning = "medium";
+
+        String script = AutomationScript.build(schedule, "hello", "run-popup-scope", 0);
+
+        assertTrue(script.contains("const __cpsTriggerOpen=!!__cpsTrigger&&"));
+        assertTrue(script.contains("const __cpsReasoningPopup=popup=>"));
+        assertTrue(script.contains("return levels.length>=2"));
+        assertTrue(script.contains("const __cpsFallbackPopups=__cpsTriggerOpen?__cpsOpenPopups.filter(__cpsReasoningPopup):[]"));
+        assertTrue(script.contains("const __cpsPopups=[__cpsControlled,...__cpsFallbackPopups]"));
+        assertFalse(script.contains("const __cpsPopups=[__cpsControlled,...__cpsOpenPopups]"));
+        assertTrue(script.contains("globalPopupCandidates:__cpsOpenPopups.length"));
+        assertTrue(script.contains("fallbackPopupCandidates:__cpsFallbackPopups.length"));
+    }
+
+    @Test
+    public void mediumSelectionPreservesOptionClickAndSelectedReadbackPath() {
+        Schedule schedule = new Schedule();
+        schedule.targetType = "general";
+        schedule.experience = "chat";
+        schedule.chatReasoning = "medium";
+
+        String script = AutomationScript.build(schedule, "hello", "run-medium", 0);
+
+        assertTrue(script.contains("const __cpsWanted=\"medium\""));
+        assertTrue(script.contains("const __cpsWantedOption=__cpsDirectEntries.find(entry=>entry.level===__cpsWanted)"));
+        assertTrue(script.contains("if(__cpsWantedOption&&selectedState(__cpsWantedOption.element))"));
+        assertTrue(script.contains("__cpsActivate(__cpsWantedOption.element)"));
+        assertTrue(script.contains("selected-option-readback"));
+        assertTrue(script.contains("trigger-readback"));
+    }
+
+    @Test
     public void keepSkipsChatReasoningAndWorkPathRemainsSeparate() {
         Schedule chat = new Schedule();
         chat.targetType = "general";
         chat.experience = "chat";
         chat.chatReasoning = "keep";
         String chatScript = AutomationScript.build(chat, "hello", "run-keep", 0);
+        assertTrue(chatScript.contains("if(modeDiagnostics.candidateFound&&!modeDiagnostics.selected)return result('RETRY','Chat 모드 선택 상태 확인 대기'"));
         assertTrue(chatScript.contains("reasoningDiagnostics={requested:'keep',ready:true"));
         assertFalse(chatScript.contains("chatgpt-prompt-scheduler:chat-reasoning:"));
 
@@ -112,6 +168,7 @@ public final class ChatReasoningScheduleTest {
         String workScript = AutomationScript.build(work, "hello", "run-work", 0);
         assertTrue(workScript.contains("const desiredModel=\"sol\""));
         assertTrue(workScript.contains("const desiredEffort=\"ultra\""));
+        assertFalse(workScript.contains("Chat 모드 선택 상태 확인 대기"));
         assertFalse(workScript.contains("chatgpt-prompt-scheduler:chat-reasoning:"));
     }
 }
