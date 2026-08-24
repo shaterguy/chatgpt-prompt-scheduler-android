@@ -73,9 +73,8 @@ final class ModeBootstrapScript {
                 const __cpmRecentClick=Number(__cpmState.lastClickAt)>0&&__cpmNow-Number(__cpmState.lastClickAt)<__cpmRetryMs;
                 const __cpmMouse=(element,type,buttons)=>{try{return element.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,composed:true,button:0,buttons,view:window}));}catch(_){return false;}};
                 const __cpmActivate=element=>{if(!element)return;element.focus?.();__cpmMouse(element,'pointerdown',1);if(__cpmSelectedState(element))return;__cpmMouse(element,'mousedown',1);if(__cpmSelectedState(element))return;__cpmMouse(element,'pointerup',0);__cpmMouse(element,'mouseup',0);if(!__cpmSelectedState(element))element.click?.();};
-                const __cpmExactReadback=__cpmSource==='tpp-toggle'&&__cpmTargetSelected;
                 const __cpmGroupedReadback=__cpmTargetFound&&__cpmTargetSelected&&__cpmCurrentMode===requestedMode&&__cpmSelectedModes.length===1;
-                let __cpmReadback=__cpmLatched||__cpmExactReadback||__cpmGroupedReadback;
+                let __cpmReadback=__cpmLatched||__cpmGroupedReadback;
                 let modeSelected=__cpmReadback;
                 let modePrior=Number(__cpmState.clickAttempts)>0?JSON.stringify({clickAttempts:Number(__cpmState.clickAttempts)||0,lastClickAt:Number(__cpmState.lastClickAt)||0}):'';
                 let modeClicked=false,modeAction='';
