@@ -48,7 +48,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: chatgpt-prompt-scheduler-android-v0.2.0-test-reports
+          name: chatgpt-prompt-scheduler-android-v0.3.0-test-reports
           path: |
             app/build/test-results/testDebugUnitTest/**
             app/build/reports/tests/testDebugUnitTest/**
@@ -66,11 +66,12 @@ jobs:
     permissions:
       contents: write
     env:
-      APK_NAME: chatgpt-prompt-scheduler-android-v0.2.0.apk
-      SOURCE_NAME: chatgpt-prompt-scheduler-android-v0.2.0-source.zip
+      APK_NAME: chatgpt-prompt-scheduler-android-v0.3.0.apk
+      SOURCE_NAME: chatgpt-prompt-scheduler-android-v0.3.0-source.zip
       PACKAGE_NAME: com.shaterguy.chatgptpromptscheduler
-      VERSION_CODE: '2100000000'
-      VERSION_NAME: '0.2.0'
+      VERSION_CODE: '2100000001'
+      VERSION_NAME: '0.3.0'
+      UPDATE_BASELINE_TAG: v0.2.0
       OLD_VERSION_CODE: '2100000000'
       EXPECTED_PUBLIC_CERT_SHA256: '3cfe95acd09077a89cd8de85434cbd5d8bb3e2021d8e9eacb804a8da9ccce52a'
     steps:
@@ -82,7 +83,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v0.2.0 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          if gh release view v0.3.0 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo 'exists=true' >> "$GITHUB_OUTPUT"
           else
             echo 'exists=false' >> "$GITHUB_OUTPUT"
@@ -135,7 +136,7 @@ jobs:
           unzip -t "dist/$APK_NAME" >/dev/null
           (cd dist && sha256sum "$APK_NAME" > SHA256SUMS.txt)
           git archive --format=zip --output="dist/$SOURCE_NAME" HEAD
-      - name: Verify installed-public-version update compatibility
+      - name: Verify latest-formal update compatibility
         if: steps.release_state.outputs.exists != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -143,7 +144,7 @@ jobs:
           set -euo pipefail
           rm -rf /tmp/update-baseline
           mkdir -p /tmp/update-baseline
-          gh release download v2100000000 --repo "$GITHUB_REPOSITORY" --pattern '*.apk' --dir /tmp/update-baseline
+          gh release download "$UPDATE_BASELINE_TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.apk' --dir /tmp/update-baseline
           OLD_APK="$(find /tmp/update-baseline -maxdepth 1 -type f -name '*.apk' -print -quit)"
           test -n "$OLD_APK"
           BT="$ANDROID_HOME/build-tools/36.0.0"
@@ -152,12 +153,12 @@ jobs:
           grep -q "versionCode='$OLD_VERSION_CODE'" /tmp/update-baseline/old-badging.txt
           "$BT/apksigner" verify --verbose --print-certs "$OLD_APK" > /tmp/update-baseline/old-signature.txt
           grep -qi "$EXPECTED_PUBLIC_CERT_SHA256" /tmp/update-baseline/old-signature.txt
-          test "$OLD_VERSION_CODE" -eq "$VERSION_CODE"
+          test "$OLD_VERSION_CODE" -lt "$VERSION_CODE"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: steps.release_state.outputs.exists != 'true'
         continue-on-error: true
         with:
-          name: chatgpt-prompt-scheduler-android-v0.2.0-public-signed
+          name: chatgpt-prompt-scheduler-android-v0.3.0-public-signed
           path: dist/*
           if-no-files-found: error
           retention-days: 90
@@ -167,15 +168,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release create v0.2.0 \
+          gh release create v0.3.0 \
             "dist/$APK_NAME" \
             "dist/$SOURCE_NAME" \
             dist/SHA256SUMS.txt \
             dist/SIGNING_CERTIFICATE.txt \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title 'ChatGPT Prompt Scheduler Android v0.2.0' \
-            --notes-file RELEASE_NOTES-v0.2.0.md
+            --title 'ChatGPT Prompt Scheduler Android v0.3.0' \
+            --notes-file RELEASE_NOTES-v0.3.0.md
       - name: Read back and verify published release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -184,9 +185,9 @@ jobs:
           rm -rf /tmp/release-readback
           mkdir -p /tmp/release-readback
           cd /tmp/release-readback
-          gh release download v0.2.0 --repo "$GITHUB_REPOSITORY" --pattern "$APK_NAME"
-          gh release download v0.2.0 --repo "$GITHUB_REPOSITORY" --pattern "$SOURCE_NAME"
-          gh release download v0.2.0 --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS.txt
+          gh release download v0.3.0 --repo "$GITHUB_REPOSITORY" --pattern "$APK_NAME"
+          gh release download v0.3.0 --repo "$GITHUB_REPOSITORY" --pattern "$SOURCE_NAME"
+          gh release download v0.3.0 --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS.txt
           sha256sum --check --strict SHA256SUMS.txt
           unzip -t "$SOURCE_NAME" >/dev/null
           BT="$ANDROID_HOME/build-tools/36.0.0"

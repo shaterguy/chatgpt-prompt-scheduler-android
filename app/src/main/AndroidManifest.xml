@@ -23,7 +23,6 @@
         <activity android:name=".LogsActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".LoginActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".ScheduleEditorActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
-        <activity android:name=".OrchestrationActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -48,14 +47,6 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Runs user-configured ChatGPT prompt schedules without opening an Activity." />
-        </service>
-        <service
-            android:name=".OrchestrationService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Relays explicit Protocol 3.0 control turns between two user-configured ChatGPT conversations; always yields to scheduled prompt execution." />
         </service>
     </application>
 </manifest>
