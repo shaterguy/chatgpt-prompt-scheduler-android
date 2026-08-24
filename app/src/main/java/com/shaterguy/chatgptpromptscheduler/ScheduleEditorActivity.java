@@ -22,6 +22,10 @@ public final class ScheduleEditorActivity extends Activity {
             new String[]{"inherit", "light", "medium", "high", "xhigh", "max", "ultra"};
     private static final String[] REASONING_EFFORT_LABELS =
             new String[]{"inherit", "light", "medium", "high", "xhigh", "max", "울트라"};
+    private static final String[] CHAT_REASONING_VALUES =
+            new String[]{"keep", "instant", "medium", "high", "xhigh", "pro"};
+    private static final String[] CHAT_REASONING_LABELS =
+            new String[]{"현재 Chat 설정 유지", "Instant", "Medium", "High", "Extra High", "Pro"};
 
     private ConfigStore store;
     private Schedule schedule;
@@ -34,7 +38,9 @@ public final class ScheduleEditorActivity extends Activity {
     private LinearLayout experienceSection;
     private Spinner workModel;
     private Spinner reasoningEffort;
-    private LinearLayout reasoningSection;
+    private LinearLayout workReasoningSection;
+    private Spinner chatReasoning;
+    private LinearLayout chatReasoningSection;
     private EditText prompt;
     private Spinner recurrence;
     private EditText times;
@@ -79,12 +85,19 @@ public final class ScheduleEditorActivity extends Activity {
         experience = spinner(experienceSection, "실행 모드", new String[]{"chat", "work"},
                 "work".equals(schedule.experience) ? "work" : "chat");
 
-        reasoningSection = section(root);
-        workModel = spinner(reasoningSection,
+        chatReasoningSection = section(root);
+        chatReasoning = mappedSpinner(chatReasoningSection,
+                "일반 Chat 추론 정도",
+                CHAT_REASONING_VALUES,
+                CHAT_REASONING_LABELS,
+                Schedule.normalizedChatReasoning(schedule.experience, schedule.chatReasoning));
+
+        workReasoningSection = section(root);
+        workModel = spinner(workReasoningSection,
                 "Work 모델 · inherit=웹 현재 설정 유지",
                 new String[]{"inherit", "sol", "terra", "luna"},
                 Schedule.normalizedWorkModel(schedule.experience, schedule.workModel));
-        reasoningEffort = mappedSpinner(reasoningSection,
+        reasoningEffort = mappedSpinner(workReasoningSection,
                 "Work 추론 강도 · inherit=웹 현재 설정 유지",
                 REASONING_EFFORT_VALUES,
                 REASONING_EFFORT_LABELS,
@@ -164,11 +177,12 @@ public final class ScheduleEditorActivity extends Activity {
 
     private void updateTargetOptionVisibility() {
         String type = selected(targetType);
+        String mode = selected(experience);
         boolean showUrl = requiresTargetUrl(type);
         targetUrlSection.setVisibility(showUrl ? View.VISIBLE : View.GONE);
         experienceSection.setVisibility(showsExperience(type) ? View.VISIBLE : View.GONE);
-        reasoningSection.setVisibility(showsReasoningEffort(type, selected(experience))
-                ? View.VISIBLE : View.GONE);
+        chatReasoningSection.setVisibility(showsChatReasoning(type, mode) ? View.VISIBLE : View.GONE);
+        workReasoningSection.setVisibility(showsReasoningEffort(type, mode) ? View.VISIBLE : View.GONE);
         if (showUrl) {
             boolean existing = "existing".equals(type);
             targetUrlLabel.setText(existing ? "기존 대화 URL" : "프로젝트 URL");
@@ -195,6 +209,10 @@ public final class ScheduleEditorActivity extends Activity {
 
     static boolean showsReasoningEffort(String targetType, String experience) {
         return showsExperience(targetType) && "work".equals(experience);
+    }
+
+    static boolean showsChatReasoning(String targetType, String experience) {
+        return showsExperience(targetType) && "chat".equals(experience);
     }
 
     static boolean showsClockTimes(String recurrence) {
@@ -225,6 +243,11 @@ public final class ScheduleEditorActivity extends Activity {
 
     static String reasoningEffortValue(String label) {
         return "울트라".equals(label) ? "ultra" : label;
+    }
+
+    static String chatReasoningValue(String label) {
+        int index = Arrays.asList(CHAT_REASONING_LABELS).indexOf(label);
+        return index >= 0 ? CHAT_REASONING_VALUES[index] : "keep";
     }
 
     private EditText edit(LinearLayout root, String label, String value, boolean multiline) {
@@ -308,6 +331,8 @@ public final class ScheduleEditorActivity extends Activity {
                 schedule.experience, selected(workModel));
         schedule.reasoningEffort = Schedule.normalizedReasoningEffort(
                 schedule.experience, reasoningEffortValue(selected(reasoningEffort)));
+        schedule.chatReasoning = Schedule.normalizedChatReasoning(
+                schedule.experience, chatReasoningValue(selected(chatReasoning)));
         schedule.prompt = prompt.getText().toString();
         schedule.recurrence = recurrenceValue;
         schedule.intervalMinutes = Schedule.normalizedIntervalMinutes(parsedInterval);
