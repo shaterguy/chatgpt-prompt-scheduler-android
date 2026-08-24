@@ -20,6 +20,7 @@ public final class Schedule {
     public String experience = "chat";
     public String workModel = "inherit";
     public String reasoningEffort = "inherit";
+    public String chatReasoning = "keep";
     public String prompt = "";
     public String recurrence = "daily";
     public int intervalMinutes = 30;
@@ -49,6 +50,14 @@ public final class Schedule {
         return "ultra".equals(normalized) ? "울트라" : normalized;
     }
 
+    public static String normalizedChatReasoning(String experience, String chatReasoning) {
+        if (!"chat".equals(experience)) return "keep";
+        return switch (chatReasoning) {
+            case "instant", "medium", "high", "xhigh", "pro" -> chatReasoning;
+            default -> "keep";
+        };
+    }
+
     public static String normalizedWorkModel(String experience, String workModel) {
         if (!"work".equals(experience)) return "inherit";
         return switch (workModel) {
@@ -67,11 +76,11 @@ public final class Schedule {
         object.put("name", name);
         object.put("targetType", targetType);
         object.put("targetUrl", targetUrl);
-        object.put("experience", normalizedExperience(targetType, experience));
-        object.put("workModel", normalizedWorkModel(
-                normalizedExperience(targetType, experience), workModel));
-        object.put("reasoningEffort", normalizedReasoningEffort(
-                normalizedExperience(targetType, experience), reasoningEffort));
+        String normalizedExperience = normalizedExperience(targetType, experience);
+        object.put("experience", normalizedExperience);
+        object.put("workModel", normalizedWorkModel(normalizedExperience, workModel));
+        object.put("reasoningEffort", normalizedReasoningEffort(normalizedExperience, reasoningEffort));
+        object.put("chatReasoning", normalizedChatReasoning(normalizedExperience, chatReasoning));
         object.put("prompt", prompt);
         object.put("recurrence", recurrence);
         object.put("intervalMinutes", normalizedIntervalMinutes(intervalMinutes));
@@ -96,6 +105,8 @@ public final class Schedule {
                 schedule.experience, object.optString("workModel", "inherit"));
         schedule.reasoningEffort = normalizedReasoningEffort(
                 schedule.experience, object.optString("reasoningEffort", "inherit"));
+        schedule.chatReasoning = normalizedChatReasoning(
+                schedule.experience, object.optString("chatReasoning", "keep"));
         schedule.prompt = object.optString("prompt", "");
         schedule.recurrence = object.optString("recurrence", "daily");
         schedule.intervalMinutes = normalizedIntervalMinutes(object.optInt("intervalMinutes", 30));

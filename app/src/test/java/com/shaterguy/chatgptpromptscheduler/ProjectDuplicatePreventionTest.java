@@ -21,7 +21,7 @@ public class ProjectDuplicatePreventionTest {
     }
 
     @Test
-    public void modeSelectionPreservesVersion010Behavior() {
+    public void modeSelectionUsesFiniteExactTargetContract() {
         Schedule schedule = new Schedule();
         schedule.targetType = "project";
         schedule.targetUrl = "https://chatgpt.com/g/proj/project";
@@ -29,15 +29,17 @@ public class ProjectDuplicatePreventionTest {
 
         String script = AutomationScript.build(schedule, "prompt", "run-mode", 0);
 
-        assertTrue(script.contains("desiredModeLabels=['chat','채팅']"));
-        assertTrue(script.contains("forbiddenMode=/new chat|새 채팅|새 대화|new conversation/i"));
-        assertTrue(script.contains("button,[role=\"button\"],[role=\"menuitemradio\"],[role=\"radio\"],[role=\"tab\"]"));
-        assertTrue(script.contains("modeCandidates.find"));
-        assertTrue(script.contains("aria-pressed"));
-        assertTrue(script.contains("aria-checked"));
-        assertTrue(script.contains("mode.click()"));
-        assertTrue(script.contains("modeDiagnostics.clicked"));
+        assertTrue(script.contains("data-tpp-toggle-value"));
+        assertTrue(script.contains("MODE_CONFIRMED"));
+        assertTrue(script.contains("CHAT_MODE_READBACK_FAILED"));
+        assertTrue(script.contains("CHAT_MODE_CONTROL_NOT_FOUND"));
+        assertTrue(script.contains("clickAttempts)<2"));
+        assertTrue(script.contains("__cpmActivate(mode)"));
+        assertTrue(script.contains("priorClick:!!modePrior"));
+        assertTrue(script.contains("chatgpt-prompt-scheduler:mode-stage:"));
         assertTrue(script.contains("chatgpt-prompt-scheduler:mode:"));
+        assertTrue(script.contains("if(e.closest('[role=\"menu\"],[role=\"listbox\"]'))return false"));
+        assertFalse(script.contains("mode.click()"));
         assertFalse(script.contains("native-project-option"));
         assertFalse(script.contains("NATIVE_TAP"));
     }

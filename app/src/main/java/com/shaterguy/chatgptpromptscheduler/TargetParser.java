@@ -26,7 +26,13 @@ public final class TargetParser {
     public static String projectId(String url) {
         if (!isSupported(url)) return null;
         String[] parts = URI.create(url).getPath().split("/");
-        for (int i = 0; i < parts.length - 1; i++) if ("g".equals(parts[i]) && !parts[i + 1].isBlank()) return parts[i + 1];
+        for (int i = 0; i < parts.length - 1; i++) {
+            if ("g".equals(parts[i]) && !parts[i + 1].isBlank()) {
+                String raw = parts[i + 1];
+                String canonical = ProjectUrlPolicy.canonicalProjectId(raw);
+                return canonical.isEmpty() ? raw : canonical;
+            }
+        }
         return null;
     }
 
