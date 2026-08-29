@@ -7,7 +7,7 @@ public final class AutomationScript {
         String prompt = jsQuote(stampedPrompt);
         String run = jsQuote(runId);
         return "(() => {" +
-                "const clip=(s,n=700)=>{s=String(s??'');return s.length>n?s.slice(0,n)+'…('+s.length+')':s};" +
+                "" +
                 "const result=(status,detail='',diagnostics={})=>JSON.stringify({status,detail,url:location.href,diagnostics});" +
                 "if(location.hostname!=='chatgpt.com'&&location.hostname!=='www.chatgpt.com')return result('TARGET_CONTEXT_MISMATCH','호스트 불일치 actual='+location.href);" +
                 "const markerKey='chatgpt-prompt-scheduler:submit:' + " + run + ";" +
@@ -25,13 +25,13 @@ public final class AutomationScript {
                 "if(expectedType!=='existing'&&promptAlreadyPresent)return result('SUBMITTED','동일 실행 프롬프트가 이미 새 대화에 존재합니다.',{...routeDiagnostics,recoveredAfterNavigation:true});" +
                 "const body=(document.body?.innerText||'').toLowerCase();" +
                 "if(body.includes('log in')||body.includes('sign up')||body.includes('로그인'))return result('AUTH_REQUIRED','ChatGPT 로그인이 필요합니다.');" +
-                preferenceScript(schedule, runId) +
+                RequestProfileScript.activate(schedule) +
                 "const selectors=['textarea#prompt-textarea','textarea[data-testid=\"prompt-textarea\"]','div#prompt-textarea[contenteditable=\"true\"]','[contenteditable=\"true\"][data-lexical-editor=\"true\"]','main form [contenteditable=\"true\"]'];" +
                 "let selector='';let composer=null;for(const s of selectors){const candidates=[...document.querySelectorAll(s)];const found=candidates.find(e=>e&&e.isConnected&&e.offsetParent!==null);if(found){selector=s;composer=found;break;}}" +
                 "if(!composer)return result('RETRY','입력창 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics,selectors,readyState:document.readyState,activeTag:document.activeElement?.tagName||'',forms:document.forms.length});" +
                 "const raw=()=>('value'in composer?composer.value:(composer.innerText||composer.textContent||''));" +
                 "const same=()=>canonical(raw())===canonical(expected);" +
-                "const diag=(phase,strategy='')=>({phase,strategy,attempt:" + Math.max(0, attempt) + ",selector,tag:composer.tagName,contentEditable:composer.getAttribute('contenteditable')||'',connected:composer.isConnected,visible:composer.offsetParent!==null,activeIsComposer:document.activeElement===composer,hasFocus:document.hasFocus(),actualLength:norm(raw()).length,expectedLength:expected.length,actualPreview:clip(norm(raw())),htmlPreview:clip(composer.innerHTML||''),readyState:document.readyState,route:routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics});" +
+                "const diag=(phase,strategy='')=>({phase,strategy,attempt:" + Math.max(0, attempt) + ",selector,tag:composer.tagName,contentEditable:composer.getAttribute('contenteditable')||'',connected:composer.isConnected,visible:composer.offsetParent!==null,activeIsComposer:document.activeElement===composer,hasFocus:document.hasFocus(),readyState:document.readyState,route:routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics});" +
                 "if(same()){const form=composer.closest('form');const buttons=[...(form||document).querySelectorAll('button')];const send=buttons.find(b=>b.dataset.testid==='send-button'||b.dataset.testid==='composer-submit-button'||/send|보내기|submit/i.test((b.getAttribute('aria-label')||'')+' '+(b.title||'')));if(!send)return result('RETRY','전송 버튼 대기',diag('ready','send-not-found'));if(send.disabled||send.getAttribute('aria-disabled')==='true')return result('RETRY','전송 버튼 활성화 대기',diag('ready','send-disabled'));const marker=JSON.stringify({at:Date.now(),url:location.href});let persisted=false;try{localStorage.setItem(markerKey,marker);persisted=localStorage.getItem(markerKey)===marker;}catch(_){}if(!persisted){try{sessionStorage.setItem(markerKey,marker);persisted=sessionStorage.getItem(markerKey)===marker;}catch(_){}}window[markerKey]=marker;if(!persisted&&!window[markerKey])return result('SUBMIT_MARKER_FAILED','전송 중복 방지 상태를 저장하지 못했습니다.',diag('ready','marker-save-failed'));send.click();return result('SUBMITTED','전송 클릭을 한 번 수행했습니다.',{...diag('submitted','marker-before-click'),marker,persisted});}" +
                 "const fire=(type,inputType,data)=>{try{return composer.dispatchEvent(new InputEvent(type,{bubbles:true,cancelable:type==='beforeinput',inputType,data}));}catch(_){return composer.dispatchEvent(new Event(type,{bubbles:true,cancelable:type==='beforeinput'}));}};" +
                 "const selectAll=()=>{composer.focus();const selection=window.getSelection();if(!selection)return false;const range=document.createRange();range.selectNodeContents(composer);selection.removeAllRanges();selection.addRange(range);return true;};" +
@@ -78,79 +78,6 @@ public final class AutomationScript {
                 "else if(expectedType==='project')targetOk=!!expectedProject&&actualProject===expectedProject&&(!actualConversation||afterSubmit||promptAlreadyPresent||users.length===0);" +
                 "else if(expectedType==='general')targetOk=!actualProject&&((!actualConversation&&homePath)||(!!actualConversation&&(afterSubmit||promptAlreadyPresent||users.length===0)));" +
                 "if(!targetOk)return result('TARGET_CONTEXT_MISMATCH','expected='+expectedUrl+' actual='+location.href,routeDiagnostics);";
-    }
-
-    private static String preferenceScript(Schedule schedule, String runId) {
-        if ("existing".equals(schedule.targetType)) {
-            return "const modeDiagnostics={requested:'inherit',ready:true,action:'',skipped:true};" +
-                    "const modelDiagnostics={requested:'inherit',ready:true,action:'',skipped:true};" +
-                    "const reasoningDiagnostics={requested:'inherit',ready:true,action:'',skipped:true};";
-        }
-        String requestedMode = "work".equals(schedule.experience) ? "work" : "chat";
-        String requestedModel = Schedule.normalizedWorkModel(schedule.experience, schedule.workModel);
-        String requestedEffort = Schedule.normalizedReasoningEffort(schedule.experience, schedule.reasoningEffort);
-        String requestedChatReasoning = Schedule.normalizedChatReasoning(schedule.experience, schedule.chatReasoning);
-        String common = "const exactText=s=>String(s??'').replace(/\\s+/g,' ').trim().toLowerCase();" +
-                ModeBootstrapScript.inline(requestedMode, runId) +
-                "const elementLabel=e=>exactText(e?.innerText||'')||exactText(e?.getAttribute?.('aria-label')||'');" +
-                "const visible=e=>!!e&&e.isConnected&&e.offsetParent!==null;" +
-                "const composerInput=document.querySelector('#prompt-textarea')||[...document.querySelectorAll('textarea,[contenteditable=\"true\"]')].filter(visible).sort((a,b)=>b.getBoundingClientRect().bottom-a.getBoundingClientRect().bottom)[0]||null;" +
-                "const composerForm=composerInput?.closest?.('form')||null;" +
-                "const inComposer=e=>{if(!e||!composerInput)return false;if(composerForm)return composerForm.contains(e);const a=e.getBoundingClientRect(),b=composerInput.getBoundingClientRect();return a.bottom>=b.top-240&&a.top<=b.bottom+240&&a.right>=b.left-320&&a.left<=b.right+320;};" +
-                "const selectedState=e=>!!e&&(e.getAttribute('aria-checked')==='true'||e.getAttribute('aria-pressed')==='true'||e.getAttribute('aria-selected')==='true'||/^(checked|selected|active|on)$/.test(exactText(e.dataset?.state||'')));" +
-                "const openMenu=e=>{if(!e)return;e.focus?.();const init={bubbles:true,cancelable:true,composed:true,button:0,buttons:1,pointerId:1,pointerType:'mouse',isPrimary:true};if(typeof PointerEvent==='function')e.dispatchEvent(new PointerEvent('pointerdown',init));else e.dispatchEvent(new MouseEvent('mousedown',init));};";
-        if ("work".equals(schedule.experience)) {
-            return common + modelScript(requestedModel) + reasoningScript(requestedEffort);
-        }
-        return common +
-                "const modelDiagnostics={requested:'inherit',ready:true,action:'',skipped:true};" +
-                ChatReasoningScript.inline(requestedChatReasoning, runId);
-    }
-
-    private static String modelScript(String requestedModel) {
-        if ("inherit".equals(requestedModel)) {
-            return "const modelDiagnostics={requested:'inherit',ready:true,action:'',skipped:true};";
-        }
-        return "const desiredModel=" + jsQuote(requestedModel) + ";" +
-                "const modelOf=s=>{const value=exactText(s);const match=value.match(/(?:^|\\s)(sol|terra|luna)(?:\\s|$)/);return match?match[1]:'';};" +
-                "const directModelLabel=/^(?:(?:gpt-?)?5(?:\\.6)?\\s+)?(?:sol|terra|luna)(\\s|$)/;" +
-                "const modelOptions=[...document.querySelectorAll('[role=\"menuitemradio\"],[role=\"radio\"],[role=\"option\"],[role=\"menuitem\"]')].filter(visible).filter(e=>{const role=e.getAttribute('role')||'',label=elementLabel(e);return !!modelOf(label)&&(role!=='menuitem'||directModelLabel.test(label));});" +
-                "const desiredModelOption=modelOptions.find(e=>modelOf(elementLabel(e))===desiredModel);" +
-                "const modelLevelItem=[...document.querySelectorAll('[role=\"menuitem\"]')].filter(visible).find(e=>/^(model|모델)(\\s|$)/.test(elementLabel(e)));" +
-                "const workSettingsTrigger=[...document.querySelectorAll('button[aria-haspopup=\"menu\"],[role=\"button\"][aria-haspopup=\"menu\"]')].filter(visible).filter(inComposer).find(e=>!!modelOf(elementLabel(e)));" +
-                "const modelTriggerExpanded=!!workSettingsTrigger&&workSettingsTrigger.getAttribute('aria-expanded')==='true';" +
-                "const currentModel=workSettingsTrigger?modelOf(elementLabel(workSettingsTrigger)):'';" +
-                "let modelReady=false,modelAction='';" +
-                "if(desiredModelOption){if(selectedState(desiredModelOption)){modelReady=true;if(modelTriggerExpanded){openMenu(workSettingsTrigger);modelAction='close-selected-model-menu';}}else{desiredModelOption.click();modelAction='select-model';}}" +
-                "else if(workSettingsTrigger&&currentModel===desiredModel){modelReady=true;}" +
-                "else if(modelLevelItem){modelLevelItem.click();modelAction='open-model-menu';}" +
-                "else if(workSettingsTrigger&&!modelTriggerExpanded){openMenu(workSettingsTrigger);modelAction='open-work-settings-menu';}" +
-                "const modelDiagnostics={requested:desiredModel,ready:modelReady,action:modelAction,current:currentModel,triggerLabel:workSettingsTrigger?clip(elementLabel(workSettingsTrigger),160):'',triggerExpanded:modelTriggerExpanded,triggerInComposer:inComposer(workSettingsTrigger),levelItemFound:!!modelLevelItem,optionFound:!!desiredModelOption};" +
-                "if(modelAction)return result('RETRY','Work 모델 반영 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics});" +
-                "if(!modelReady)return result('RETRY','Work 모델 선택 요소 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics});";
-    }
-
-    private static String reasoningScript(String requestedEffort) {
-        if ("inherit".equals(requestedEffort)) {
-            return "const reasoningDiagnostics={requested:'inherit',ready:true,action:'',skipped:true};";
-        }
-        return "const desiredEffort=" + jsQuote(requestedEffort) + ";" +
-                "const effortOf=s=>{const value=exactText(s);if(['울트라','ultra'].some(v=>value.includes(v)))return'ultra';if(['매우 높음','extra high','very high','xhigh'].some(v=>value.includes(v)))return'xhigh';if(['maximum','max','최대'].some(v=>value.includes(v)))return'max';if(['medium','중간'].some(v=>value.includes(v)))return'medium';if(['light','가벼움'].some(v=>value.includes(v)))return'light';if(['high','높음'].some(v=>value.includes(v)))return'high';return'';};" +
-                "const directEffortLabel=/^(ultra|울트라|very high|extra high|xhigh|매우 높음|maximum|max|최대|medium|중간|light|가벼움|high|높음)(\\s|$)/;" +
-                "const effortOptions=[...document.querySelectorAll('[role=\"menuitemradio\"],[role=\"radio\"],[role=\"option\"],[role=\"menuitem\"]')].filter(visible).filter(e=>{const role=e.getAttribute('role')||'',label=elementLabel(e);return !!effortOf(label)&&(role!=='menuitem'||directEffortLabel.test(label));});" +
-                "const desiredEffortOption=effortOptions.find(e=>effortOf(elementLabel(e))===desiredEffort);" +
-                "const reasoningLevelItem=[...document.querySelectorAll('[role=\"menuitem\"]')].filter(visible).find(e=>/^(reasoning (level|effort)|추론 (수준|강도|정도))(\\s|$)/.test(elementLabel(e)));" +
-                "const reasoningTrigger=[...document.querySelectorAll('button[aria-haspopup=\"menu\"],[role=\"button\"][aria-haspopup=\"menu\"]')].filter(visible).filter(inComposer).find(e=>!!effortOf(elementLabel(e)));" +
-                "const reasoningTriggerExpanded=!!reasoningTrigger&&reasoningTrigger.getAttribute('aria-expanded')==='true';" +
-                "const currentEffort=reasoningTrigger?effortOf(elementLabel(reasoningTrigger)):'';" +
-                "let reasoningReady=false,reasoningAction='';" +
-                "if(desiredEffortOption){if(selectedState(desiredEffortOption)){reasoningReady=true;if(reasoningTriggerExpanded){openMenu(reasoningTrigger);reasoningAction='close-selected-effort-menu';}}else{desiredEffortOption.click();reasoningAction='select-effort';}}" +
-                "else if(reasoningTrigger&&currentEffort===desiredEffort){reasoningReady=true;if(reasoningTriggerExpanded){openMenu(reasoningTrigger);reasoningAction='close-selected-effort-menu';}}" +
-                "else if(reasoningLevelItem){reasoningLevelItem.click();reasoningAction='open-effort-menu';}" +
-                "else if(reasoningTrigger&&!reasoningTriggerExpanded){openMenu(reasoningTrigger);reasoningAction='open-reasoning-menu';}" +
-                "const reasoningDiagnostics={requested:desiredEffort,ready:reasoningReady,action:reasoningAction,current:currentEffort,triggerLabel:reasoningTrigger?clip(elementLabel(reasoningTrigger),160):'',triggerExpanded:reasoningTriggerExpanded,triggerInComposer:inComposer(reasoningTrigger),levelItemFound:!!reasoningLevelItem,optionFound:!!desiredEffortOption};" +
-                "if(reasoningAction)return result('RETRY','추론 강도 반영 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics});" +
-                "if(!reasoningReady)return result('RETRY','추론 강도 선택 요소 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics});";
     }
 
     private static String valueOrEmpty(String value) {

@@ -49,6 +49,7 @@ public final class ExecutionService extends Service {
     private PowerManager.WakeLock wakeLock;
     private JSONObject currentItem;
     private Schedule currentSchedule;
+    private RequestProfileEngine.TargetProfile currentRequestProfile;
     private long startedAt;
     private long deadline;
     private int pageAttempts;
@@ -93,6 +94,7 @@ public final class ExecutionService extends Service {
 
     private void processNext() {
         cleanupEngine();
+        currentRequestProfile = null;
         try {
             currentItem = queueStore.claimNext();
         } catch (RuntimeException error) {
@@ -126,6 +128,16 @@ public final class ExecutionService extends Service {
             finish(false, "TARGET_URL_INVALID", "지원하지 않는 ChatGPT URL입니다.");
             return;
         }
+        try {
+            currentRequestProfile = RequestProfileEngine.forSchedule(currentSchedule);
+        } catch (IllegalArgumentException invalidProfile) {
+            finish(false, "REQUEST_PROFILE_INVALID", "명시적인 지원 모델과 추론 수준을 선택해야 합니다.");
+            return;
+        }
+        if (currentRequestProfile != null && !RequestProfileScript.isDocumentStartSupported()) {
+            finish(false, "REQUEST_PROFILE_UNSUPPORTED", "이 WebView는 안전한 요청 프로필 적용을 지원하지 않습니다.");
+            return;
+        }
         if (!networkAvailable()) {
             finish(false, "NETWORK_UNAVAILABLE", "네트워크 연결이 없습니다.");
             return;
@@ -141,8 +153,7 @@ public final class ExecutionService extends Service {
         lastObservedUrl = "";
         lastRetryDetail = "";
         stampedPrompt = TimestampUtil.prefix(startedAt, currentSchedule.prompt);
-        trace("RUN_STARTED", object("timeoutSeconds", Math.max(1L, (deadline - startedAt) / 1000L),
-                "promptLength", stampedPrompt.length()));
+        trace("RUN_STARTED", object("timeoutSeconds", Math.max(1L, (deadline - startedAt) / 1000L)));
         acquireWakeLock();
         startAsForeground(currentSchedule.name + " 실행 중");
         launchEngine();
@@ -195,14 +206,14 @@ public final class ExecutionService extends Service {
             settings.setUserAgentString(desktopUserAgent + " ChatGPTPromptScheduler/" + BuildConfig.VERSION_NAME);
             CookieManager.getInstance().setAcceptCookie(true);
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
+            if (currentRequestProfile != null) RequestProfileScript.installDocumentStart(webView);
             webView.setWebChromeClient(new WebChromeClient() {
                 @Override
                 public boolean onConsoleMessage(ConsoleMessage message) {
                     if (message == null) return false;
                     ConsoleMessage.MessageLevel level = message.messageLevel();
                     if (level == ConsoleMessage.MessageLevel.ERROR || level == ConsoleMessage.MessageLevel.WARNING) {
-                        trace("WEB_CONSOLE", object("level", String.valueOf(level), "message", clip(message.message(), 2000),
-                                "source", clip(message.sourceId(), 500), "line", message.lineNumber()));
+                        trace("WEB_CONSOLE", object("level", String.valueOf(level), "line", message.lineNumber()));
                     }
                     return false;
                 }
@@ -482,6 +493,7 @@ public final class ExecutionService extends Service {
         cleanupEngine();
         currentItem = null;
         currentSchedule = null;
+        currentRequestProfile = null;
         handler.postDelayed(this::processNext, 250L);
     }
 
