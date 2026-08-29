@@ -186,6 +186,14 @@ public final class RequestProfileEngineTest {
         assertEquals(Set.of("id", "name", "targetType", "targetUrl", "experience", "workModel",
                         "reasoningEffort", "chatReasoning", "prompt", "recurrence", "intervalMinutes",
                         "weekdays", "times", "enabled", "retryCount", "lastRunAt", "nextRunAt", "lastStatus"),
-                baseline.toJson().keySet());
+                jsonKeys(baseline.toJson()));
+    }
+
+    private static Set<String> jsonKeys(JSONObject object) {
+        Set<String> keys = new java.util.HashSet<>();
+        for (java.util.Iterator<String> iterator = object.keys(); iterator.hasNext();) {
+            keys.add(iterator.next());
+        }
+        return keys;
     }
 }
