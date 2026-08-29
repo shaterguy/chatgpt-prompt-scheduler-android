@@ -10,8 +10,8 @@ android {
         applicationId 'com.shaterguy.chatgptpromptscheduler'
         minSdk 26
         targetSdk 36
-        versionCode 2100000001
-        versionName '0.3.0'
+        versionCode 2100000002
+        versionName '0.3.1'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
 
@@ -33,6 +33,7 @@ android {
 }
 
 dependencies {
+    implementation 'androidx.webkit:webkit:1.17.0'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20240303'
     androidTestImplementation 'androidx.test:core:1.7.0'

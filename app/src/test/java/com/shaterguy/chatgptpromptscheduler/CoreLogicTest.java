@@ -192,7 +192,8 @@ public class CoreLogicTest {
         assertFalse(first.contains("paste+execCommand"));
         assertFalse(first.contains("dom+input"));
         assertFalse(first.contains("fire('beforeinput','insertText',expected)"));
-        assertTrue(dom.contains("actualPreview"));
+        assertFalse(dom.contains("actualPreview"));
+        assertFalse(dom.contains("htmlPreview"));
     }
 
     @Test

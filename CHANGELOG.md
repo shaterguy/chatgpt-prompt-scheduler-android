@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.1 — 2026-08-29
+
+- 검증된 `v0.3.1-dev1` 기능 상태를 정식 `0.3.1`로 승격
+- Chat·Work 선택을 DOM 메뉴 클릭 대신 AndroidX WebKit document-start 요청 프로필 방식으로 전환
+- 예약이 새 대화 요청을 보낼 때 `model`, `thinking_effort`, `conversation_origin`, `service_tier` 네 제어 필드만 변경하고 나머지 요청 데이터가 달라지면 전송을 차단
+- 기존 대화(`existing`)는 요청 프로필 인터셉터를 설치하지 않고 네이티브 프로필을 그대로 상속
+- 캡처되지 않았거나 불완전한 Chat·Work 프로필은 임의 추정하지 않고 전송 전에 fail-closed 처리
+- Android System WebView 회귀 테스트와 요청 프로필 계약 테스트로 document-start 적용, 경로 allowlist, 비제어 데이터 보존을 검증
+- 정식 Application ID와 공개 서명 계보를 유지하고 `versionCode 2100000002`로 최신 정식 `v0.3.0`에서의 업데이트 경로를 검증
+
 ## 0.3.0 — 2026-08-24
 
 - 검증된 `v0.3.0-dev8` 기능 상태를 정식 `0.3.0`으로 승격
