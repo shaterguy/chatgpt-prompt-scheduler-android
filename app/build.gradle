@@ -7,16 +7,20 @@ android {
     compileSdk 36
 
     defaultConfig {
-        applicationId 'com.shaterguy.chatgptpromptscheduler'
+        applicationId 'com.shaterguy.chatgptpromptscheduler.dev'
         minSdk 26
         targetSdk 36
-        versionCode 2100000002
-        versionName '0.3.1'
+        versionCode 3002001
+        versionName '0.3.2-dev1'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
 
     buildTypes {
+        debug {
+            resValue 'string', 'app_name', 'ChatGPT Prompt Scheduler DEV'
+        }
         release {
+            resValue 'string', 'app_name', 'ChatGPT Prompt Scheduler DEV'
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
@@ -29,6 +33,7 @@ android {
 
     buildFeatures {
         buildConfig = true
+        resValues = true
     }
 }
 

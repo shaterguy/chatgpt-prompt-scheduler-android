@@ -23,11 +23,16 @@ public final class AutomationScript {
                 "const promptAlreadyPresent=matchCounts.some(count=>count===1);" +
                 targetGuard(schedule, false) +
                 "if(expectedType!=='existing'&&promptAlreadyPresent)return result('SUBMITTED','동일 실행 프롬프트가 이미 새 대화에 존재합니다.',{...routeDiagnostics,recoveredAfterNavigation:true});" +
-                "const body=(document.body?.innerText||'').toLowerCase();" +
-                "if(body.includes('log in')||body.includes('sign up')||body.includes('로그인'))return result('AUTH_REQUIRED','ChatGPT 로그인이 필요합니다.');" +
-                RequestProfileScript.activate(schedule) +
                 "const selectors=['textarea#prompt-textarea','textarea[data-testid=\"prompt-textarea\"]','div#prompt-textarea[contenteditable=\"true\"]','[contenteditable=\"true\"][data-lexical-editor=\"true\"]','main form [contenteditable=\"true\"]'];" +
-                "let selector='';let composer=null;for(const s of selectors){const candidates=[...document.querySelectorAll(s)];const found=candidates.find(e=>e&&e.isConnected&&e.offsetParent!==null);if(found){selector=s;composer=found;break;}}" +
+                "const visible=e=>!!e&&e.isConnected&&e.offsetParent!==null;" +
+                "let selector='';let composer=null;for(const s of selectors){const candidates=[...document.querySelectorAll(s)];const found=candidates.find(visible);if(found){selector=s;composer=found;break;}}" +
+                "const authPath=/^\\/auth\\/(?:login|signup|signin)(?:\\/|$)/i.test(location.pathname);" +
+                "const authLabel=e=>String(e?.innerText||e?.textContent||e?.getAttribute?.('aria-label')||'').replace(/\\s+/g,' ').trim().toLowerCase();" +
+                "const authControls=[...document.querySelectorAll('a[href],button,[role=\"button\"]')].filter(visible);" +
+                "const authControl=authControls.find(e=>{const label=authLabel(e),href=String(e.getAttribute?.('href')||'').toLowerCase();return /^(?:log in|sign in|sign up|create account|로그인|회원가입|가입)$/.test(label)||/(?:^|\\/)(?:auth\\/)?(?:login|signup|signin)(?:[\\/?#]|$)/.test(href);});" +
+                "const authRequired=authPath||(!composer&&!!authControl);" +
+                "if(authRequired)return result('AUTH_REQUIRED','ChatGPT 로그인이 필요합니다.',{...routeDiagnostics,authPath,authLabel:authControl?authLabel(authControl):'',composerPresent:!!composer,readyState:document.readyState});" +
+                RequestProfileScript.activate(schedule) +
                 "if(!composer)return result('RETRY','입력창 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics,selectors,readyState:document.readyState,activeTag:document.activeElement?.tagName||'',forms:document.forms.length});" +
                 "const raw=()=>('value'in composer?composer.value:(composer.innerText||composer.textContent||''));" +
                 "const same=()=>canonical(raw())===canonical(expected);" +
