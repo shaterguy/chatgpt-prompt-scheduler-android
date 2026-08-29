@@ -8,7 +8,7 @@ on:
     types:
       - completed
     branches:
-      - 'v0.3.0-dev*'
+      - 'v*-dev*'
 
 permissions:
   contents: read
@@ -70,11 +70,19 @@ jobs:
 
           HEAD_BRANCH="$(jq -r '.head_branch' "$RUN_JSON")"
           HEAD_SHA="$(jq -r '.head_sha' "$RUN_JSON")"
-          [[ "$HEAD_BRANCH" =~ ^v0\.3\.0-dev([1-9][0-9]*)$ ]]
-          DEV_NUMBER="${BASH_REMATCH[1]}"
+          [[ "$HEAD_BRANCH" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-dev([1-9][0-9]*)$ ]]
+          MAJOR="${BASH_REMATCH[1]}"
+          MINOR="${BASH_REMATCH[2]}"
+          PATCH="${BASH_REMATCH[3]}"
+          DEV_NUMBER="${BASH_REMATCH[4]}"
+          (( 10#$MAJOR == 0 ))
+          (( 10#$MINOR <= 999 ))
+          (( 10#$PATCH <= 999 ))
+          (( 10#$DEV_NUMBER <= 999 ))
           [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
           VERSION_NAME="${HEAD_BRANCH#v}"
-          VERSION_CODE="$((3000000 + DEV_NUMBER))"
+          VERSION_CODE="$((10#$MINOR * 1000000 + 10#$PATCH * 1000 + 10#$DEV_NUMBER))"
+          (( VERSION_CODE >= 1 && VERSION_CODE <= 2100000000 ))
           EXPECTED_ARTIFACT="chatgpt-prompt-scheduler-dev-${VERSION_NAME}-unsigned-attempt-${SOURCE_RUN_ATTEMPT}"
           UNSIGNED_NAME="chatgpt-prompt-scheduler-dev-v${VERSION_NAME}-unsigned.apk"
           SIGNED_NAME="chatgpt-prompt-scheduler-dev-v${VERSION_NAME}.apk"
