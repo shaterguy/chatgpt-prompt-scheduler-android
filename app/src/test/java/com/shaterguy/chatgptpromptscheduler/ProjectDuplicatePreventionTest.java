@@ -91,7 +91,7 @@ public class ProjectDuplicatePreventionTest {
         schedule.targetUrl = "https://chatgpt.com/g/proj/c/abc";
         String script = AutomationScript.build(schedule, "prompt", "run-existing", 0);
         assertTrue(script.contains("actualConversation===expectedConversation"));
-        assertTrue(script.contains("requested:'inherit'"));
+        assertTrue(script.contains("requested:\"inherit\""));
         assertFalse(script.contains("expectedType==='existing'&&users.length===0"));
     }
 }

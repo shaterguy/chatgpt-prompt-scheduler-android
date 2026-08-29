@@ -19,7 +19,7 @@ public final class RequestProfileVersionContractTest {
         assertTrue(producer.contains("RequestProfileEngine.PROFILE_VERSION"));
         String script = RequestProfileScript.documentStartScript();
         assertEquals(2, occurrences(script, RequestProfileScript.ENGINE_VERSION));
-        assertEquals(2, occurrences(script, RequestProfileEngine.PROFILE_VERSION));
+        assertEquals(3, occurrences(script, RequestProfileEngine.PROFILE_VERSION));
     }
 
     @Test public void interceptorScopeAndFailClosedContractAreExplicit() {
