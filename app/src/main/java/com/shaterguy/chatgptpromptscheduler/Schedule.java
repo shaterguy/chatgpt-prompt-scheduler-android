@@ -31,6 +31,7 @@ public final class Schedule {
     public long lastRunAt = 0L;
     public long nextRunAt = 0L;
     public String lastStatus = "NEVER";
+    transient RequestProfileEngine.TargetProfile resolvedRequestProfile;
 
     public static String normalizedExperience(String targetType, String experience) {
         if ("existing".equals(targetType)) return "inherit";
@@ -39,31 +40,41 @@ public final class Schedule {
 
     public static String normalizedReasoningEffort(String experience, String reasoningEffort) {
         if (!"work".equals(experience)) return "inherit";
-        return switch (reasoningEffort) {
-            case "light", "medium", "high", "xhigh", "max", "ultra" -> reasoningEffort;
-            default -> "inherit";
-        };
+        String value = safeProfileToken(reasoningEffort);
+        return value.isEmpty() ? "inherit" : value;
     }
 
     public static String displayReasoningEffort(String experience, String reasoningEffort) {
-        String normalized = normalizedReasoningEffort(experience, reasoningEffort);
-        return "ultra".equals(normalized) ? "울트라" : normalized;
+        String value = normalizedReasoningEffort(experience, reasoningEffort);
+        return "inherit".equals(value) ? "현재 설정 유지" : value;
     }
 
     public static String normalizedChatReasoning(String experience, String chatReasoning) {
         if (!"chat".equals(experience)) return "keep";
-        return switch (chatReasoning) {
-            case "instant", "medium", "high", "xhigh", "pro" -> chatReasoning;
-            default -> "keep";
-        };
+        String value = safeProfileToken(chatReasoning);
+        return value.isEmpty() ? "keep" : value;
+    }
+
+    public static String displayChatReasoning(String experience, String chatReasoning) {
+        String value = normalizedChatReasoning(experience, chatReasoning);
+        return "keep".equals(value) ? "현재 Chat 설정 유지" : value;
     }
 
     public static String normalizedWorkModel(String experience, String workModel) {
         if (!"work".equals(experience)) return "inherit";
-        return switch (workModel) {
-            case "sol", "terra", "luna" -> workModel;
-            default -> "inherit";
-        };
+        String value = safeProfileToken(workModel);
+        return value.isEmpty() ? "inherit" : value;
+    }
+
+    public static String displayWorkModel(String experience, String workModel) {
+        String value = normalizedWorkModel(experience, workModel);
+        return "inherit".equals(value) ? "현재 설정 유지" : value;
+    }
+
+    static String safeProfileToken(String value) {
+        if (value == null) return "";
+        String normalized = value.trim().toLowerCase();
+        return normalized.matches("[a-z0-9][a-z0-9._:-]{0,79}") ? normalized : "";
     }
 
     public static int normalizedIntervalMinutes(int value) {
@@ -101,28 +112,21 @@ public final class Schedule {
         schedule.targetType = object.optString("targetType", "general");
         schedule.targetUrl = object.optString("targetUrl", "https://chatgpt.com/");
         schedule.experience = normalizedExperience(schedule.targetType, object.optString("experience", "chat"));
-        schedule.workModel = normalizedWorkModel(
-                schedule.experience, object.optString("workModel", "inherit"));
-        schedule.reasoningEffort = normalizedReasoningEffort(
-                schedule.experience, object.optString("reasoningEffort", "inherit"));
-        schedule.chatReasoning = normalizedChatReasoning(
-                schedule.experience, object.optString("chatReasoning", "keep"));
+        schedule.workModel = normalizedWorkModel(schedule.experience, object.optString("workModel", "inherit"));
+        schedule.reasoningEffort = normalizedReasoningEffort(schedule.experience, object.optString("reasoningEffort", "inherit"));
+        schedule.chatReasoning = normalizedChatReasoning(schedule.experience, object.optString("chatReasoning", "keep"));
         schedule.prompt = object.optString("prompt", "");
         schedule.recurrence = object.optString("recurrence", "daily");
         schedule.intervalMinutes = normalizedIntervalMinutes(object.optInt("intervalMinutes", 30));
         schedule.weekdays.clear();
         JSONArray weekdayArray = object.optJSONArray("weekdays");
-        if (weekdayArray != null) {
-            for (int i = 0; i < weekdayArray.length(); i++) schedule.weekdays.add(weekdayArray.optInt(i));
-        }
+        if (weekdayArray != null) for (int i = 0; i < weekdayArray.length(); i++) schedule.weekdays.add(weekdayArray.optInt(i));
         if (schedule.weekdays.isEmpty()) schedule.weekdays.addAll(Arrays.asList(1, 2, 3, 4, 5, 6, 7));
         schedule.times.clear();
         JSONArray timeArray = object.optJSONArray("times");
-        if (timeArray != null) {
-            for (int i = 0; i < timeArray.length(); i++) {
-                String value = timeArray.optString(i, "");
-                if (value.matches("(?:[01]\\d|2[0-3]):[0-5]\\d")) schedule.times.add(value);
-            }
+        if (timeArray != null) for (int i = 0; i < timeArray.length(); i++) {
+            String value = timeArray.optString(i, "");
+            if (value.matches("(?:[01]\\d|2[0-3]):[0-5]\\d")) schedule.times.add(value);
         }
         if (schedule.times.isEmpty()) schedule.times.add("09:00");
         schedule.enabled = object.optBoolean("enabled", true);

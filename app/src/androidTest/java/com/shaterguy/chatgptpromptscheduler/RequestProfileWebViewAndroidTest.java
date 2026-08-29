@@ -33,7 +33,7 @@ public final class RequestProfileWebViewAndroidTest {
     @Test public void documentStartEnginePreexistsAndPatchesFetchAndXhrWithoutNetwork() throws Exception {
         String scenario = """
                 window.__testResult={preexisting:
-                  window.__chatgptPromptSchedulerRequestProfileEngine?.version==='scheduler-request-profile-engine-v1'};
+                  window.__chatgptPromptSchedulerRequestProfileEngine?.version==='scheduler-request-profile-engine-v2'};
                 const engine=window.__chatgptPromptSchedulerRequestProfileEngine;
                 engine.begin('work');
                 engine.setWorkModel('terra');
@@ -89,7 +89,7 @@ public final class RequestProfileWebViewAndroidTest {
     @Test public void targetNotReadyMalformedSchemaAndNonTextBlockWithoutNativeFallback() throws Exception {
         String scenario = """
                 window.__testResult={preexisting:
-                  window.__chatgptPromptSchedulerRequestProfileEngine?.version==='scheduler-request-profile-engine-v1'};
+                  window.__chatgptPromptSchedulerRequestProfileEngine?.version==='scheduler-request-profile-engine-v2'};
                 const engine=window.__chatgptPromptSchedulerRequestProfileEngine;
                 const blocked=async body=>{try{
                   await fetch('/backend-api/conversation',{method:'POST',body});

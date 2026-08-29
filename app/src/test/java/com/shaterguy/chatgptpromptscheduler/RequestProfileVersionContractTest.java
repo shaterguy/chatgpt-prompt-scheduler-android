@@ -23,19 +23,18 @@ public final class RequestProfileVersionContractTest {
     }
 
     @Test public void interceptorScopeAndFailClosedContractAreExplicit() {
-        assertEquals(Set.of("https://chatgpt.com", "https://www.chatgpt.com"),
-                RequestProfileScript.CHATGPT_ORIGINS);
+        assertEquals(Set.of("https://chatgpt.com", "https://www.chatgpt.com"), RequestProfileScript.CHATGPT_ORIGINS);
         String script = RequestProfileScript.documentStartScript();
         assertTrue(script.contains("path==='/backend-api/conversation'"));
         assertTrue(script.contains("path==='/backend-api/f/conversation'"));
         assertTrue(script.contains("path==='/backend-api/conversation/'"));
         assertFalse(script.contains("path.includes("));
-        assertFalse(script.contains("replace(/\\/+$/"));
         assertTrue(script.contains("if(!probe.eligible)return nativeFetch(input,init)"));
         assertTrue(script.contains("typeof text!=='string'"));
         assertTrue(script.contains("!Array.isArray(body.messages)"));
         assertTrue(script.contains("target_not_ready"));
         assertTrue(script.contains("invalid_conversation_json"));
+        assertTrue(script.contains("operation_set_incomplete"));
         assertFalse(script.contains("console."));
         assertFalse(script.contains("addJavascriptInterface"));
         assertFalse(script.contains("WebMessage"));
@@ -46,6 +45,7 @@ public final class RequestProfileVersionContractTest {
         chat.chatReasoning = "medium";
         String compose = AutomationScript.build(chat, "opaque prompt", "opaque-run", 0);
         assertTrue(compose.contains("__chatgptPromptSchedulerRequestProfileEngine"));
+        assertTrue(compose.contains("profileEngine.configure(\"chat\""));
         assertFalse(compose.contains("menuitemradio"));
         assertFalse(compose.contains("desiredModelOption"));
         assertFalse(compose.contains("desiredEffortOption"));
@@ -63,16 +63,17 @@ public final class RequestProfileVersionContractTest {
         assertFalse(inherited.contains("__chatgptPromptSchedulerRequestProfileEngine"));
     }
 
-    @Test public void dependencyStableIdentityAndDevWorkflowStayPinnedAndAttemptSpecific() throws Exception {
+    @Test public void dependencyDevIdentityAndWorkflowStayPinnedAndAttemptSpecific() throws Exception {
         String gradle = source("app/build.gradle");
         assertEquals(1, occurrences(gradle, "androidx.webkit:webkit:1.17.0"));
-        assertTrue(gradle.contains("applicationId 'com.shaterguy.chatgptpromptscheduler'"));
-        assertTrue(gradle.contains("versionCode 2100000003"));
-        assertTrue(gradle.contains("versionName '0.3.2'"));
+        assertTrue(gradle.contains("applicationId 'com.shaterguy.chatgptpromptscheduler.dev'"));
+        assertTrue(gradle.contains("versionCode 4000001"));
+        assertTrue(gradle.contains("versionName '0.4.0-dev1'"));
 
         String workflow = source(".github/workflows/android-dev.yml");
-        assertTrue(workflow.contains("DEV_VERSION_CODE: '3002001'"));
-        assertTrue(workflow.contains("DEV_VERSION_NAME: 0.3.2-dev1"));
+        assertTrue(workflow.contains("DEV_VERSION_CODE: '4000001'"));
+        assertTrue(workflow.contains("DEV_VERSION_NAME: 0.4.0-dev1"));
+        assertTrue(workflow.contains("DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.4.0-dev1-unsigned.apk"));
         assertTrue(workflow.contains("attempt-${{ github.run_attempt }}"));
         assertTrue(workflow.contains(":app:connectedDebugAndroidTest"));
         assertTrue(workflow.contains(":app:testDebugUnitTest :app:assembleRelease"));
@@ -89,9 +90,7 @@ public final class RequestProfileVersionContractTest {
     private static int occurrences(String value, String needle) {
         int count = 0;
         for (int at = value.indexOf(needle); at >= 0;
-             at = value.indexOf(needle, at + needle.length())) {
-            count++;
-        }
+             at = value.indexOf(needle, at + needle.length())) count++;
         return count;
     }
 }

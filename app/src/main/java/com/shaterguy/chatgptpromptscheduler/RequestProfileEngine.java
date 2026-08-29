@@ -3,14 +3,15 @@ package com.shaterguy.chatgptpromptscheduler;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/** Absolute, capture-calibrated ChatGPT request profile for scheduled conversations. */
+/** Exact request-control profile selected for a scheduled ChatGPT conversation. */
 final class RequestProfileEngine {
-    static final String PROFILE_VERSION = "chatgpt-request-snapshot-calibration-v1@2026-08-28";
+    static final String PROFILE_VERSION = "chatgpt-request-profile-registry-v2@2026-08-30";
     static final Set<String> CONTROL_PATHS = Set.of(
             "model", "thinking_effort", "conversation_origin", "service_tier");
 
@@ -22,16 +23,26 @@ final class RequestProfileEngine {
         final String model;
         final String reasoning;
         final String profileVersion;
+        final List<Operation> operations;
 
         TargetProfile(Mode mode, String model, String reasoning) {
-            this(mode, model, reasoning, PROFILE_VERSION);
+            this(mode, model, reasoning, PROFILE_VERSION, List.of());
         }
 
         TargetProfile(Mode mode, String model, String reasoning, String profileVersion) {
+            this(mode, model, reasoning, profileVersion, List.of());
+        }
+
+        TargetProfile(Mode mode, String model, String reasoning, List<Operation> operations) {
+            this(mode, model, reasoning, PROFILE_VERSION, operations);
+        }
+
+        TargetProfile(Mode mode, String model, String reasoning, String profileVersion, List<Operation> operations) {
             this.mode = Objects.requireNonNull(mode, "mode");
             this.model = normalize(model);
             this.reasoning = normalize(reasoning);
             this.profileVersion = Objects.requireNonNull(profileVersion, "profileVersion");
+            this.operations = Collections.unmodifiableList(new ArrayList<>(operations == null ? List.of() : operations));
         }
     }
 
@@ -41,22 +52,18 @@ final class RequestProfileEngine {
         final String value;
 
         private Operation(OperationKind kind, String path, String value) {
-            if (!CONTROL_PATHS.contains(path)) {
-                throw new IllegalArgumentException("CONTROL_PATH_NOT_ALLOWLISTED");
-            }
-            this.kind = kind;
+            if (!CONTROL_PATHS.contains(path)) throw new IllegalArgumentException("CONTROL_PATH_NOT_ALLOWLISTED");
+            this.kind = Objects.requireNonNull(kind, "kind");
             this.path = path;
             this.value = value;
         }
 
         static Operation set(String path, String value) {
-            if (value == null) throw new IllegalArgumentException("CONTROL_VALUE_MISSING");
+            if (value == null || value.isEmpty() || value.length() > 128) throw new IllegalArgumentException("CONTROL_VALUE_INVALID");
             return new Operation(OperationKind.SET, path, value);
         }
 
-        static Operation remove(String path) {
-            return new Operation(OperationKind.REMOVE, path, null);
-        }
+        static Operation remove(String path) { return new Operation(OperationKind.REMOVE, path, null); }
     }
 
     static final class ProfilePlan {
@@ -71,24 +78,29 @@ final class RequestProfileEngine {
 
     private RequestProfileEngine() {}
 
-    /**
-     * Returns null only for existing conversations, whose native/inherited profile must remain
-     * completely untouched. Every selectable new-conversation target must be explicit.
-     */
+    /** Returns null when the schedule intentionally inherits the current native ChatGPT profile. */
     static TargetProfile forSchedule(Schedule schedule) {
         Objects.requireNonNull(schedule, "schedule");
         if ("existing".equals(schedule.targetType)) return null;
+        if (schedule.resolvedRequestProfile != null) {
+            plan(schedule.resolvedRequestProfile);
+            return schedule.resolvedRequestProfile;
+        }
         String experience = Schedule.normalizedExperience(schedule.targetType, schedule.experience);
         if ("chat".equals(experience)) {
             String reasoning = Schedule.normalizedChatReasoning(experience, schedule.chatReasoning);
-            TargetProfile target = new TargetProfile(Mode.CHAT, "", reasoning);
+            if ("keep".equals(reasoning) || "inherit".equals(reasoning) || reasoning.isEmpty()) return null;
+            TargetProfile target = builtIn(Mode.CHAT, "", reasoning);
+            if (target == null) throw new IllegalArgumentException("PROFILE_UNREGISTERED");
             plan(target);
             return target;
         }
         if ("work".equals(experience)) {
             String model = Schedule.normalizedWorkModel(experience, schedule.workModel);
             String reasoning = Schedule.normalizedReasoningEffort(experience, schedule.reasoningEffort);
-            TargetProfile target = new TargetProfile(Mode.WORK, model, reasoning);
+            if ("inherit".equals(model) || model.isEmpty() || "inherit".equals(reasoning) || reasoning.isEmpty()) return null;
+            TargetProfile target = builtIn(Mode.WORK, model, reasoning);
+            if (target == null) throw new IllegalArgumentException("PROFILE_UNREGISTERED");
             plan(target);
             return target;
         }
@@ -97,100 +109,90 @@ final class RequestProfileEngine {
 
     static ProfilePlan plan(TargetProfile target) {
         Objects.requireNonNull(target, "target");
-        if (!PROFILE_VERSION.equals(target.profileVersion)) {
-            throw new IllegalArgumentException("PROFILE_VERSION_UNSUPPORTED");
-        }
-        return switch (target.mode) {
-            case CHAT -> chatPlan(target);
-            case WORK -> workPlan(target);
-        };
+        if (!PROFILE_VERSION.equals(target.profileVersion)) throw new IllegalArgumentException("PROFILE_VERSION_UNSUPPORTED");
+        TargetProfile effective = target.operations.isEmpty() ? builtIn(target.mode, target.model, target.reasoning) : target;
+        if (effective == null) throw new IllegalArgumentException("PROFILE_UNREGISTERED");
+        validateOperations(effective.operations);
+        return new ProfilePlan(effective, effective.operations);
     }
 
-    private static ProfilePlan chatPlan(TargetProfile target) {
-        List<Operation> operations = new ArrayList<>();
-        switch (target.reasoning) {
-            case "instant" -> {
-                operations.add(Operation.set("model", "gpt-5-6"));
-                operations.add(Operation.remove("thinking_effort"));
-            }
-            case "medium" -> {
-                operations.add(Operation.set("model", "gpt-5-6-thinking"));
-                operations.add(Operation.set("thinking_effort", "standard"));
-            }
-            case "high" -> {
-                operations.add(Operation.set("model", "gpt-5-6-thinking"));
-                operations.add(Operation.set("thinking_effort", "extended"));
-            }
-            case "xhigh" -> {
-                operations.add(Operation.set("model", "gpt-5-6-thinking"));
-                operations.add(Operation.set("thinking_effort", "max"));
-            }
-            case "pro" -> throw new IllegalArgumentException("CHAT_PRO_UNCAPTURED");
-            case "keep", "inherit", "" -> throw new IllegalArgumentException("CHAT_PROFILE_INCOMPLETE");
-            default -> throw new IllegalArgumentException("CHAT_PROFILE_UNSUPPORTED");
-        }
-        operations.add(Operation.remove("conversation_origin"));
-        operations.add(Operation.remove("service_tier"));
-        return new ProfilePlan(target, operations);
+    static List<TargetProfile> builtInProfiles() {
+        List<TargetProfile> profiles = new ArrayList<>();
+        profiles.add(profile(Mode.CHAT, "", "instant",
+                set("model", "gpt-5-6"), remove("thinking_effort"), remove("conversation_origin"), remove("service_tier")));
+        profiles.add(profile(Mode.CHAT, "", "medium",
+                set("model", "gpt-5-6-thinking"), set("thinking_effort", "standard"), remove("conversation_origin"), remove("service_tier")));
+        profiles.add(profile(Mode.CHAT, "", "high",
+                set("model", "gpt-5-6-thinking"), set("thinking_effort", "extended"), remove("conversation_origin"), remove("service_tier")));
+        profiles.add(profile(Mode.CHAT, "", "xhigh",
+                set("model", "gpt-5-6-thinking"), set("thinking_effort", "max"), remove("conversation_origin"), remove("service_tier")));
+        profiles.add(profile(Mode.CHAT, "", "pro",
+                set("model", "gpt-5-6-pro"), set("thinking_effort", "standard"), remove("conversation_origin"), remove("service_tier")));
+        profiles.add(profile(Mode.WORK, "luna", "max",
+                set("model", "gpt-5.6-luna-wm"), set("thinking_effort", "max"), set("conversation_origin", "tpp"), set("service_tier", "standard")));
+        profiles.add(profile(Mode.WORK, "sol", "high",
+                set("model", "gpt-5.6-sol-wm"), set("thinking_effort", "extended"), set("conversation_origin", "tpp"), set("service_tier", "standard")));
+        profiles.add(profile(Mode.WORK, "sol", "max",
+                set("model", "gpt-5.6-sol-wm"), set("thinking_effort", "max"), set("conversation_origin", "tpp"), set("service_tier", "standard")));
+        profiles.add(profile(Mode.WORK, "sol", "ultra",
+                set("model", "gpt-5.6-sol-wm"), set("thinking_effort", "ultra"), set("conversation_origin", "tpp"), set("service_tier", "standard")));
+        profiles.add(profile(Mode.WORK, "sol", "xhigh",
+                set("model", "gpt-5.6-sol-wm"), set("thinking_effort", "xhigh"), set("conversation_origin", "tpp"), set("service_tier", "standard")));
+        profiles.add(profile(Mode.WORK, "terra", "high",
+                set("model", "gpt-5.6-terra-wm"), set("thinking_effort", "extended"), set("conversation_origin", "tpp"), set("service_tier", "standard")));
+        profiles.add(profile(Mode.WORK, "terra", "max",
+                set("model", "gpt-5.6-terra-wm"), set("thinking_effort", "max"), set("conversation_origin", "tpp"), set("service_tier", "standard")));
+        profiles.add(profile(Mode.WORK, "terra", "ultra",
+                set("model", "gpt-5.6-terra-wm"), set("thinking_effort", "ultra"), set("conversation_origin", "tpp"), remove("service_tier")));
+        profiles.add(profile(Mode.WORK, "terra", "xhigh",
+                set("model", "gpt-5.6-terra-wm"), set("thinking_effort", "xhigh"), set("conversation_origin", "tpp"), set("service_tier", "standard")));
+        return Collections.unmodifiableList(profiles);
     }
 
-    private static ProfilePlan workPlan(TargetProfile target) {
-        String model = switch (target.model) {
-            case "sol" -> "gpt-5.6-sol-wm";
-            case "terra" -> "gpt-5.6-terra-wm";
-            case "luna" -> "gpt-5.6-luna-wm";
-            case "inherit", "" -> throw new IllegalArgumentException("WORK_MODEL_INCOMPLETE");
-            default -> throw new IllegalArgumentException("WORK_MODEL_UNSUPPORTED");
-        };
-        String effort = switch (target.reasoning) {
-            case "light" -> "min";
-            case "medium" -> "standard";
-            case "high" -> "extended";
-            case "xhigh" -> "xhigh";
-            case "max" -> "max";
-            case "ultra" -> "ultra";
-            case "inherit", "" -> throw new IllegalArgumentException("WORK_REASONING_INCOMPLETE");
-            default -> throw new IllegalArgumentException("WORK_REASONING_UNSUPPORTED");
-        };
-        if ("gpt-5.6-luna-wm".equals(model) && "ultra".equals(effort)) {
-            throw new IllegalArgumentException("LUNA_ULTRA_UNSUPPORTED");
+    static TargetProfile builtIn(Mode mode, String model, String reasoning) {
+        String normalizedModel = normalize(model), normalizedReasoning = normalize(reasoning);
+        for (TargetProfile profile : builtInProfiles()) {
+            if (profile.mode == mode && profile.model.equals(normalizedModel) && profile.reasoning.equals(normalizedReasoning)) return profile;
         }
-        return new ProfilePlan(target, List.of(
-                Operation.set("model", model),
-                Operation.set("thinking_effort", effort),
-                Operation.set("conversation_origin", "tpp"),
-                Operation.set("service_tier", "standard")));
+        return null;
+    }
+
+    static void validateOperations(List<Operation> operations) {
+        if (operations == null || operations.size() != CONTROL_PATHS.size()) throw new IllegalArgumentException("CONTROL_OPERATION_COUNT_INVALID");
+        LinkedHashSet<String> seen = new LinkedHashSet<>();
+        for (Operation operation : operations) {
+            if (operation == null || !seen.add(operation.path)) throw new IllegalArgumentException("CONTROL_OPERATION_DUPLICATE");
+            if (operation.kind == OperationKind.SET && (operation.value == null || operation.value.isEmpty() || operation.value.length() > 128))
+                throw new IllegalArgumentException("CONTROL_VALUE_INVALID");
+            if (operation.kind == OperationKind.REMOVE && operation.value != null) throw new IllegalArgumentException("REMOVE_VALUE_FORBIDDEN");
+        }
+        if (!seen.equals(CONTROL_PATHS)) throw new IllegalArgumentException("CONTROL_OPERATION_SET_INCOMPLETE");
     }
 
     static Map<String, Object> apply(Map<String, Object> nativeRequest, TargetProfile target) {
         validateSubmissionSchema(nativeRequest);
-        Map<String, Object> before = new LinkedHashMap<>(nativeRequest);
-        Map<String, Object> after = new LinkedHashMap<>(nativeRequest);
+        Map<String, Object> before = new LinkedHashMap<>(nativeRequest), after = new LinkedHashMap<>(nativeRequest);
         for (Operation operation : plan(target).operations) {
-            if (operation.kind == OperationKind.SET) after.put(operation.path, operation.value);
-            else after.remove(operation.path);
+            if (operation.kind == OperationKind.SET) after.put(operation.path, operation.value); else after.remove(operation.path);
         }
-        if (!nonControlEquivalent(before, after)) {
-            throw new IllegalStateException("DATA_PLANE_CHANGED");
-        }
+        if (!nonControlEquivalent(before, after)) throw new IllegalStateException("DATA_PLANE_CHANGED");
         return after;
     }
 
     static void validateSubmissionSchema(Map<String, Object> request) {
-        if (request == null || !(request.get("messages") instanceof List<?>)) {
-            throw new IllegalArgumentException("CONVERSATION_SCHEMA_UNKNOWN");
-        }
+        if (request == null || !(request.get("messages") instanceof List<?>)) throw new IllegalArgumentException("CONVERSATION_SCHEMA_UNKNOWN");
     }
 
     static boolean nonControlEquivalent(Map<String, Object> before, Map<String, Object> after) {
-        Map<String, Object> left = new LinkedHashMap<>(before);
-        Map<String, Object> right = new LinkedHashMap<>(after);
-        CONTROL_PATHS.forEach(left::remove);
-        CONTROL_PATHS.forEach(right::remove);
+        Map<String, Object> left = new LinkedHashMap<>(before), right = new LinkedHashMap<>(after);
+        CONTROL_PATHS.forEach(left::remove); CONTROL_PATHS.forEach(right::remove);
         return left.equals(right);
     }
 
-    private static String normalize(String value) {
-        return value == null ? "" : value.trim().toLowerCase();
-    }
+    static String key(TargetProfile profile) { return key(profile.mode, profile.model, profile.reasoning); }
+    static String key(Mode mode, String model, String reasoning) { return mode.name() + "|" + normalize(model) + "|" + normalize(reasoning); }
+    private static TargetProfile profile(Mode mode, String model, String reasoning, Operation... operations) { return new TargetProfile(mode, model, reasoning, List.of(operations)); }
+    private static Operation set(String path, String value) { return Operation.set(path, value); }
+    private static Operation remove(String path) { return Operation.remove(path); }
+    static String normalize(String value) { return value == null ? "" : value.trim().toLowerCase(); }
 }

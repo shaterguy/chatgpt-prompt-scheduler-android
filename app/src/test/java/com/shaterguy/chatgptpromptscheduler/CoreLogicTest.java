@@ -105,26 +105,21 @@ public class CoreLogicTest {
         assertFalse(ScheduleEditorActivity.requiresTargetUrl("general"));
         assertTrue(ScheduleEditorActivity.requiresTargetUrl("project"));
         assertTrue(ScheduleEditorActivity.requiresTargetUrl("existing"));
-
         assertTrue(ScheduleEditorActivity.showsExperience("general"));
         assertTrue(ScheduleEditorActivity.showsExperience("project"));
         assertFalse(ScheduleEditorActivity.showsExperience("existing"));
-
         assertTrue(ScheduleEditorActivity.showsReasoningEffort("general", "work"));
         assertTrue(ScheduleEditorActivity.showsReasoningEffort("project", "work"));
         assertFalse(ScheduleEditorActivity.showsReasoningEffort("general", "chat"));
         assertFalse(ScheduleEditorActivity.showsReasoningEffort("existing", "work"));
-
         assertTrue(ScheduleEditorActivity.showsClockTimes("once"));
         assertTrue(ScheduleEditorActivity.showsClockTimes("daily"));
         assertTrue(ScheduleEditorActivity.showsClockTimes("weekly"));
         assertFalse(ScheduleEditorActivity.showsClockTimes("interval"));
-
         assertFalse(ScheduleEditorActivity.showsWeekdays("once"));
         assertFalse(ScheduleEditorActivity.showsWeekdays("daily"));
         assertTrue(ScheduleEditorActivity.showsWeekdays("weekly"));
         assertFalse(ScheduleEditorActivity.showsWeekdays("interval"));
-
         assertFalse(ScheduleEditorActivity.showsIntervalMinutes("once"));
         assertFalse(ScheduleEditorActivity.showsIntervalMinutes("daily"));
         assertFalse(ScheduleEditorActivity.showsIntervalMinutes("weekly"));
@@ -216,7 +211,7 @@ public class CoreLogicTest {
     }
 
     @Test
-    public void reasoningEffortIsWorkOnlyAndBackwardCompatible() {
+    public void profileTokensAreModeScopedAndFutureCompatible() {
         assertEquals("inherit", Schedule.normalizedReasoningEffort("chat", "max"));
         assertEquals("inherit", Schedule.normalizedReasoningEffort("inherit", "high"));
         assertEquals("light", Schedule.normalizedReasoningEffort("work", "light"));
@@ -225,38 +220,31 @@ public class CoreLogicTest {
         assertEquals("xhigh", Schedule.normalizedReasoningEffort("work", "xhigh"));
         assertEquals("max", Schedule.normalizedReasoningEffort("work", "max"));
         assertEquals("ultra", Schedule.normalizedReasoningEffort("work", "ultra"));
-        assertEquals("inherit", Schedule.normalizedReasoningEffort("work", "unknown"));
+        assertEquals("future", Schedule.normalizedReasoningEffort("work", "future"));
+        assertEquals("inherit", Schedule.normalizedReasoningEffort("work", "bad value"));
+        assertEquals("sol", Schedule.normalizedWorkModel("work", "sol"));
+        assertEquals("future-model", Schedule.normalizedWorkModel("work", "future-model"));
+        assertEquals("inherit", Schedule.normalizedWorkModel("work", "bad value"));
     }
 
     @Test
-    public void ultraDisplayAndJsonRoundTripRemainBackwardCompatible() throws Exception {
-        assertEquals("울트라", Schedule.displayReasoningEffort("work", "ultra"));
-        assertEquals("inherit", Schedule.displayReasoningEffort("chat", "ultra"));
-        assertEquals("ultra", ScheduleEditorActivity.reasoningEffortValue("울트라"));
+    public void profileDisplayUsesRegistryNamesAndKoreanInheritLabels() throws Exception {
+        assertEquals("ultra", Schedule.displayReasoningEffort("work", "ultra"));
+        assertEquals("현재 설정 유지", Schedule.displayReasoningEffort("chat", "ultra"));
+        assertEquals("현재 설정 유지", Schedule.displayWorkModel("work", "inherit"));
+        assertEquals("현재 Chat 설정 유지", Schedule.displayChatReasoning("chat", "keep"));
+        assertEquals("inherit", ScheduleEditorActivity.reasoningEffortValue("현재 설정 유지"));
         assertEquals("xhigh", ScheduleEditorActivity.reasoningEffortValue("xhigh"));
 
         Schedule schedule = new Schedule();
         schedule.experience = "work";
-        schedule.reasoningEffort = "ultra";
+        schedule.reasoningEffort = "future";
         JSONObject json = schedule.toJson();
-        assertEquals("ultra", json.getString("reasoningEffort"));
-        assertEquals("ultra", Schedule.fromJson(json).reasoningEffort);
+        assertEquals("future", json.getString("reasoningEffort"));
+        assertEquals("future", Schedule.fromJson(json).reasoningEffort);
 
         JSONObject legacy = new JSONObject(json.toString());
         legacy.remove("reasoningEffort");
         assertEquals("inherit", Schedule.fromJson(legacy).reasoningEffort);
-
-        JSONObject unknown = new JSONObject(json.toString());
-        unknown.put("reasoningEffort", "not-a-real-effort");
-        assertEquals("inherit", Schedule.fromJson(unknown).reasoningEffort);
     }
-
-    @Test
-    public void workModelIsWorkOnlyAndBackwardCompatible() {
-        assertEquals("inherit", Schedule.normalizedWorkModel("chat", "sol"));
-        assertEquals("inherit", Schedule.normalizedWorkModel("inherit", "terra"));
-        assertEquals("sol", Schedule.normalizedWorkModel("work", "sol"));
-        assertEquals("terra", Schedule.normalizedWorkModel("work", "terra"));
-        assertEquals("luna", Schedule.normalizedWorkModel("work", "luna"));
-        assertEquals("inherit", Schedule.normalizedWorkModel("work", "unknown"));
-    }}
+}
