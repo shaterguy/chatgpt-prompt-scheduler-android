@@ -83,7 +83,7 @@ public final class RequestProfileVersionContractTest {
     private static String source(String relative) throws Exception {
         Path path = Paths.get(relative);
         if (!Files.exists(path)) path = Paths.get("..").resolve(relative);
-        return Files.readString(path, StandardCharsets.UTF_8);
+        return new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
     }
 
     private static int occurrences(String value, String needle) {
