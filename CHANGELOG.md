@@ -17,7 +17,7 @@
 - 로그인된 ChatGPT 화면의 부수적인 `Log in`·`Sign up` 문구 때문에 `AUTH_REQUIRED`로 오판하던 문제 수정
 - visible composer가 있으면 인증 완료 상태를 우선하고, composer 부재와 명시적 로그인 경로·컨트롤이 함께 확인될 때만 `AUTH_REQUIRED`로 판정
 - composer와 인증 신호가 모두 없는 화면 준비 상태는 `AUTH_REQUIRED`가 아니라 `RETRY`로 처리
-- Android API 36 WebView 회귀 테스트로 부수적 로그인 문구·명시적 로그인 컨트롤·로딩 상태를 검증
+- Android API 36 WebView 회귀 테스트로 부수적 로그인 문구, 명시적 로그인 컨트롤, 로딩 상태를 검증
 - 새 권한·의존성·외부 전송·쿠키 처리 변경 없이 기존 대상 검증과 composer 전송 게이트 유지
 - 정식 Application ID와 공개 서명 계보를 유지하고 `versionCode 2100000003`으로 최신 정식 `v0.3.1`에서의 업데이트 경로를 검증
 
