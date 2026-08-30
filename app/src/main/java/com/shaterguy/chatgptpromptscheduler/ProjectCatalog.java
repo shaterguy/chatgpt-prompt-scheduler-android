@@ -57,6 +57,12 @@ final class ProjectCatalog {
         return editor.commit();
     }
 
+    int clearAll() {
+        int count = entries().size();
+        if (!prefs.edit().clear().commit()) throw new IllegalStateException("프로젝트 목록을 삭제하지 못했습니다.");
+        return count;
+    }
+
     String displayName(ProjectUrlPolicy.ProjectRef ref) {
         if (ref == null) return "프로젝트";
         String stored = normalizeDisplayName(prefs.getString(nameKey(ref.projectId), ""));
@@ -69,10 +75,7 @@ final class ProjectCatalog {
         boolean pendingSpace = false;
         for (int i = 0; i < value.length() && out.length() < MAX_DISPLAY_NAME_LENGTH; i++) {
             char c = value.charAt(i);
-            if (Character.isISOControl(c) || Character.isWhitespace(c)) {
-                pendingSpace = out.length() > 0;
-                continue;
-            }
+            if (Character.isISOControl(c) || Character.isWhitespace(c)) { pendingSpace = out.length() > 0; continue; }
             if (pendingSpace && out.length() < MAX_DISPLAY_NAME_LENGTH) out.append(' ');
             pendingSpace = false;
             if (out.length() < MAX_DISPLAY_NAME_LENGTH) out.append(c);
@@ -96,7 +99,6 @@ final class ProjectCatalog {
     }
 
     private static String nameKey(String projectId) { return KEY_NAME_PREFIX + projectId; }
-
     private static boolean contains(List<ProjectUrlPolicy.ProjectRef> entries, String id) {
         for (ProjectUrlPolicy.ProjectRef entry : entries) if (entry.projectId.equals(id)) return true;
         return false;

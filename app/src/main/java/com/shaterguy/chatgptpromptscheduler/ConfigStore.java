@@ -15,17 +15,17 @@ public final class ConfigStore {
     private static final String PREFS = "scheduler_config";
     private static final String KEY = "config_json";
     private final SharedPreferences preferences;
+    private final RequestProfileRegistry profileRegistry;
 
     public ConfigStore(Context context) {
         preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        profileRegistry = new RequestProfileRegistry(context);
     }
 
     public synchronized JSONObject loadRoot() {
         String stored = preferences.getString(KEY, null);
-        try {
-            if (stored != null) return migrate(new JSONObject(stored));
-        } catch (JSONException ignored) {
-        }
+        try { if (stored != null) return migrate(new JSONObject(stored)); }
+        catch (JSONException ignored) {}
         return defaultRoot();
     }
 
@@ -35,9 +35,10 @@ public final class ConfigStore {
         if (array == null) return schedules;
         for (int i = 0; i < array.length(); i++) {
             try {
-                schedules.add(Schedule.fromJson(array.getJSONObject(i)));
-            } catch (JSONException ignored) {
-            }
+                Schedule schedule = Schedule.fromJson(array.getJSONObject(i));
+                profileRegistry.attach(schedule);
+                schedules.add(schedule);
+            } catch (JSONException ignored) {}
         }
         return schedules;
     }
@@ -50,12 +51,8 @@ public final class ConfigStore {
     public synchronized void saveSchedule(Schedule incoming) {
         List<Schedule> schedules = loadSchedules();
         boolean replaced = false;
-        for (int i = 0; i < schedules.size(); i++) {
-            if (schedules.get(i).id.equals(incoming.id)) {
-                schedules.set(i, incoming);
-                replaced = true;
-                break;
-            }
+        for (int i = 0; i < schedules.size(); i++) if (schedules.get(i).id.equals(incoming.id)) {
+            schedules.set(i, incoming); replaced = true; break;
         }
         if (!replaced) schedules.add(incoming);
         saveSchedules(schedules);
@@ -70,32 +67,24 @@ public final class ConfigStore {
     public synchronized void saveSchedules(List<Schedule> schedules) {
         JSONObject root = loadRoot();
         JSONArray array = new JSONArray();
-        for (Schedule schedule : schedules) {
-            try {
-                array.put(schedule.toJson());
-            } catch (JSONException ignored) {
-            }
-        }
+        for (Schedule schedule : schedules) try { array.put(schedule.toJson()); } catch (JSONException ignored) {}
         try {
             root.put("schemaVersion", SCHEMA_VERSION);
             root.put("schedules", array);
             root.put("exportedAt", System.currentTimeMillis());
-        } catch (JSONException ignored) {
-        }
+        } catch (JSONException ignored) {}
         saveRoot(root);
     }
 
     public synchronized JSONObject exportPortable() {
-        JSONObject current = loadRoot();
-        JSONObject portable = new JSONObject();
+        JSONObject current = loadRoot(), portable = new JSONObject();
         try {
             portable.put("app", "ChatGPT Prompt Scheduler");
             portable.put("schemaVersion", SCHEMA_VERSION);
             portable.put("exportedAt", System.currentTimeMillis());
             portable.put("schedules", current.optJSONArray("schedules") == null ? new JSONArray() : current.optJSONArray("schedules"));
             portable.put("settings", current.optJSONObject("settings") == null ? defaultSettings() : current.optJSONObject("settings"));
-        } catch (JSONException ignored) {
-        }
+        } catch (JSONException ignored) {}
         return portable;
     }
 
@@ -118,10 +107,7 @@ public final class ConfigStore {
 
     public synchronized void saveSettings(JSONObject settings) {
         JSONObject root = loadRoot();
-        try {
-            root.put("settings", settings);
-        } catch (JSONException ignored) {
-        }
+        try { root.put("settings", settings); } catch (JSONException ignored) {}
         saveRoot(root);
     }
 
@@ -135,9 +121,7 @@ public final class ConfigStore {
     }
 
     private void saveRoot(JSONObject root) {
-        if (!preferences.edit().putString(KEY, root.toString()).commit()) {
-            throw new IllegalStateException("설정을 저장하지 못했습니다.");
-        }
+        if (!preferences.edit().putString(KEY, root.toString()).commit()) throw new IllegalStateException("설정을 저장하지 못했습니다.");
     }
 
     public static JSONObject defaultRoot() {
@@ -146,8 +130,7 @@ public final class ConfigStore {
             root.put("schemaVersion", SCHEMA_VERSION);
             root.put("schedules", new JSONArray());
             root.put("settings", defaultSettings());
-        } catch (JSONException ignored) {
-        }
+        } catch (JSONException ignored) {}
         return root;
     }
 
@@ -159,8 +142,7 @@ public final class ConfigStore {
             settings.put("missedGraceMinutes", 30);
             settings.put("maxRetries", 2);
             settings.put("executionTimeoutSeconds", 90);
-        } catch (JSONException ignored) {
-        }
+        } catch (JSONException ignored) {}
         return settings;
     }
 }

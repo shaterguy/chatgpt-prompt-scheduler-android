@@ -106,10 +106,15 @@ public final class MainActivity extends Activity {
         String targetSummary = "existing".equals(schedule.targetType)
                 ? "existing · 기존 대화 모드 유지"
                 : schedule.targetType + " · " + Schedule.normalizedExperience(schedule.targetType, schedule.experience);
-        String reasoningSummary = "work".equals(schedule.experience)
-                ? " · 모델 " + Schedule.normalizedWorkModel(schedule.experience, schedule.workModel)
-                        + " · 추론 " + Schedule.displayReasoningEffort(schedule.experience, schedule.reasoningEffort)
-                : "";
+        String reasoningSummary;
+        if ("work".equals(schedule.experience)) {
+            reasoningSummary = " · 모델 " + Schedule.displayWorkModel(schedule.experience, schedule.workModel)
+                    + " · 추론 " + Schedule.displayReasoningEffort(schedule.experience, schedule.reasoningEffort);
+        } else if ("chat".equals(schedule.experience) && !"existing".equals(schedule.targetType)) {
+            reasoningSummary = " · 추론 " + Schedule.displayChatReasoning(schedule.experience, schedule.chatReasoning);
+        } else {
+            reasoningSummary = "";
+        }
         card.addView(Ui.body(this, targetSummary + reasoningSummary + " · " + Recurrence.describeNext(schedule, now)));
         card.addView(Ui.body(this, "마지막 상태: " + schedule.lastStatus));
         Switch toggle = new Switch(this);
@@ -142,7 +147,6 @@ public final class MainActivity extends Activity {
             toast("이미 실행 중이거나 대기 중인 예약입니다.");
             return;
         }
-
         Intent service = new Intent(this, ExecutionService.class);
         try {
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(service); else startService(service);
@@ -229,5 +233,7 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void toast(String message) { Toast.makeText(this, message, Toast.LENGTH_LONG).show(); }
+    private void toast(String message) {
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+    }
 }

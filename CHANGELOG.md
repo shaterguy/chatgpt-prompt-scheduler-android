@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0 — 2026-08-30
+
+- 검증된 `v0.4.0-dev1` 기능 상태를 기존 정식 앱 계보의 `0.4.0`으로 승격
+- SelfRun 일반 Chat·Work 모델/추론 설정 JSON을 별도로 가져와 신규 프로필을 병합하고 동일 signal 프로필은 최신 값으로 갱신
+- Work 예약은 등록된 model/reasoning 조합만 노출하고, 가져온 `SET`·`REMOVE` operation을 손실 없이 보존해 요청 프로필 엔진에 반영
+- 내부 `inherit`·`keep` 상태를 사용자 화면에서 현재 설정 유지 의미로 표시하고 실행 시 native-inherit 계약을 유지
+- 프로젝트 목록 전체 초기화는 ProjectCatalog 저장소만 비워 기존 예약·로그인 세션·실행 기록을 보존
+- 기존 Schedule JSON `schemaVersion 1` 호환성을 유지하고 새 권한·의존성·인증·네트워크 전송 경계를 추가하지 않음
+- Android API 36 WebView 6/6, 단위 테스트, release build와 trusted signer 검증을 통과한 `771aad44d6b12425fe2d457edc2b05fbeac56ee0` 기능 기준선을 사용
+- 정식 Application ID와 공개 서명 계보를 유지하고 `versionCode 2100000004`로 최신 정식 `v0.3.2`에서의 업데이트 경로를 검증하도록 릴리스 구성
+
 ## 0.3.2 — 2026-08-29
 
 - 검증된 `v0.3.2-dev1` 기능 상태를 정식 `0.3.2`로 승격

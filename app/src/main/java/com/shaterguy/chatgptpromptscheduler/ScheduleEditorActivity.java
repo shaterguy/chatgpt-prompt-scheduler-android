@@ -17,17 +17,9 @@ import java.util.Arrays;
 import java.util.List;
 
 public final class ScheduleEditorActivity extends Activity {
-    private static final String[] REASONING_EFFORT_VALUES =
-            new String[]{"inherit", "light", "medium", "high", "xhigh", "max", "ultra"};
-    private static final String[] REASONING_EFFORT_LABELS =
-            new String[]{"inherit", "light", "medium", "high", "xhigh", "max", "울트라"};
-    private static final String[] CHAT_REASONING_VALUES =
-            new String[]{"keep", "instant", "medium", "high", "xhigh", "pro"};
-    private static final String[] CHAT_REASONING_LABELS =
-            new String[]{"현재 Chat 설정 유지", "Instant", "Medium", "High", "Extra High", "Pro"};
-
     private ConfigStore store;
     private ProjectCatalog projectCatalog;
+    private RequestProfileRegistry profileRegistry;
     private Schedule schedule;
     private EditText name;
     private Spinner targetType;
@@ -43,6 +35,10 @@ public final class ScheduleEditorActivity extends Activity {
     private LinearLayout workReasoningSection;
     private Spinner chatReasoning;
     private LinearLayout chatReasoningSection;
+    private List<String> workModelValues = new ArrayList<>();
+    private List<String> workReasoningValues = new ArrayList<>();
+    private List<String> chatReasoningValues = new ArrayList<>();
+    private String lastWorkModelValue = "";
     private EditText prompt;
     private Spinner recurrence;
     private EditText times;
@@ -59,6 +55,7 @@ public final class ScheduleEditorActivity extends Activity {
         super.onCreate(savedInstanceState);
         store = new ConfigStore(this);
         projectCatalog = new ProjectCatalog(this);
+        profileRegistry = new RequestProfileRegistry(this);
         String id = getIntent().getStringExtra("scheduleId");
         schedule = id == null ? new Schedule() : store.findSchedule(id);
         if (schedule == null) schedule = new Schedule();
@@ -103,34 +100,38 @@ public final class ScheduleEditorActivity extends Activity {
                 "work".equals(schedule.experience) ? "work" : "chat");
 
         chatReasoningSection = section(root);
-        chatReasoning = mappedSpinner(chatReasoningSection,
-                "일반 Chat 추론 정도",
-                CHAT_REASONING_VALUES,
-                CHAT_REASONING_LABELS,
-                Schedule.normalizedChatReasoning(schedule.experience, schedule.chatReasoning));
+        chatReasoningSection.addView(Ui.body(this, "일반 Chat 추론 정도"));
+        chatReasoning = new Spinner(this);
+        chatReasoningSection.addView(chatReasoning);
+        reloadChatReasoningChoices();
 
         workReasoningSection = section(root);
-        workModel = spinner(workReasoningSection,
-                "Work 모델 · inherit=웹 현재 설정 유지",
-                new String[]{"inherit", "sol", "terra", "luna"},
-                Schedule.normalizedWorkModel(schedule.experience, schedule.workModel));
-        reasoningEffort = mappedSpinner(workReasoningSection,
-                "Work 추론 강도 · inherit=웹 현재 설정 유지",
-                REASONING_EFFORT_VALUES,
-                REASONING_EFFORT_LABELS,
-                Schedule.normalizedReasoningEffort(schedule.experience, schedule.reasoningEffort));
+        workReasoningSection.addView(Ui.body(this, "Work 모델"));
+        workModel = new Spinner(this);
+        workReasoningSection.addView(workModel);
+        workReasoningSection.addView(Ui.body(this, "Work 추론 강도"));
+        reasoningEffort = new Spinner(this);
+        workReasoningSection.addView(reasoningEffort);
+        reloadWorkModelChoices();
+        lastWorkModelValue = selectedProfileValue(workModel, workModelValues);
+        reloadWorkReasoningChoices(Schedule.normalizedReasoningEffort(schedule.experience, schedule.reasoningEffort));
 
         targetType.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                updateTargetOptionVisibility();
-            }
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) { updateTargetOptionVisibility(); }
             @Override public void onNothingSelected(AdapterView<?> parent) { updateTargetOptionVisibility(); }
         });
         experience.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                updateTargetOptionVisibility();
-            }
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) { updateTargetOptionVisibility(); }
             @Override public void onNothingSelected(AdapterView<?> parent) { updateTargetOptionVisibility(); }
+        });
+        workModel.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                String currentModel = selectedProfileValue(workModel, workModelValues);
+                if (currentModel.equals(lastWorkModelValue)) return;
+                lastWorkModelValue = currentModel;
+                reloadWorkReasoningChoices("inherit");
+            }
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
         });
 
         prompt = edit(root, "프롬프트", schedule.prompt, true);
@@ -141,14 +142,11 @@ public final class ScheduleEditorActivity extends Activity {
         weekdaysSection = section(root);
         weekdays = edit(weekdaysSection, "주간 요일 · 1=월∼7=일 (예: 1,2,3,4,5)", joinInts(schedule.weekdays), false);
         intervalSection = section(root);
-        intervalMinutes = edit(intervalSection,
-                "분 간격 · 이전 실행 완료 후 (15∼10080)",
+        intervalMinutes = edit(intervalSection, "분 간격 · 이전 실행 완료 후 (15∼10080)",
                 String.valueOf(Schedule.normalizedIntervalMinutes(schedule.intervalMinutes)), false);
 
         recurrence.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                updateRecurrenceOptionVisibility();
-            }
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) { updateRecurrenceOptionVisibility(); }
             @Override public void onNothingSelected(AdapterView<?> parent) { updateRecurrenceOptionVisibility(); }
         });
 
@@ -157,7 +155,6 @@ public final class ScheduleEditorActivity extends Activity {
         enabled.setText("예약 활성화");
         enabled.setChecked(schedule.enabled);
         root.addView(enabled);
-
         root.addView(Ui.actionGrid(this,
                 Ui.button(this, "저장", v -> save()),
                 Ui.button(this, "취소", v -> finish())));
@@ -165,6 +162,69 @@ public final class ScheduleEditorActivity extends Activity {
         updateTargetOptionVisibility();
         updateRecurrenceOptionVisibility();
         Ui.setContent(this, scroll);
+    }
+
+    private void reloadChatReasoningChoices() {
+        chatReasoningValues = new ArrayList<>();
+        chatReasoningValues.add("keep");
+        for (String value : profileRegistry.chatReasonings()) if (!chatReasoningValues.contains(value)) chatReasoningValues.add(value);
+        String current = Schedule.normalizedChatReasoning(schedule.experience, schedule.chatReasoning);
+        if (!"keep".equals(current) && !chatReasoningValues.contains(current)) chatReasoningValues.add(current);
+        ArrayList<String> labels = new ArrayList<>();
+        for (String value : chatReasoningValues) labels.add("keep".equals(value)
+                ? "현재 Chat 설정 유지"
+                : labelForRegistration(value, profileRegistry.find(RequestProfileEngine.Mode.CHAT, "", value) != null));
+        chatReasoning.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels));
+        selectValue(chatReasoning, chatReasoningValues, current);
+    }
+
+    private void reloadWorkModelChoices() {
+        workModelValues = new ArrayList<>();
+        workModelValues.add("inherit");
+        for (String value : profileRegistry.workModels()) if (!workModelValues.contains(value)) workModelValues.add(value);
+        String current = Schedule.normalizedWorkModel(schedule.experience, schedule.workModel);
+        if (!"inherit".equals(current) && !workModelValues.contains(current)) workModelValues.add(current);
+        ArrayList<String> labels = new ArrayList<>();
+        for (String value : workModelValues) labels.add("inherit".equals(value)
+                ? "현재 설정 유지"
+                : labelForRegistration(value, !profileRegistry.workReasoningsForModel(value).isEmpty()));
+        workModel.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels));
+        selectValue(workModel, workModelValues, current);
+    }
+
+    private void reloadWorkReasoningChoices(String requested) {
+        if (reasoningEffort == null || workModel == null) return;
+        String model = selectedProfileValue(workModel, workModelValues);
+        workReasoningValues = new ArrayList<>();
+        workReasoningValues.add("inherit");
+        if (!"inherit".equals(model)) {
+            for (String value : profileRegistry.workReasoningsForModel(model)) {
+                if (!workReasoningValues.contains(value)) workReasoningValues.add(value);
+            }
+        }
+        String current = Schedule.normalizedReasoningEffort("work", requested);
+        if (!"inherit".equals(current) && !workReasoningValues.contains(current)) workReasoningValues.add(current);
+        ArrayList<String> labels = new ArrayList<>();
+        for (String value : workReasoningValues) {
+            boolean registered = "inherit".equals(value)
+                    || profileRegistry.find(RequestProfileEngine.Mode.WORK, model, value) != null;
+            labels.add("inherit".equals(value) ? "현재 설정 유지" : labelForRegistration(value, registered));
+        }
+        reasoningEffort.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels));
+        selectValue(reasoningEffort, workReasoningValues, current);
+    }
+
+    private String labelForRegistration(String value, boolean registered) {
+        return registered ? value : value + " · 등록되지 않음";
+    }
+
+    private static void selectValue(Spinner spinner, List<String> values, String value) {
+        spinner.setSelection(Math.max(0, values.indexOf(value)));
+    }
+
+    private static String selectedProfileValue(Spinner spinner, List<String> values) {
+        int index = spinner == null ? -1 : spinner.getSelectedItemPosition();
+        return index >= 0 && index < values.size() ? values.get(index) : "";
     }
 
     private void reloadProjectChoices() {
@@ -177,7 +237,10 @@ public final class ScheduleEditorActivity extends Activity {
             String currentId = TargetParser.projectId(schedule.targetUrl);
             boolean found = false;
             for (ProjectChoice choice : next) {
-                if (currentId != null && currentId.equals(TargetParser.projectId(choice.url))) { found = true; break; }
+                if (currentId != null && currentId.equals(TargetParser.projectId(choice.url))) {
+                    found = true;
+                    break;
+                }
             }
             if (!found) next.add(0, new ProjectChoice("현재 저장 프로젝트 · " + currentId, schedule.targetUrl));
         }
@@ -226,26 +289,15 @@ public final class ScheduleEditorActivity extends Activity {
         return "project".equals(targetType) || "existing".equals(targetType);
     }
 
-    static boolean usesManualTargetUrl(String targetType) {
-        return "existing".equals(targetType);
-    }
-
-    static boolean showsProjectSelection(String targetType) {
-        return "project".equals(targetType);
-    }
-
-    static boolean showsExperience(String targetType) {
-        return !"existing".equals(targetType);
-    }
-
+    static boolean usesManualTargetUrl(String targetType) { return "existing".equals(targetType); }
+    static boolean showsProjectSelection(String targetType) { return "project".equals(targetType); }
+    static boolean showsExperience(String targetType) { return !"existing".equals(targetType); }
     static boolean showsReasoningEffort(String targetType, String experience) {
         return showsExperience(targetType) && "work".equals(experience);
     }
-
     static boolean showsChatReasoning(String targetType, String experience) {
         return showsExperience(targetType) && "chat".equals(experience);
     }
-
     static boolean showsClockTimes(String recurrence) { return !"interval".equals(recurrence); }
     static boolean showsWeekdays(String recurrence) { return "weekly".equals(recurrence); }
     static boolean showsIntervalMinutes(String recurrence) { return "interval".equals(recurrence); }
@@ -253,8 +305,9 @@ public final class ScheduleEditorActivity extends Activity {
     static boolean isTargetValidForType(String targetType, String url) {
         if ("general".equals(targetType)) return true;
         if (!TargetParser.isSupported(url)) return false;
-        if ("project".equals(targetType))
+        if ("project".equals(targetType)) {
             return TargetParser.projectId(url) != null && TargetParser.conversationId(url) == null;
+        }
         if ("existing".equals(targetType)) return TargetParser.conversationId(url) != null;
         return false;
     }
@@ -266,14 +319,16 @@ public final class ScheduleEditorActivity extends Activity {
     }
 
     private String selected(Spinner spinner) {
-        return spinner == null || spinner.getSelectedItem() == null ? "" : String.valueOf(spinner.getSelectedItem());
+        return spinner == null || spinner.getSelectedItem() == null
+                ? "" : String.valueOf(spinner.getSelectedItem());
     }
 
-    static String reasoningEffortValue(String label) { return "울트라".equals(label) ? "ultra" : label; }
+    static String reasoningEffortValue(String label) {
+        return "현재 설정 유지".equals(label) ? "inherit" : label;
+    }
 
     static String chatReasoningValue(String label) {
-        int index = Arrays.asList(CHAT_REASONING_LABELS).indexOf(label);
-        return index >= 0 ? CHAT_REASONING_VALUES[index] : "keep";
+        return "현재 Chat 설정 유지".equals(label) ? "keep" : label;
     }
 
     private EditText edit(LinearLayout root, String label, String value, boolean multiline) {
@@ -293,16 +348,6 @@ public final class ScheduleEditorActivity extends Activity {
         Spinner spinner = new Spinner(this);
         spinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, values));
         spinner.setSelection(Math.max(0, Arrays.asList(values).indexOf(selected)));
-        root.addView(spinner);
-        return spinner;
-    }
-
-    private Spinner mappedSpinner(LinearLayout root, String label, String[] values,
-                                  String[] labels, String selectedValue) {
-        root.addView(Ui.body(this, label));
-        Spinner spinner = new Spinner(this);
-        spinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels));
-        spinner.setSelection(Math.max(0, Arrays.asList(values).indexOf(selectedValue)));
         root.addView(spinner);
         return spinner;
     }
@@ -347,21 +392,24 @@ public final class ScheduleEditorActivity extends Activity {
                 toast("분 간격을 숫자로 입력하세요.");
                 return;
             }
-            if (parsedInterval < Schedule.MIN_INTERVAL_MINUTES || parsedInterval > Schedule.MAX_INTERVAL_MINUTES) {
+            if (parsedInterval < Schedule.MIN_INTERVAL_MINUTES
+                    || parsedInterval > Schedule.MAX_INTERVAL_MINUTES) {
                 toast("분 간격은 15∼10080 사이로 입력하세요.");
                 return;
             }
         }
 
-        schedule.name = name.getText().toString().trim().isEmpty() ? "예약" : name.getText().toString().trim();
+        schedule.name = name.getText().toString().trim().isEmpty()
+                ? "예약" : name.getText().toString().trim();
         schedule.targetType = type;
         schedule.targetUrl = url;
         schedule.experience = Schedule.normalizedExperience(type, selected(experience));
-        schedule.workModel = Schedule.normalizedWorkModel(schedule.experience, selected(workModel));
+        schedule.workModel = Schedule.normalizedWorkModel(
+                schedule.experience, selectedProfileValue(workModel, workModelValues));
         schedule.reasoningEffort = Schedule.normalizedReasoningEffort(
-                schedule.experience, reasoningEffortValue(selected(reasoningEffort)));
+                schedule.experience, selectedProfileValue(reasoningEffort, workReasoningValues));
         schedule.chatReasoning = Schedule.normalizedChatReasoning(
-                schedule.experience, chatReasoningValue(selected(chatReasoning)));
+                schedule.experience, selectedProfileValue(chatReasoning, chatReasoningValues));
         schedule.prompt = prompt.getText().toString();
         schedule.recurrence = recurrenceValue;
         schedule.intervalMinutes = Schedule.normalizedIntervalMinutes(parsedInterval);
@@ -379,9 +427,14 @@ public final class ScheduleEditorActivity extends Activity {
         } else {
             schedule.weekdays.addAll(Arrays.asList(1, 2, 3, 4, 5, 6, 7));
         }
-        try { schedule.retryCount = Math.max(0, Math.min(5, Integer.parseInt(retryCount.getText().toString().trim()))); }
-        catch (NumberFormatException ignored) { schedule.retryCount = 2; }
+        try {
+            schedule.retryCount = Math.max(0, Math.min(5,
+                    Integer.parseInt(retryCount.getText().toString().trim())));
+        } catch (NumberFormatException ignored) {
+            schedule.retryCount = 2;
+        }
         schedule.enabled = enabled.isChecked();
+        profileRegistry.attach(schedule);
         store.saveSchedule(schedule);
         AlarmEngine.cancel(this, schedule.id);
         if (schedule.enabled) AlarmEngine.scheduleNext(this, schedule, System.currentTimeMillis());
@@ -393,7 +446,9 @@ public final class ScheduleEditorActivity extends Activity {
         List<String> values = new ArrayList<>();
         for (String part : raw.split("[,\\s]+")) {
             String value = part.trim();
-            if (value.matches("(?:[01]\\d|2[0-3]):[0-5]\\d") && !values.contains(value)) values.add(value);
+            if (value.matches("(?:[01]\\d|2[0-3]):[0-5]\\d") && !values.contains(value)) {
+                values.add(value);
+            }
         }
         values.sort(String::compareTo);
         return values;
@@ -419,7 +474,9 @@ public final class ScheduleEditorActivity extends Activity {
         return builder.toString();
     }
 
-    private void toast(String message) { Toast.makeText(this, message, Toast.LENGTH_LONG).show(); }
+    private void toast(String message) {
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+    }
 
     private static final class ProjectChoice {
         final String label;
