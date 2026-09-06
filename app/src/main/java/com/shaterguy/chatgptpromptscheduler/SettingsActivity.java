@@ -32,6 +32,7 @@ public final class SettingsActivity extends Activity {
     private EditText timeout;
     private TextView profileStatus;
     private TextView projectStatus;
+    private RequestProfileCaptureDialog captureDialog;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -40,6 +41,27 @@ public final class SettingsActivity extends Activity {
         profileRegistry = new RequestProfileRegistry(this);
         projectCatalog = new ProjectCatalog(this);
         buildUi();
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if (profileStatus != null) profileStatus.setText(profileStatusText());
+    }
+
+    @Override protected void onPause() {
+        if (captureDialog != null) {
+            captureDialog.dismiss();
+            captureDialog = null;
+        }
+        super.onPause();
+    }
+
+    private void startCapture(RequestProfileEngine.Mode mode) {
+        if (captureDialog != null) captureDialog.dismiss();
+        captureDialog = new RequestProfileCaptureDialog(this, mode, () -> {
+            if (profileStatus != null) profileStatus.setText(profileStatusText());
+        });
+        captureDialog.show();
     }
 
     private void buildUi() {
@@ -53,7 +75,10 @@ public final class SettingsActivity extends Activity {
 
         root.addView(Ui.section(this, "모델 · 추론 프로필"));
         root.addView(Ui.body(this,
-                "SelfRun 프로필 JSON을 모드별로 가져옵니다. 기존 조합은 갱신되고 새 조합은 예약 편집에 바로 추가됩니다."));
+                "ChatGPT에서 원하는 모델·추론 조합을 직접 캡처하거나 SelfRun 프로필 JSON을 모드별로 가져옵니다. 등록한 조합은 예약 편집에 바로 추가됩니다."));
+        root.addView(Ui.actionGrid(this,
+                Ui.button(this, "일반 Chat 모델·추론 캡처", v -> startCapture(RequestProfileEngine.Mode.CHAT)),
+                Ui.button(this, "Work 모델·추론 캡처", v -> startCapture(RequestProfileEngine.Mode.WORK))));
         root.addView(Ui.actionGrid(this,
                 Ui.button(this, "일반 Chat 설정파일 가져오기", v -> pickProfile(REQUEST_CHAT_PROFILE)),
                 Ui.button(this, "Work 설정파일 가져오기", v -> pickProfile(REQUEST_WORK_PROFILE))));
