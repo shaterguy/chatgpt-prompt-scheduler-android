@@ -63,12 +63,12 @@ public final class RequestProfileVersionContractTest {
         assertFalse(inherited.contains("__chatgptPromptSchedulerRequestProfileEngine"));
     }
 
-    @Test public void dependencyDevIdentityAndDevWorkflowStayPinnedAndAttemptSpecific() throws Exception {
+    @Test public void dependencyStableIdentityAndDevWorkflowStayPinnedAndAttemptSpecific() throws Exception {
         String gradle = source("app/build.gradle");
         assertEquals(1, occurrences(gradle, "androidx.webkit:webkit:1.17.0"));
-        assertTrue(gradle.contains("applicationId 'com.shaterguy.chatgptpromptscheduler.dev'"));
-        assertTrue(gradle.contains("versionCode 5000002"));
-        assertTrue(gradle.contains("versionName '0.5.0-dev2'"));
+        assertTrue(gradle.contains("applicationId 'com.shaterguy.chatgptpromptscheduler'"));
+        assertTrue(gradle.contains("versionCode 2100000005"));
+        assertTrue(gradle.contains("versionName '0.5.0'"));
 
         String workflow = source(".github/workflows/android-dev.yml");
         assertTrue(workflow.contains("DEV_VERSION_CODE: '5000002'"));
