@@ -27,18 +27,18 @@ public final class ProjectDirectoryNavigationWebViewAndroidTest {
     private static final String TARGET_PROJECT = "g-p-6a507cce80cc81919eeb9ba553b6ad9e";
     private static final String OTHER_PROJECT = "g-p-7a507cce80cc81919eeb9ba553b6ad9e";
 
-    @Test public void clicksCapturedSelectableProjectRowAndUsesSameDocumentRoute() throws Exception {
+    @Test public void selectsCapturedProjectRowAndInvokesItsClickMethod() throws Exception {
         Scenario result = runScenario("💾 Vibe Coding", 0);
         assertEquals("PROJECT_ROW_CLICKED", result.result.getString("status"));
-        assertEquals("/g/" + TARGET_PROJECT + "-vibe-coding/project", result.pathname);
         assertEquals("target", result.clicked);
+        assertEquals("/projects", result.pathname);
     }
 
-    @Test public void missingProjectWaitsWithoutDirectProjectNavigation() throws Exception {
+    @Test public void missingProjectWaitsWithoutClickingAnotherRow() throws Exception {
         Scenario result = runScenario("없는 프로젝트", 0);
         assertEquals("RETRY", result.result.getString("status"));
-        assertEquals("/projects", result.pathname);
         assertEquals("", result.clicked);
+        assertEquals("/projects", result.pathname);
     }
 
     @SuppressWarnings("SetJavaScriptEnabled")
@@ -50,13 +50,11 @@ public final class ProjectDirectoryNavigationWebViewAndroidTest {
         AtomicReference<String> clicked = new AtomicReference<>();
         AtomicReference<HeadlessWebViewHost> hostRef = new AtomicReference<>();
         String script = ProjectDirectoryNavigationScript.build(projectName, candidateIndex);
-        String installRouteListeners = "(()=>{" +
+        String installClickSpies = "(()=>{" +
                 "history.replaceState({},'', '/projects');" +
-                "for(const row of document.querySelectorAll('[role=\\\"row\\\"][data-page-table-selectable-row=\\\"true\\\"]')){" +
-                "row.addEventListener('click',()=>{" +
-                "window.__clicked=row.dataset.marker||'';" +
-                "history.pushState({},'',row.dataset.route||'/projects');" +
-                "});}" +
+                "for(const row of document.querySelectorAll('[data-marker]')){" +
+                "row.click=function(){window.__clicked=this.dataset.marker||'';};" +
+                "}" +
                 "return location.pathname;" +
                 "})()";
 
@@ -69,7 +67,7 @@ public final class ProjectDirectoryNavigationWebViewAndroidTest {
             settings.setDomStorageEnabled(true);
             webView.setWebViewClient(new WebViewClient() {
                 @Override public void onPageFinished(WebView view, String url) {
-                    view.evaluateJavascript(installRouteListeners, ignored ->
+                    view.evaluateJavascript(installClickSpies, ignored ->
                             view.evaluateJavascript(script, raw -> {
                                 rawResult.set(raw);
                                 view.evaluateJavascript("location.pathname", pathRaw -> {
@@ -90,7 +88,7 @@ public final class ProjectDirectoryNavigationWebViewAndroidTest {
                     html, "text/html", "UTF-8", "https://chatgpt.com/projects");
         });
 
-        assertTrue("project directory SPA scenario timed out", done.await(12, TimeUnit.SECONDS));
+        assertTrue("project directory row-selection scenario timed out", done.await(12, TimeUnit.SECONDS));
         InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
             HeadlessWebViewHost host = hostRef.get();
             if (host != null) host.destroy();
