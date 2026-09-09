@@ -12,10 +12,10 @@ permissions:
 
 env:
   DEV_PACKAGE: com.shaterguy.chatgptpromptscheduler.dev
-  DEV_VERSION_CODE: '4000001'
-  DEV_VERSION_NAME: 0.4.0-dev1
+  DEV_VERSION_CODE: '5000002'
+  DEV_VERSION_NAME: 0.5.0-dev2
   DEV_APP_LABEL: ChatGPT Prompt Scheduler DEV
-  DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.4.0-dev1-unsigned.apk
+  DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.5.0-dev2-unsigned.apk
 
 concurrency:
   group: chatgpt-prompt-scheduler-dev-${{ github.ref }}
@@ -40,6 +40,28 @@ jobs:
         with:
           gradle-version: '9.5.0'
           cache-read-only: true
+      - name: Compile tests and build unsigned DEV candidate before emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --console=plain --stacktrace :app:testDebugUnitTest :app:assembleRelease :app:assembleDebug :app:assembleDebugAndroidTest
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          UNSIGNED="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*unsigned.apk' -print -quit)"
+          test -s "$UNSIGNED"
+          BADGING="$($BT/aapt dump badging "$UNSIGNED")"
+          grep -Fq "package: name='$DEV_PACKAGE'" <<<"$BADGING"
+          grep -Fq "versionCode='$DEV_VERSION_CODE'" <<<"$BADGING"
+          grep -Fq "versionName='$DEV_VERSION_NAME'" <<<"$BADGING"
+          grep -Fq "application-label:'$DEV_APP_LABEL'" <<<"$BADGING"
+          unzip -t "$UNSIGNED" >/dev/null
+          rm -rf dev-unsigned
+          mkdir -p dev-unsigned
+          cp "$UNSIGNED" "dev-unsigned/$DEV_UNSIGNED_NAME"
+          (
+            cd dev-unsigned
+            sha256sum "$DEV_UNSIGNED_NAME" > UNSIGNED_SHA256SUMS.txt
+            printf '%s\n' "$GITHUB_SHA" > SOURCE_COMMIT.txt
+          )
       - name: Enable hardware acceleration
         shell: bash
         run: |
@@ -59,28 +81,6 @@ jobs:
             -camera-back none -camera-front none -memory 2048
           disable-animations: true
           script: gradle --no-daemon --console=plain --stacktrace :app:connectedDebugAndroidTest
-      - name: Test and build unsigned DEV candidate
-        shell: bash
-        run: |
-          set -euo pipefail
-          gradle --no-daemon --console=plain --stacktrace :app:testDebugUnitTest :app:assembleRelease
-          BT="$ANDROID_HOME/build-tools/36.0.0"
-          UNSIGNED="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*unsigned.apk' -print -quit)"
-          test -s "$UNSIGNED"
-          BADGING="$($BT/aapt dump badging "$UNSIGNED")"
-          grep -Fq "package: name='$DEV_PACKAGE'" <<<"$BADGING"
-          grep -Fq "versionCode='$DEV_VERSION_CODE'" <<<"$BADGING"
-          grep -Fq "versionName='$DEV_VERSION_NAME'" <<<"$BADGING"
-          grep -Fq "application-label:'$DEV_APP_LABEL'" <<<"$BADGING"
-          unzip -t "$UNSIGNED" >/dev/null
-          rm -rf dev-unsigned
-          mkdir -p dev-unsigned
-          cp "$UNSIGNED" "dev-unsigned/$DEV_UNSIGNED_NAME"
-          (
-            cd dev-unsigned
-            sha256sum "$DEV_UNSIGNED_NAME" > UNSIGNED_SHA256SUMS.txt
-            printf '%s\n' "$GITHUB_SHA" > SOURCE_COMMIT.txt
-          )
       - name: Upload unsigned DEV build input
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

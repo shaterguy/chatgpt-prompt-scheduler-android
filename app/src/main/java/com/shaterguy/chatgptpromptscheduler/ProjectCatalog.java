@@ -63,9 +63,14 @@ final class ProjectCatalog {
         return count;
     }
 
+    String recordedDisplayName(ProjectUrlPolicy.ProjectRef ref) {
+        if (ref == null) return "";
+        return normalizeDisplayName(prefs.getString(nameKey(ref.projectId), ""));
+    }
+
     String displayName(ProjectUrlPolicy.ProjectRef ref) {
         if (ref == null) return "프로젝트";
-        String stored = normalizeDisplayName(prefs.getString(nameKey(ref.projectId), ""));
+        String stored = recordedDisplayName(ref);
         return stored.isEmpty() ? fallbackDisplayName(ref.projectId) : stored;
     }
 

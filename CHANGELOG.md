@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0 — 2026-09-09
+
+- 검증된 `v0.5.0-dev2` 기능 상태를 기존 정식 앱 계보의 `0.5.0`으로 승격
+- 일반 Chat·Work에서 실제 outgoing request의 `model`, `thinking_effort`, `conversation_origin`, `service_tier` 제어값을 1회 캡처해 예약용 프로필로 등록하는 흐름 추가
+- 없는 제어 필드는 `REMOVE`로 보존하고 프롬프트·대화 식별자·헤더·쿠키는 캡처 프로필에 저장하지 않도록 제한
+- 프로젝트 예약 실행을 `/projects` 목록의 실제 선택 행 클릭 방식으로 전환하고 저장된 표시명·동명 후보 순서·canonical 프로젝트 URL을 기준으로 대상 확인
+- 대상 프로젝트가 없거나 목록이 준비되지 않은 경우 다른 프로젝트를 임의 선택하지 않고 재시도하는 fail-closed 동작 유지
+- 기존 예약 실행 엔진·알람·대기열·Schedule JSON 스키마와 Android 권한·의존성·외부 네트워크 경계를 변경하지 않음
+- `v0.5.0-dev2` SHA `4c2a3179fe317a89f9a009e0968cd7e33b4e15a0`의 DEV run `34300493672`에서 단위 테스트, release/debug/androidTest 빌드와 Android API 36 WebView 회귀 테스트 통과
+- 정식 Application ID와 공개 서명 계보를 유지하고 `versionCode 2100000005`로 최신 정식 `v0.4.0`에서의 업데이트 경로를 검증하도록 릴리스 구성
+
 ## 0.4.0 — 2026-08-30
 
 - 검증된 `v0.4.0-dev1` 기능 상태를 기존 정식 앱 계보의 `0.4.0`으로 승격
