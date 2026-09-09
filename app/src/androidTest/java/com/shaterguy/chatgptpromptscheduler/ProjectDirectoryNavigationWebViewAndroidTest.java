@@ -50,6 +50,15 @@ public final class ProjectDirectoryNavigationWebViewAndroidTest {
         AtomicReference<String> clicked = new AtomicReference<>();
         AtomicReference<HeadlessWebViewHost> hostRef = new AtomicReference<>();
         String script = ProjectDirectoryNavigationScript.build(projectName, candidateIndex);
+        String installRouteListeners = "(()=>{" +
+                "history.replaceState({},'', '/projects');" +
+                "for(const row of document.querySelectorAll('[role=\\\"row\\\"][data-page-table-selectable-row=\\\"true\\\"]')){" +
+                "row.addEventListener('click',()=>{" +
+                "window.__clicked=row.dataset.marker||'';" +
+                "history.pushState({},'',row.dataset.route||'/projects');" +
+                "});}" +
+                "return location.pathname;" +
+                "})()";
 
         InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
             HeadlessWebViewHost host = HeadlessWebViewHost.create(context);
@@ -60,7 +69,7 @@ public final class ProjectDirectoryNavigationWebViewAndroidTest {
             settings.setDomStorageEnabled(true);
             webView.setWebViewClient(new WebViewClient() {
                 @Override public void onPageFinished(WebView view, String url) {
-                    view.evaluateJavascript("history.replaceState({},'', '/projects')", ignored ->
+                    view.evaluateJavascript(installRouteListeners, ignored ->
                             view.evaluateJavascript(script, raw -> {
                                 rawResult.set(raw);
                                 view.evaluateJavascript("location.pathname", pathRaw -> {
@@ -95,7 +104,7 @@ public final class ProjectDirectoryNavigationWebViewAndroidTest {
 
     private static String row(String name, String projectSegment, String marker) {
         return "<div role='row' tabindex='0' data-page-table-selectable-row='true' style='display:block' "
-                + "onclick=\"window.__clicked='" + marker + "';history.pushState({},'', '/g/" + projectSegment + "/project')\">"
+                + "data-marker='" + marker + "' data-route='/g/" + projectSegment + "/project'>"
                 + "<div role='gridcell'><div data-testid='project-folder-icon'></div><div>" + name + "</div></div>"
                 + "<button aria-label='" + name + " project options'>options</button></div>";
     }
