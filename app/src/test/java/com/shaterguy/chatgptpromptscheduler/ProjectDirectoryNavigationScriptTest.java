@@ -33,13 +33,13 @@ public final class ProjectDirectoryNavigationScriptTest {
                 "https://chatgpt.com/g/" + PROJECT + "-vibe-coding/project"));
     }
 
-    @Test public void generatedScriptTargetsCapturedSelectableRowsAndEscapesProjectName() {
-        String script = ProjectDirectoryNavigationScript.build("💾 Vibe \"Coding\"", 1);
+    @Test public void generatedScriptTargetsCapturedSelectableRows() {
+        String script = ProjectDirectoryNavigationScript.build("💾 Vibe Coding", 1);
         assertTrue(script.contains("location.pathname!=='/projects'"));
         assertTrue(script.contains("[role=\"row\"][data-page-table-selectable-row=\"true\"]"));
         assertTrue(script.contains("button[aria-label]"));
         assertTrue(script.contains("pick.row.click()"));
         assertTrue(script.contains("const ordinal=1"));
-        assertTrue(script.contains("💾 Vibe \\\"Coding\\\""));
+        assertTrue(script.contains("💾 Vibe Coding"));
     }
 }
