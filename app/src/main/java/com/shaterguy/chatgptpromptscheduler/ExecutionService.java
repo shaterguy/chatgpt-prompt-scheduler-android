@@ -44,6 +44,7 @@ public final class ExecutionService extends Service {
     private QueueStore queueStore;
     private ConfigStore configStore;
     private RunLogStore logStore;
+    private ProjectCatalog projectCatalog;
     private HeadlessWebViewHost webViewHost;
     private WebView webView;
     private PowerManager.WakeLock wakeLock;
@@ -57,9 +58,11 @@ public final class ExecutionService extends Service {
     private int routeRecoveryAttempts;
     private int navigationGeneration;
     private int traceDropped;
+    private int projectCandidateIndex;
     private boolean submitted;
     private boolean stepInFlight;
     private String stampedPrompt;
+    private String projectDisplayName = "";
     private String lastObservedUrl = "";
     private String lastRetryDetail = "";
     private JSONArray traceEvents = new JSONArray();
@@ -70,6 +73,7 @@ public final class ExecutionService extends Service {
         queueStore = new QueueStore(this);
         configStore = new ConfigStore(this);
         logStore = new RunLogStore(this);
+        projectCatalog = new ProjectCatalog(this);
         queueStore.recoverRunning();
         NotificationHelper.ensureChannels(this);
     }
@@ -95,6 +99,8 @@ public final class ExecutionService extends Service {
     private void processNext() {
         cleanupEngine();
         currentRequestProfile = null;
+        projectDisplayName = "";
+        projectCandidateIndex = 0;
         try {
             currentItem = queueStore.claimNext();
         } catch (RuntimeException error) {
@@ -127,6 +133,21 @@ public final class ExecutionService extends Service {
         if (!TargetParser.isSupported(currentSchedule.targetUrl)) {
             finish(false, "TARGET_URL_INVALID", "지원하지 않는 ChatGPT URL입니다.");
             return;
+        }
+        if ("project".equals(currentSchedule.targetType)) {
+            ProjectUrlPolicy.ProjectRef projectRef = ProjectUrlPolicy.parseProject(currentSchedule.targetUrl);
+            if (projectRef == null) {
+                finish(false, "TARGET_URL_INVALID", "지원하지 않는 프로젝트 URL입니다.");
+                return;
+            }
+            projectDisplayName = projectCatalog.recordedDisplayName(projectRef);
+            if (projectDisplayName.isBlank()) {
+                finish(false, "PROJECT_NAME_UNAVAILABLE",
+                        "프로젝트 목록에서 대상을 클릭하려면 저장된 프로젝트 이름이 필요합니다. 로그인 화면에서 해당 프로젝트를 한 번 열어 등록해 주세요.");
+                return;
+            }
+            trace("PROJECT_ROUTE_PREPARED", object("projectId", projectRef.projectId,
+                    "projectDisplayName", projectDisplayName, "entryUrl", ProjectDirectoryNavigationScript.DIRECTORY_URL));
         }
         try {
             currentRequestProfile = RequestProfileEngine.forSchedule(currentSchedule);
@@ -279,7 +300,9 @@ public final class ExecutionService extends Service {
                     return true;
                 }
             });
-            webView.loadUrl(currentSchedule.targetUrl);
+            String entryUrl = ProjectDirectoryNavigationScript.entryUrl(currentSchedule);
+            trace("ENGINE_ENTRY", object("url", entryUrl, "projectDirectory", "project".equals(currentSchedule.targetType)));
+            webView.loadUrl(entryUrl);
             handler.removeCallbacks(watchdogRunnable);
             handler.postDelayed(watchdogRunnable, 10_000L);
         } catch (Throwable error) {
@@ -324,13 +347,18 @@ public final class ExecutionService extends Service {
         }
         WebView activeWebView = webView;
         int generation = navigationGeneration;
+        boolean projectDirectoryStep = !submitted
+                && ProjectDirectoryNavigationScript.needsDirectoryStep(currentSchedule, lastObservedUrl);
         stepInFlight = true;
-        trace("SCRIPT_EVALUATE", object("phase", submitted ? "verify" : "compose", "pageAttempts", pageAttempts,
-                "generation", generation, "url", lastObservedUrl, "windowAttached", activeWebView.isAttachedToWindow(),
-                "viewFocused", activeWebView.isFocused(), "windowFocused", activeWebView.hasWindowFocus()));
-        String script = submitted
+        trace("SCRIPT_EVALUATE", object("phase", projectDirectoryStep ? "project-directory" : (submitted ? "verify" : "compose"),
+                "pageAttempts", pageAttempts, "generation", generation, "url", lastObservedUrl,
+                "windowAttached", activeWebView.isAttachedToWindow(), "viewFocused", activeWebView.isFocused(),
+                "windowFocused", activeWebView.hasWindowFocus()));
+        String script = projectDirectoryStep
+                ? ProjectDirectoryNavigationScript.build(projectDisplayName, projectCandidateIndex)
+                : (submitted
                 ? AutomationScript.verify(currentSchedule, stampedPrompt)
-                : AutomationScript.build(currentSchedule, stampedPrompt, currentItem.optString("runId"), pageAttempts);
+                : AutomationScript.build(currentSchedule, stampedPrompt, currentItem.optString("runId"), pageAttempts));
         activeWebView.evaluateJavascript(script, raw -> {
             stepInFlight = false;
             if (currentItem == null || activeWebView != webView || generation != navigationGeneration) {
@@ -338,8 +366,39 @@ public final class ExecutionService extends Service {
                         "currentGeneration", navigationGeneration));
                 return;
             }
-            if (submitted) handleVerification(raw); else handleAutomationResult(raw);
+            if (projectDirectoryStep) handleProjectDirectoryResult(raw);
+            else if (submitted) handleVerification(raw);
+            else handleAutomationResult(raw);
         });
+    }
+
+    private void handleProjectDirectoryResult(String raw) {
+        JSONObject result = parseObject(raw);
+        String status = result.optString("status", "SCRIPT_RESULT_INVALID");
+        String detail = result.optString("detail", "");
+        String resultUrl = result.optString("url", "");
+        if (!resultUrl.isBlank()) lastObservedUrl = resultUrl;
+        trace("PROJECT_DIRECTORY_RESULT", object("status", status, "detail", detail, "url", resultUrl,
+                "candidateIndex", projectCandidateIndex, "diagnostics", result.optJSONObject("diagnostics"),
+                "raw", clip(raw, 12_000)));
+        switch (status) {
+            case "PROJECT_ROW_CLICKED" -> {
+                pageAttempts = 0;
+                lastRetryDetail = detail;
+                scheduleAutomationStep(1800L);
+            }
+            case "RETRY" -> {
+                pageAttempts++;
+                lastRetryDetail = detail;
+                if (pageAttempts > 24) finish(false, "PROJECT_ROW_NOT_FOUND", contextualDetail(detail));
+                else scheduleAutomationStep(1000L);
+            }
+            case "NAVIGATE_DIRECTORY" -> returnToProjectDirectory(detail);
+            case "AUTH_REQUIRED", "PROJECT_NOT_FOUND", "TARGET_CONTEXT_MISMATCH" ->
+                    finish(false, status, contextualDetail(detail));
+            default -> finish(false, status,
+                    contextualDetail(detail.isBlank() ? "프로젝트 목록 탐색 스크립트가 실패했습니다." : detail));
+        }
     }
 
     private void handleAutomationResult(String raw) {
@@ -395,6 +454,10 @@ public final class ExecutionService extends Service {
         lastRetryDetail = detail;
         trace("TARGET_ROUTE_MISMATCH", object("detail", detail, "attempt", routeRecoveryAttempts,
                 "requested", currentSchedule == null ? "" : currentSchedule.targetUrl, "actual", lastObservedUrl));
+        if (currentSchedule != null && "project".equals(currentSchedule.targetType)) {
+            returnToProjectDirectory(detail);
+            return;
+        }
         if (routeRecoveryAttempts >= MAX_ROUTE_RECOVERIES || System.currentTimeMillis() >= deadline) {
             finish(false, "TARGET_ROUTE_RECOVERY_FAILED", contextualDetail(detail));
             return;
@@ -408,6 +471,31 @@ public final class ExecutionService extends Service {
         if (webView != null) {
             webView.stopLoading();
             webView.loadUrl(currentSchedule.targetUrl);
+        }
+    }
+
+    private void returnToProjectDirectory(String detail) {
+        if (routeRecoveryAttempts >= MAX_ROUTE_RECOVERIES || System.currentTimeMillis() >= deadline) {
+            finish(false, "TARGET_ROUTE_RECOVERY_FAILED", contextualDetail(detail));
+            return;
+        }
+        String expectedProject = currentSchedule == null ? null : TargetParser.projectId(currentSchedule.targetUrl);
+        String actualProject = TargetParser.projectId(lastObservedUrl);
+        if (actualProject != null && expectedProject != null && !expectedProject.equals(actualProject)) {
+            projectCandidateIndex++;
+        }
+        routeRecoveryAttempts++;
+        pageAttempts = 0;
+        startAsForeground(currentSchedule.name + " 프로젝트 목록 복구 중 " + routeRecoveryAttempts + "/" + MAX_ROUTE_RECOVERIES);
+        trace("PROJECT_DIRECTORY_RECOVERY", object("detail", detail, "attempt", routeRecoveryAttempts,
+                "candidateIndex", projectCandidateIndex, "expectedProject", expectedProject,
+                "actualProject", actualProject, "url", ProjectDirectoryNavigationScript.DIRECTORY_URL));
+        cancelAutomationStep();
+        stepInFlight = false;
+        navigationGeneration++;
+        if (webView != null) {
+            webView.stopLoading();
+            webView.loadUrl(ProjectDirectoryNavigationScript.DIRECTORY_URL);
         }
     }
 
@@ -494,6 +582,8 @@ public final class ExecutionService extends Service {
         currentItem = null;
         currentSchedule = null;
         currentRequestProfile = null;
+        projectDisplayName = "";
+        projectCandidateIndex = 0;
         handler.postDelayed(this::processNext, 250L);
     }
 
