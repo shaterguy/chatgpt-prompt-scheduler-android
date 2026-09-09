@@ -60,24 +60,25 @@ public final class ProjectDirectoryNavigationWebViewAndroidTest {
             settings.setDomStorageEnabled(true);
             webView.setWebViewClient(new WebViewClient() {
                 @Override public void onPageFinished(WebView view, String url) {
-                    view.evaluateJavascript(script, raw -> {
-                        rawResult.set(raw);
-                        view.evaluateJavascript("location.pathname", pathRaw -> {
-                            pathname.set(decodeJsString(pathRaw));
-                            view.evaluateJavascript("window.__clicked||''", clickedRaw -> {
-                                clicked.set(decodeJsString(clickedRaw));
-                                done.countDown();
-                            });
-                        });
-                    });
+                    view.evaluateJavascript("history.replaceState({},'', '/projects')", ignored ->
+                            view.evaluateJavascript(script, raw -> {
+                                rawResult.set(raw);
+                                view.evaluateJavascript("location.pathname", pathRaw -> {
+                                    pathname.set(decodeJsString(pathRaw));
+                                    view.evaluateJavascript("window.__clicked||''", clickedRaw -> {
+                                        clicked.set(decodeJsString(clickedRaw));
+                                        done.countDown();
+                                    });
+                                });
+                            }));
                 }
             });
             String html = "<!doctype html><html><body>"
                     + row("🎥 Other Project", OTHER_PROJECT + "-other-project", "other")
                     + row("💾 Vibe Coding", TARGET_PROJECT + "-vibe-coding", "target")
                     + "</body></html>";
-            webView.loadDataWithBaseURL(ProjectDirectoryNavigationScript.DIRECTORY_URL,
-                    html, "text/html", "UTF-8", null);
+            webView.loadDataWithBaseURL("https://chatgpt.com/",
+                    html, "text/html", "UTF-8", "https://chatgpt.com/projects");
         });
 
         assertTrue("project directory SPA scenario timed out", done.await(12, TimeUnit.SECONDS));
