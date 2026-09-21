@@ -57,6 +57,25 @@ public final class TargetParser {
         };
     }
 
+    public static boolean matchesVerifiedConversation(String targetType, String expectedUrl, String actualUrl) {
+        if (!isSupported(expectedUrl) || !isSupported(actualUrl)) return false;
+        String expectedProject = projectId(expectedUrl);
+        String expectedConversation = conversationId(expectedUrl);
+        String actualProject = projectId(actualUrl);
+        String actualConversation = conversationId(actualUrl);
+
+        return switch (targetType) {
+            case "existing" -> expectedConversation != null
+                    && expectedConversation.equals(actualConversation)
+                    && (expectedProject == null ? actualProject == null : expectedProject.equals(actualProject));
+            case "project" -> expectedProject != null
+                    && expectedProject.equals(actualProject)
+                    && actualConversation != null;
+            case "general" -> actualProject == null && actualConversation != null;
+            default -> false;
+        };
+    }
+
     public static String mismatchDetail(String targetType, String expectedUrl, String actualUrl) {
         return "type=" + targetType + " expected=" + expectedUrl + " actual=" + (actualUrl == null ? "" : actualUrl);
     }

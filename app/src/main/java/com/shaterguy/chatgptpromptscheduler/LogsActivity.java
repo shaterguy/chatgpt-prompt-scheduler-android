@@ -71,6 +71,8 @@ public final class LogsActivity extends Activity {
             card.addView(Ui.body(this, "Run ID: " + item.optString("runId", "")));
             card.addView(Ui.body(this, item.optString("detail", "")));
             card.addView(Ui.body(this, item.optString("targetUrl", "")));
+            String conversationUrl = item.optString("conversationUrl", "");
+            if (!conversationUrl.isBlank()) card.addView(Ui.body(this, "대화 주소: " + conversationUrl));
             JSONArray events = item.optJSONArray("events");
             card.addView(Ui.body(this, "진단 이벤트: " + (events == null ? 0 : events.length()) + "개"));
             if (!item.optBoolean("success", "VERIFIED".equals(status))) {
