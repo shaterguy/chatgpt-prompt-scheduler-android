@@ -15,12 +15,16 @@ public final class ConversationVerificationContractTest {
         assertTrue(TargetParser.matchesVerifiedConversation("project", projectTarget,
                 "https://chatgpt.com/g/" + PROJECT + "-vibe-coding/c/conversation_1"));
         assertFalse(TargetParser.matchesVerifiedConversation("project", projectTarget,
+                "https://chatgpt.com/g/" + PROJECT + "-vibe-coding/c/WEB:12345678-1234-1234-1234-123456789abc"));
+        assertFalse(TargetParser.matchesVerifiedConversation("project", projectTarget,
                 "https://chatgpt.com/g/" + OTHER_PROJECT + "/c/conversation_1"));
 
         String generalTarget = "https://chatgpt.com/";
         assertFalse(TargetParser.matchesVerifiedConversation("general", generalTarget, generalTarget));
         assertTrue(TargetParser.matchesVerifiedConversation("general", generalTarget,
                 "https://chatgpt.com/c/general_conversation"));
+        assertFalse(TargetParser.matchesVerifiedConversation("general", generalTarget,
+                "https://chatgpt.com/c/WEB:12345678-1234-1234-1234-123456789abc"));
         assertFalse(TargetParser.matchesVerifiedConversation("general", generalTarget,
                 "https://chatgpt.com/g/" + PROJECT + "/c/general_conversation"));
     }
@@ -41,7 +45,8 @@ public final class ConversationVerificationContractTest {
         project.targetUrl = "https://chatgpt.com/g/" + PROJECT + "/project";
         String projectScript = ConversationVerificationScript.build(project, "prompt");
         assertTrue(projectScript.contains("return result('RETRY','실제 대화 주소 생성 대기'"));
-        assertTrue(projectScript.contains("if(!actualConversation)return result('RETRY'"));
+        assertTrue(projectScript.contains("if(!persistentConversation)return result('RETRY'"));
+        assertTrue(projectScript.contains("!/^WEB:/i.test(actualConversation)"));
 
         Schedule general = new Schedule();
         general.targetType = "general";

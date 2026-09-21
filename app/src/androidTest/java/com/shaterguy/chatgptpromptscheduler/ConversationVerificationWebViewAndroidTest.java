@@ -36,6 +36,14 @@ public final class ConversationVerificationWebViewAndroidTest {
         assertEquals("실제 대화 주소 생성 대기", result.getString("detail"));
     }
 
+    @Test public void projectWebTemporaryConversationWaitsForPersistentAddress() throws Exception {
+        Schedule schedule = projectSchedule();
+        String url = "https://chatgpt.com/g/" + PROJECT + "-vibe-coding/c/WEB:12345678-1234-1234-1234-123456789abc";
+        JSONObject result = runVerification(schedule, url, PROMPT, userMessage(PROMPT));
+        assertEquals("RETRY", result.getString("status"));
+        assertEquals("실제 대화 주소 생성 대기", result.getString("detail"));
+    }
+
     @Test public void projectConversationWithPromptVerifies() throws Exception {
         Schedule schedule = projectSchedule();
         String url = "https://chatgpt.com/g/" + PROJECT + "-vibe-coding/c/conversation_1";
@@ -47,6 +55,14 @@ public final class ConversationVerificationWebViewAndroidTest {
     @Test public void generalHomeWithOptimisticMessageWaitsForConversationAddress() throws Exception {
         Schedule schedule = generalSchedule();
         JSONObject result = runVerification(schedule, "https://chatgpt.com/", PROMPT, userMessage(PROMPT));
+        assertEquals("RETRY", result.getString("status"));
+        assertEquals("실제 대화 주소 생성 대기", result.getString("detail"));
+    }
+
+    @Test public void generalWebTemporaryConversationWaitsForPersistentAddress() throws Exception {
+        Schedule schedule = generalSchedule();
+        String url = "https://chatgpt.com/c/WEB:12345678-1234-1234-1234-123456789abc";
+        JSONObject result = runVerification(schedule, url, PROMPT, userMessage(PROMPT));
         assertEquals("RETRY", result.getString("status"));
         assertEquals("실제 대화 주소 생성 대기", result.getString("detail"));
     }

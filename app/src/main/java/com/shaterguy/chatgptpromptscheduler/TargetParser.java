@@ -65,15 +65,22 @@ public final class TargetParser {
         String actualConversation = conversationId(actualUrl);
 
         return switch (targetType) {
-            case "existing" -> expectedConversation != null
+            case "existing" -> isPersistentConversationId(expectedConversation)
                     && expectedConversation.equals(actualConversation)
+                    && isPersistentConversationId(actualConversation)
                     && (expectedProject == null ? actualProject == null : expectedProject.equals(actualProject));
             case "project" -> expectedProject != null
                     && expectedProject.equals(actualProject)
-                    && actualConversation != null;
-            case "general" -> actualProject == null && actualConversation != null;
+                    && isPersistentConversationId(actualConversation);
+            case "general" -> actualProject == null && isPersistentConversationId(actualConversation);
             default -> false;
         };
+    }
+
+    static boolean isPersistentConversationId(String conversationId) {
+        if (conversationId == null) return false;
+        String normalized = conversationId.trim();
+        return !normalized.isEmpty() && !normalized.regionMatches(true, 0, "WEB:", 0, 4);
     }
 
     public static String mismatchDetail(String targetType, String expectedUrl, String actualUrl) {
