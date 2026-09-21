@@ -27,6 +27,13 @@ public final class RunLogStore {
     public synchronized void append(String runId, String scheduleId, String scheduleName, String status, String detail,
                                     long startedAt, long finishedAt, String targetUrl, boolean success,
                                     JSONArray events, JSONObject environment) {
+        append(runId, scheduleId, scheduleName, status, detail, startedAt, finishedAt,
+                targetUrl, "", success, events, environment);
+    }
+
+    public synchronized void append(String runId, String scheduleId, String scheduleName, String status, String detail,
+                                    long startedAt, long finishedAt, String targetUrl, String conversationUrl,
+                                    boolean success, JSONArray events, JSONObject environment) {
         JSONArray current = read();
         JSONArray next = new JSONArray();
         JSONObject item = new JSONObject();
@@ -42,6 +49,7 @@ public final class RunLogStore {
             item.put("finishedAt", finishedAt);
             item.put("durationMs", Math.max(0, finishedAt - startedAt));
             item.put("targetUrl", targetUrl == null ? "" : targetUrl);
+            item.put("conversationUrl", conversationUrl == null ? "" : conversationUrl);
             item.put("environment", copyObject(environment));
             item.put("events", copyArray(events));
             next.put(item);

@@ -65,6 +65,7 @@ public final class ExecutionService extends Service {
     private String projectDisplayName = "";
     private String lastObservedUrl = "";
     private String lastRetryDetail = "";
+    private String verifiedConversationUrl = "";
     private JSONArray traceEvents = new JSONArray();
 
     @Override
@@ -101,6 +102,7 @@ public final class ExecutionService extends Service {
         currentRequestProfile = null;
         projectDisplayName = "";
         projectCandidateIndex = 0;
+        verifiedConversationUrl = "";
         try {
             currentItem = queueStore.claimNext();
         } catch (RuntimeException error) {
@@ -357,7 +359,7 @@ public final class ExecutionService extends Service {
         String script = projectDirectoryStep
                 ? ProjectDirectoryNavigationScript.build(projectDisplayName, projectCandidateIndex)
                 : (submitted
-                ? AutomationScript.verify(currentSchedule, stampedPrompt)
+                ? ConversationVerificationScript.build(currentSchedule, stampedPrompt)
                 : AutomationScript.build(currentSchedule, stampedPrompt, currentItem.optString("runId"), pageAttempts));
         activeWebView.evaluateJavascript(script, raw -> {
             stepInFlight = false;
@@ -437,7 +439,23 @@ public final class ExecutionService extends Service {
         trace("VERIFY_RESULT", object("status", status, "detail", detail, "url", resultUrl,
                 "diagnostics", result.optJSONObject("diagnostics"), "raw", clip(raw, 12_000)));
         switch (status) {
-            case "VERIFIED" -> finish(true, "VERIFIED", "프롬프트 전송을 확인했습니다.");
+            case "VERIFIED" -> {
+                if (currentSchedule == null || !TargetParser.matchesVerifiedConversation(
+                        currentSchedule.targetType, currentSchedule.targetUrl, resultUrl)) {
+                    pageAttempts++;
+                    lastRetryDetail = "실제 대화 주소 생성 대기";
+                    trace("VERIFY_NATIVE_REJECTED", object("reason", "conversation-url-not-confirmed",
+                            "targetType", currentSchedule == null ? "" : currentSchedule.targetType,
+                            "requested", currentSchedule == null ? "" : currentSchedule.targetUrl,
+                            "actual", resultUrl));
+                    if (pageAttempts > 45) finish(false, "SUBMIT_VERIFICATION_FAILED",
+                            contextualDetail("실제 대화 주소를 확인하지 못했습니다."));
+                    else scheduleAutomationStep(1400L);
+                } else {
+                    verifiedConversationUrl = resultUrl;
+                    finish(true, "VERIFIED", "프롬프트 전송과 실제 대화 주소를 확인했습니다.");
+                }
+            }
             case "RETRY" -> {
                 pageAttempts++;
                 lastRetryDetail = detail;
@@ -555,7 +573,7 @@ public final class ExecutionService extends Service {
             logStore.append(runId, scheduleId, currentSchedule == null ? "예약" : currentSchedule.name, status, effectiveDetail,
                     startedAt == 0 ? finishedAt : startedAt, finishedAt,
                     currentSchedule == null ? "" : currentSchedule.targetUrl,
-                    success, traceEvents, environment());
+                    verifiedConversationUrl, success, traceEvents, environment());
         } catch (RuntimeException logError) {
             effectiveStatus = status + "_LOG_SAVE_FAILED";
             effectiveDetail = effectiveDetail + " | 실행 기록 저장 실패: " + valueOrEmpty(logError.getMessage());
@@ -584,6 +602,7 @@ public final class ExecutionService extends Service {
         currentRequestProfile = null;
         projectDisplayName = "";
         projectCandidateIndex = 0;
+        verifiedConversationUrl = "";
         handler.postDelayed(this::processNext, 250L);
     }
 
