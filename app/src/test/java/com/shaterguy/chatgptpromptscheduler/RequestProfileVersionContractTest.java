@@ -67,8 +67,8 @@ public final class RequestProfileVersionContractTest {
         String gradle = source("app/build.gradle");
         assertEquals(1, occurrences(gradle, "androidx.webkit:webkit:1.17.0"));
         assertTrue(gradle.contains("applicationId 'com.shaterguy.chatgptpromptscheduler'"));
-        assertTrue(gradle.contains("versionCode 2100000005"));
-        assertTrue(gradle.contains("versionName '0.5.0'"));
+        assertTrue(gradle.contains("versionCode 2100000006"));
+        assertTrue(gradle.contains("versionName '0.5.1'"));
 
         String workflow = source(".github/workflows/android-dev.yml");
         assertTrue(workflow.contains("DEV_VERSION_CODE: '5000002'"));
