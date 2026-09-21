@@ -69,6 +69,8 @@ public final class RequestProfileVersionContractTest {
         assertTrue(gradle.contains("applicationId 'com.shaterguy.chatgptpromptscheduler.dev'"));
         assertTrue(gradle.contains("versionCode 5001001"));
         assertTrue(gradle.contains("versionName '0.5.1-dev1'"));
+        String strings = source("app/src/main/res/values/strings.xml");
+        assertTrue(strings.contains("<string name=\"app_name\">ChatGPT Prompt Scheduler DEV</string>"));
 
         String workflow = source(".github/workflows/android-dev.yml");
         assertTrue(workflow.contains("DEV_VERSION_CODE: '5001001'"));
