@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.3 — 2026-10-01
+
+- `v0.5.2` 정식 APK에 개발판 표시명 `ChatGPT Prompt Scheduler DEV`가 남아 있던 패키징 오류 수정
+- 제품 기능은 `v0.5.2`와 동일하게 유지하고 앱 표시명만 정식 `ChatGPT Prompt Scheduler`로 복구
+- 정식 Application ID `com.shaterguy.chatgptpromptscheduler`와 공개 서명 계보를 유지
+- 정식 `versionCode 2100000008`, `versionName 0.5.3`으로 증가
+- 최신 정식 `v0.5.2` (`versionCode 2100000007`)에서의 인플레이스 업데이트를 릴리스 기준선으로 사용
+- 정식 표시명을 버전 identity 계약 테스트에 추가해 동일 누락의 재발을 차단
+
 ## 0.5.2 — 2026-10-01
 
 - 검증된 `v0.5.2-dev4` 기능 상태를 기존 정식 앱 계보의 `0.5.2`로 승격
