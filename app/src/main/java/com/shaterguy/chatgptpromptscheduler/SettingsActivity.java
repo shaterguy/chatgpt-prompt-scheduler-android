@@ -3,7 +3,6 @@ package com.shaterguy.chatgptpromptscheduler;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
-import android.net.Uri;
 import android.os.Bundle;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -15,15 +14,10 @@ import android.widget.Toast;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 
 public final class SettingsActivity extends Activity {
     private ProfileAuthorizationSession authorizationAttempt;
     private TextView diagnosticStatus;
-    private static final int REQUEST_CHAT_PROFILE = 2101;
-    private static final int REQUEST_WORK_PROFILE = 2102;
     private ConfigStore store;
     private RequestProfileRegistry profileRegistry;
     private ProjectCatalog projectCatalog;
@@ -35,7 +29,6 @@ public final class SettingsActivity extends Activity {
     private TextView profileStatus;
     private String googleAuthorizationStatus = "";
     private TextView projectStatus;
-    private RequestProfileCaptureDialog captureDialog;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -54,14 +47,6 @@ public final class SettingsActivity extends Activity {
         ProfileRegistrySync.refresh(this, result -> updateProfileStatus());
     }
 
-    @Override protected void onPause() {
-        if (captureDialog != null) {
-            captureDialog.dismiss();
-            captureDialog = null;
-        }
-        super.onPause();
-    }
-
     @Override protected void onDestroy() {
         // Consent state intentionally does not survive Activity/process recreation.
         authorizationAttempt.cancel(ProfileAuthorizationSession.Outcome.DESTROYED, android.os.SystemClock.elapsedRealtime());
@@ -72,14 +57,6 @@ public final class SettingsActivity extends Activity {
         // Only the next result routing code survives recreation, never a pending authorization.
         state.putInt("nextConsentRequestCode", authorizationAttempt.nextRequestCode());
         super.onSaveInstanceState(state);
-    }
-
-    private void startCapture(RequestProfileEngine.Mode mode) {
-        if (captureDialog != null) captureDialog.dismiss();
-        captureDialog = new RequestProfileCaptureDialog(this, mode, () -> {
-            if (profileStatus != null) profileStatus.setText(profileStatusText());
-        });
-        captureDialog.show();
     }
 
     private void buildUi() {
@@ -93,7 +70,7 @@ public final class SettingsActivity extends Activity {
 
         root.addView(Ui.section(this, "모델 · 추론 프로필"));
         root.addView(Ui.body(this,
-                "자동 업데이트를 켜기 전에는 직접 캡처하거나 SelfRun 프로필 JSON을 가져올 수 있습니다. 공식 목록을 받은 모드는 이후 Google 문서를 기준으로 관리합니다."));
+                "자동으로 확인한 공식 목록의 모델·추론 조합만 선택할 수 있습니다. 예전 수동 목록은 더 이상 사용하지 않습니다. 기존 예약과 프롬프트는 유지되며, 목록에 없는 조합은 다시 선택해야 합니다."));
         root.addView(Ui.body(this, "Google 로그인·동의 후 공식 Chat/Work 문서가 바뀌면 모델과 추론 목록을 자동으로 갱신합니다. Drive 메타데이터와 Docs 읽기 전용 권한을 요청하며, 앱은 지정된 두 문서만 읽습니다. 동기화 실패 시 마지막 정상 목록을 유지합니다."));
         root.addView(Ui.actionGrid(this,
                 Ui.button(this, "Google 로그인 · 목록 업데이트", v -> authorizeProfiles()),
@@ -105,12 +82,6 @@ public final class SettingsActivity extends Activity {
                         toast("자동 업데이트를 껐습니다. 마지막 목록은 유지됩니다. Google 계정의 앱 접근 권한은 계정 설정에서 관리할 수 있습니다.");
                     } catch (IllegalStateException error) { toast("저장 공간을 확인해 주세요. 이전 설정은 유지됩니다."); }
                 })));
-        root.addView(Ui.actionGrid(this,
-                Ui.button(this, "일반 Chat 모델·추론 캡처", v -> startCapture(RequestProfileEngine.Mode.CHAT)),
-                Ui.button(this, "Work 모델·추론 캡처", v -> startCapture(RequestProfileEngine.Mode.WORK))));
-        root.addView(Ui.actionGrid(this,
-                Ui.button(this, "일반 Chat 설정파일 가져오기", v -> pickProfile(REQUEST_CHAT_PROFILE)),
-                Ui.button(this, "Work 설정파일 가져오기", v -> pickProfile(REQUEST_WORK_PROFILE))));
         profileStatus = Ui.body(this, profileStatusText());
         root.addView(profileStatus);
         addAuthorizationDiagnostics(root);
@@ -138,13 +109,6 @@ public final class SettingsActivity extends Activity {
         Ui.setContent(this, scroll);
     }
 
-    private void pickProfile(int requestCode) {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
-                .setType("application/json")
-                .addCategory(Intent.CATEGORY_OPENABLE);
-        startActivityForResult(intent, requestCode);
-    }
-
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
@@ -158,18 +122,6 @@ public final class SettingsActivity extends Activity {
             // Google’s parser handles both successful and failed returned Intents.
             ProfileDriveAuthorization.fromIntent(this, data, resultCode, authorizationCallback(attempt));
             return;
-        }
-        if ((requestCode != REQUEST_CHAT_PROFILE && requestCode != REQUEST_WORK_PROFILE)
-                || resultCode != RESULT_OK || data == null || data.getData() == null) return;
-        try {
-            String text = readBounded(data.getData());
-            RequestProfileRegistry.ImportResult result = requestCode == REQUEST_CHAT_PROFILE
-                    ? profileRegistry.importChat(text) : profileRegistry.importWork(text);
-            if (profileStatus != null) profileStatus.setText(profileStatusText());
-            toast("프로필 " + result.total + "개 확인 · 신규 " + result.added
-                    + " · 갱신 " + result.updated + " · 동일 " + result.unchanged);
-        } catch (Exception error) {
-            toast("프로필 가져오기 실패: " + error.getMessage());
         }
     }
 
@@ -264,22 +216,6 @@ public final class SettingsActivity extends Activity {
 
     private void updateProfileStatus() {
         if (!isFinishing() && !isDestroyed() && profileStatus != null) profileStatus.setText(profileStatusText());
-    }
-
-    private String readBounded(Uri uri) throws Exception {
-        try (InputStream input = getContentResolver().openInputStream(uri);
-             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            if (input == null) throw new java.io.IOException("파일을 열 수 없습니다.");
-            byte[] buffer = new byte[8192];
-            int total = 0, read;
-            while ((read = input.read(buffer)) >= 0) {
-                total += read;
-                if (total > RequestProfileRegistry.MAX_PROFILE_FILE_BYTES)
-                    throw new java.io.IOException("설정파일 크기가 " + RequestProfileRegistry.MAX_PROFILE_FILE_BYTES + "바이트를 초과합니다.");
-                output.write(buffer, 0, read);
-            }
-            return new String(output.toByteArray(), StandardCharsets.UTF_8);
-        }
     }
 
     private void confirmClearProjects() {

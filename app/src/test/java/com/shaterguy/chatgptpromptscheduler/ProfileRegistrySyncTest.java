@@ -21,7 +21,6 @@ public final class ProfileRegistrySyncTest {
         RequestProfileRegistry recreated = new RequestProfileRegistry(prefs);
         assertEquals(List.of("new"), recreated.workModels());
         assertEquals("v2", recreated.sourceVersion(RequestProfileEngine.Mode.WORK));
-        assertThrows(IllegalStateException.class, () -> recreated.importWork(document("manual", "low")));
     }
 
     @Test public void invalidReplacementKeepsLastGoodSnapshotAndVersion() throws Exception {
@@ -71,16 +70,16 @@ public final class ProfileRegistrySyncTest {
         assertEquals("v1", registry.sourceVersion(RequestProfileEngine.Mode.WORK));
     }
 
-    @Test public void initialOptInNeverClaimsBundledDefaultsAreCanonical() throws Exception {
+    @Test public void syncToggleNeverRestoresBundledDefaults() throws Exception {
         SharedPreferences prefs = memoryPreferences();
         RequestProfileRegistry registry = new RequestProfileRegistry(prefs);
-        assertFalse(registry.workModels().isEmpty());
+        assertTrue(registry.workModels().isEmpty());
         registry.setSyncEnabled(true);
         assertTrue(registry.workModels().isEmpty());
         registry.recordSyncFailure(RequestProfileEngine.Mode.WORK, "AUTH_REQUIRED");
         assertTrue(new RequestProfileRegistry(prefs).workModels().isEmpty());
         registry.setSyncEnabled(false);
-        assertFalse(registry.workModels().isEmpty());
+        assertTrue(registry.workModels().isEmpty());
     }
 
     @Test public void canonicalFingerprintIsOrderIndependentButRequired() throws Exception {

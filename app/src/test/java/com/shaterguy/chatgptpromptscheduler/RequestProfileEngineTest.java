@@ -24,11 +24,17 @@ public final class RequestProfileEngineTest {
         return request;
     }
 
-    private static Map<String, Object> apply(RequestProfileEngine.Mode mode, String model, String reasoning) {
-        return RequestProfileEngine.apply(nativeRequest(), new RequestProfileEngine.TargetProfile(mode, model, reasoning));
+    private static RequestProfileEngine.TargetProfile fixture(RequestProfileEngine.Mode mode, String model, String reasoning) {
+        RequestProfileEngine.TargetProfile profile = LegacyProfileFixtures.profile(mode, model, reasoning);
+        if (profile == null) throw new IllegalArgumentException("FIXTURE_UNREGISTERED");
+        return profile;
     }
 
-    @Test public void chatProfilesMatchSelfRunRegistryIncludingPro() {
+    private static Map<String, Object> apply(RequestProfileEngine.Mode mode, String model, String reasoning) {
+        return RequestProfileEngine.apply(nativeRequest(), fixture(mode, model, reasoning));
+    }
+
+    @Test public void explicitChatFixtureOperationsPreserveRequestControls() {
         Map<String, String> models = Map.of(
                 "instant", "gpt-5-6",
                 "medium", "gpt-5-6-thinking",
@@ -44,7 +50,7 @@ public final class RequestProfileEngineTest {
             request.put("conversation_origin", "tpp");
             request.put("service_tier", "standard");
             Map<String, Object> output = RequestProfileEngine.apply(
-                    request, new RequestProfileEngine.TargetProfile(RequestProfileEngine.Mode.CHAT, "", reasoning));
+                    request, fixture(RequestProfileEngine.Mode.CHAT, "", reasoning));
             assertEquals(models.get(reasoning), output.get("model"));
             if ("instant".equals(reasoning)) assertFalse(output.containsKey("thinking_effort"));
             else assertEquals(efforts.get(reasoning), output.get("thinking_effort"));
@@ -53,7 +59,7 @@ public final class RequestProfileEngineTest {
         }
     }
 
-    @Test public void workProfilesAreExactRegistryCombinationsOnly() {
+    @Test public void explicitWorkFixtureOperationsPreserveExactCombinations() {
         String[][] supported = {
                 {"luna", "max", "gpt-5.6-luna-wm", "max"},
                 {"sol", "high", "gpt-5.6-sol-wm", "extended"},
@@ -79,7 +85,7 @@ public final class RequestProfileEngineTest {
         assertThrows(IllegalArgumentException.class, () -> apply(RequestProfileEngine.Mode.WORK, "luna", "ultra"));
     }
 
-    @Test public void importedExactOperationsCanDefineFutureRegisteredCombination() {
+    @Test public void explicitExactOperationsCanDefineFutureRegisteredCombination() {
         RequestProfileEngine.TargetProfile target = new RequestProfileEngine.TargetProfile(
                 RequestProfileEngine.Mode.WORK, "future", "deep", List.of(
                 RequestProfileEngine.Operation.set("model", "future-model"),
@@ -114,7 +120,7 @@ public final class RequestProfileEngineTest {
         assertNull(RequestProfileEngine.forSchedule(existing));
     }
 
-    @Test public void transientRegistryAttachmentOverridesBuiltInMapping() {
+    @Test public void transientRegistryAttachmentSuppliesExactOperations() {
         Schedule schedule = new Schedule();
         schedule.targetType = "general";
         schedule.experience = "chat";
@@ -125,15 +131,16 @@ public final class RequestProfileEngineTest {
                 RequestProfileEngine.Operation.remove("thinking_effort"),
                 RequestProfileEngine.Operation.remove("conversation_origin"),
                 RequestProfileEngine.Operation.remove("service_tier")));
+        schedule.requestProfileRegistryResolved = true;
         assertSame(schedule.resolvedRequestProfile, RequestProfileEngine.forSchedule(schedule));
     }
 
     @Test public void priorControlStateNeverInfluencesNextAbsoluteTarget() {
         Map<String, Object> work = apply(RequestProfileEngine.Mode.WORK, "sol", "max");
         Map<String, Object> chat = RequestProfileEngine.apply(
-                work, new RequestProfileEngine.TargetProfile(RequestProfileEngine.Mode.CHAT, "", "instant"));
+                work, fixture(RequestProfileEngine.Mode.CHAT, "", "instant"));
         Map<String, Object> terra = RequestProfileEngine.apply(
-                chat, new RequestProfileEngine.TargetProfile(RequestProfileEngine.Mode.WORK, "terra", "high"));
+                chat, fixture(RequestProfileEngine.Mode.WORK, "terra", "high"));
         assertEquals("gpt-5.6-terra-wm", terra.get("model"));
         assertEquals("extended", terra.get("thinking_effort"));
         assertEquals("tpp", terra.get("conversation_origin"));
@@ -143,7 +150,7 @@ public final class RequestProfileEngineTest {
     @Test public void dataPlaneAndExactAllowlistRemainInvariant() {
         Map<String, Object> before = nativeRequest();
         Map<String, Object> after = RequestProfileEngine.apply(
-                before, new RequestProfileEngine.TargetProfile(RequestProfileEngine.Mode.WORK, "sol", "high"));
+                before, fixture(RequestProfileEngine.Mode.WORK, "sol", "high"));
         assertEquals(Set.of("model", "thinking_effort", "conversation_origin", "service_tier"), RequestProfileEngine.CONTROL_PATHS);
         assertTrue(RequestProfileEngine.nonControlEquivalent(before, after));
         assertSame(before.get("messages"), after.get("messages"));
@@ -155,11 +162,11 @@ public final class RequestProfileEngineTest {
         Map<String, Object> missing = new LinkedHashMap<>();
         missing.put("action", "next");
         assertThrows(IllegalArgumentException.class, () -> RequestProfileEngine.apply(
-                missing, new RequestProfileEngine.TargetProfile(RequestProfileEngine.Mode.CHAT, "", "high")));
+                missing, fixture(RequestProfileEngine.Mode.CHAT, "", "high")));
         Map<String, Object> wrong = new LinkedHashMap<>();
         wrong.put("messages", Map.of());
         assertThrows(IllegalArgumentException.class, () -> RequestProfileEngine.apply(
-                wrong, new RequestProfileEngine.TargetProfile(RequestProfileEngine.Mode.CHAT, "", "high")));
+                wrong, fixture(RequestProfileEngine.Mode.CHAT, "", "high")));
     }
 
     @Test public void legacyScheduleJsonSchemaRemainsStable() throws Exception {

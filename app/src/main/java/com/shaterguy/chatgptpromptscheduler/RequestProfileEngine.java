@@ -82,81 +82,33 @@ final class RequestProfileEngine {
     static TargetProfile forSchedule(Schedule schedule) {
         Objects.requireNonNull(schedule, "schedule");
         if ("existing".equals(schedule.targetType)) return null;
-        if (schedule.resolvedRequestProfile != null) {
-            plan(schedule.resolvedRequestProfile);
-            return schedule.resolvedRequestProfile;
-        }
         String experience = Schedule.normalizedExperience(schedule.targetType, schedule.experience);
+        Mode mode;
+        String model, reasoning;
         if ("chat".equals(experience)) {
-            String reasoning = Schedule.normalizedChatReasoning(experience, schedule.chatReasoning);
-            if ("keep".equals(reasoning) || "inherit".equals(reasoning) || reasoning.isEmpty()) return null;
-            if (schedule.requestProfileRegistryResolved) throw new IllegalArgumentException("PROFILE_UNREGISTERED");
-            TargetProfile target = builtIn(Mode.CHAT, "", reasoning);
-            if (target == null) throw new IllegalArgumentException("PROFILE_UNREGISTERED");
-            plan(target);
-            return target;
-        }
-        if ("work".equals(experience)) {
-            String model = Schedule.normalizedWorkModel(experience, schedule.workModel);
-            String reasoning = Schedule.normalizedReasoningEffort(experience, schedule.reasoningEffort);
-            if ("inherit".equals(model) || model.isEmpty() || "inherit".equals(reasoning) || reasoning.isEmpty()) return null;
-            if (schedule.requestProfileRegistryResolved) throw new IllegalArgumentException("PROFILE_UNREGISTERED");
-            TargetProfile target = builtIn(Mode.WORK, model, reasoning);
-            if (target == null) throw new IllegalArgumentException("PROFILE_UNREGISTERED");
-            plan(target);
-            return target;
-        }
-        throw new IllegalArgumentException("PROFILE_MODE_UNSUPPORTED");
+            mode = Mode.CHAT;
+            model = "";
+            reasoning = Schedule.normalizedChatReasoning(experience, schedule.chatReasoning);
+            if ("keep".equals(reasoning) || "inherit".equals(reasoning)) return null;
+        } else if ("work".equals(experience)) {
+            mode = Mode.WORK;
+            model = Schedule.normalizedWorkModel(experience, schedule.workModel);
+            reasoning = Schedule.normalizedReasoningEffort(experience, schedule.reasoningEffort);
+            if ("inherit".equals(model) && "inherit".equals(reasoning)) return null;
+        } else throw new IllegalArgumentException("PROFILE_MODE_UNSUPPORTED");
+        TargetProfile target = schedule.resolvedRequestProfile;
+        if (!schedule.requestProfileRegistryResolved || target == null
+                || !key(mode, model, reasoning).equals(key(target)))
+            throw new IllegalArgumentException("PROFILE_UNREGISTERED");
+        plan(target);
+        return target;
     }
 
     static ProfilePlan plan(TargetProfile target) {
         Objects.requireNonNull(target, "target");
         if (!PROFILE_VERSION.equals(target.profileVersion)) throw new IllegalArgumentException("PROFILE_VERSION_UNSUPPORTED");
-        TargetProfile effective = target.operations.isEmpty() ? builtIn(target.mode, target.model, target.reasoning) : target;
-        if (effective == null) throw new IllegalArgumentException("PROFILE_UNREGISTERED");
-        validateOperations(effective.operations);
-        return new ProfilePlan(effective, effective.operations);
-    }
-
-    static List<TargetProfile> builtInProfiles() {
-        List<TargetProfile> profiles = new ArrayList<>();
-        profiles.add(profile(Mode.CHAT, "", "instant",
-                set("model", "gpt-5-6"), remove("thinking_effort"), remove("conversation_origin"), remove("service_tier")));
-        profiles.add(profile(Mode.CHAT, "", "medium",
-                set("model", "gpt-5-6-thinking"), set("thinking_effort", "standard"), remove("conversation_origin"), remove("service_tier")));
-        profiles.add(profile(Mode.CHAT, "", "high",
-                set("model", "gpt-5-6-thinking"), set("thinking_effort", "extended"), remove("conversation_origin"), remove("service_tier")));
-        profiles.add(profile(Mode.CHAT, "", "xhigh",
-                set("model", "gpt-5-6-thinking"), set("thinking_effort", "max"), remove("conversation_origin"), remove("service_tier")));
-        profiles.add(profile(Mode.CHAT, "", "pro",
-                set("model", "gpt-5-6-pro"), set("thinking_effort", "standard"), remove("conversation_origin"), remove("service_tier")));
-        profiles.add(profile(Mode.WORK, "luna", "max",
-                set("model", "gpt-5.6-luna-wm"), set("thinking_effort", "max"), set("conversation_origin", "tpp"), set("service_tier", "standard")));
-        profiles.add(profile(Mode.WORK, "sol", "high",
-                set("model", "gpt-5.6-sol-wm"), set("thinking_effort", "extended"), set("conversation_origin", "tpp"), set("service_tier", "standard")));
-        profiles.add(profile(Mode.WORK, "sol", "max",
-                set("model", "gpt-5.6-sol-wm"), set("thinking_effort", "max"), set("conversation_origin", "tpp"), set("service_tier", "standard")));
-        profiles.add(profile(Mode.WORK, "sol", "ultra",
-                set("model", "gpt-5.6-sol-wm"), set("thinking_effort", "ultra"), set("conversation_origin", "tpp"), set("service_tier", "standard")));
-        profiles.add(profile(Mode.WORK, "sol", "xhigh",
-                set("model", "gpt-5.6-sol-wm"), set("thinking_effort", "xhigh"), set("conversation_origin", "tpp"), set("service_tier", "standard")));
-        profiles.add(profile(Mode.WORK, "terra", "high",
-                set("model", "gpt-5.6-terra-wm"), set("thinking_effort", "extended"), set("conversation_origin", "tpp"), set("service_tier", "standard")));
-        profiles.add(profile(Mode.WORK, "terra", "max",
-                set("model", "gpt-5.6-terra-wm"), set("thinking_effort", "max"), set("conversation_origin", "tpp"), set("service_tier", "standard")));
-        profiles.add(profile(Mode.WORK, "terra", "ultra",
-                set("model", "gpt-5.6-terra-wm"), set("thinking_effort", "ultra"), set("conversation_origin", "tpp"), remove("service_tier")));
-        profiles.add(profile(Mode.WORK, "terra", "xhigh",
-                set("model", "gpt-5.6-terra-wm"), set("thinking_effort", "xhigh"), set("conversation_origin", "tpp"), set("service_tier", "standard")));
-        return Collections.unmodifiableList(profiles);
-    }
-
-    static TargetProfile builtIn(Mode mode, String model, String reasoning) {
-        String normalizedModel = normalize(model), normalizedReasoning = normalize(reasoning);
-        for (TargetProfile profile : builtInProfiles()) {
-            if (profile.mode == mode && profile.model.equals(normalizedModel) && profile.reasoning.equals(normalizedReasoning)) return profile;
-        }
-        return null;
+        validateOperations(target.operations);
+        return new ProfilePlan(target, target.operations);
     }
 
     static void validateOperations(List<Operation> operations) {
@@ -193,8 +145,5 @@ final class RequestProfileEngine {
 
     static String key(TargetProfile profile) { return key(profile.mode, profile.model, profile.reasoning); }
     static String key(Mode mode, String model, String reasoning) { return mode.name() + "|" + normalize(model) + "|" + normalize(reasoning); }
-    private static TargetProfile profile(Mode mode, String model, String reasoning, Operation... operations) { return new TargetProfile(mode, model, reasoning, List.of(operations)); }
-    private static Operation set(String path, String value) { return Operation.set(path, value); }
-    private static Operation remove(String path) { return Operation.remove(path); }
     static String normalize(String value) { return value == null ? "" : value.trim().toLowerCase(); }
 }

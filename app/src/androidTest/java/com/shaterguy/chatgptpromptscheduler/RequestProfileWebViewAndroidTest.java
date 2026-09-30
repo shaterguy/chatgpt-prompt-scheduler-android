@@ -35,9 +35,7 @@ public final class RequestProfileWebViewAndroidTest {
                 window.__testResult={preexisting:
                   window.__chatgptPromptSchedulerRequestProfileEngine?.version==='scheduler-request-profile-engine-v2'};
                 const engine=window.__chatgptPromptSchedulerRequestProfileEngine;
-                engine.begin('work');
-                engine.setWorkModel('terra');
-                engine.setWorkReasoning('high');
+                engine.configure('work','terra','high',[['set','model','gpt-5.6-terra-wm'],['set','thinking_effort','extended'],['set','conversation_origin','tpp'],['set','service_tier','standard']]);
                 const payload={action:'next',messages:[{author:'user',content:{content_type:'text',parts:['opaque']}}],
                   conversation_id:'conversation-opaque',parent_message_id:'parent-opaque',
                   model:'native-model',thinking_effort:'native-effort',conversation_origin:'native-origin',
@@ -98,8 +96,7 @@ public final class RequestProfileWebViewAndroidTest {
                 (async()=>{
                   const valid=JSON.stringify({action:'next',messages:[]});
                   window.__testResult.notReady=await blocked(valid);
-                  engine.begin('chat');
-                  engine.setChatReasoning('instant');
+                  engine.configure('chat','','instant',[['set','model','gpt-5-6'],['remove','thinking_effort'],['remove','conversation_origin'],['remove','service_tier']]);
                   window.__testResult.malformed=await blocked('{');
                   window.__testResult.unknownSchema=await blocked(JSON.stringify({action:'next'}));
                   let nonText=false;
@@ -130,6 +127,21 @@ public final class RequestProfileWebViewAndroidTest {
         assertFalse(result.optBoolean("unexpectedFailure"));
         assertEquals(2, result.getJSONArray("fetchCalls").length());
         assertEquals(0, result.getJSONArray("xhrCalls").length());
+    }
+
+    @Test public void rejectedReconfigurationCannotReusePreviousModel() throws Exception {
+        JSONObject result = runScenario("""
+                const engine=window.__chatgptPromptSchedulerRequestProfileEngine;
+                engine.configure('work','automatic','high',[['set','model','canonical-model'],['set','thinking_effort','high'],['set','conversation_origin','tpp'],['remove','service_tier']]);
+                window.__testResult={rejected:false,blocked:false};
+                try{engine.configure('work','automatic','high',[]);}catch(_){window.__testResult.rejected=true;}
+                fetch('/backend-api/conversation',{method:'POST',body:JSON.stringify({messages:[]})})
+                  .catch(()=>{window.__testResult.blocked=true;})
+                  .finally(()=>{window.__testResult.calls=window.__nativeFetchCalls.length;window.__testDone=true;});
+                """);
+        assertTrue(result.getBoolean("rejected"));
+        assertTrue(result.getBoolean("blocked"));
+        assertEquals(0, result.getInt("calls"));
     }
 
     private static JSONObject callForPath(JSONArray calls, String path) throws Exception {
