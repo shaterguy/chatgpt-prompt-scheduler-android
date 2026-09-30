@@ -1,4 +1,4 @@
-# Canonical model/effort updates (0.5.2-dev1)
+# Canonical model/effort updates (0.5.2-dev2)
 
 Settings → **Google 로그인 · 목록 업데이트** opens Google-managed account selection and consent. The requested scopes are `drive.metadata.readonly` and `documents.readonly`. Although Google grants these scopes at account level, this app's read-only client accepts only the two canonical profile document IDs already used by SelfRun. It never creates, modifies, shares, or deletes Drive/Docs files, and never stores or logs an access token.
 
@@ -31,3 +31,10 @@ This creates an unsigned DEV release candidate. Delivery must use the existing D
 - Disabling updates invalidates pending authorization. If Settings is destroyed or recreated during consent, the returned result is ignored and the app asks for a fresh login tap. Existing sync preference and last-good profiles are retained.
 - Scheduled execution holds a bounded preparation wake lock during refresh and transfers to the run wake lock before releasing it. Cleanup and service destruction release the preparation lease.
 - Refresh waiters have a 60-second deadline independent of blocked HTTP work. A commit already admitted may finish before completion is delivered; cancelled work cannot start another publication. Timeout/auth failure status is updated in memory immediately, while canonical profiles and versions remain persisted last-good snapshots.
+
+
+### Google authorization diagnostics (dev2)
+
+The result returned by Google's authorization UI is always decoded by the Google SDK when result data is present. An Android Activity result code alone no longer discards the Google response. A valid SDK-returned access token is required before sync can be enabled, and stale/disabled Activity attempts are still rejected.
+
+If authorization fails, Settings retains an in-memory, readable error summary using only fixed categories and numeric Google status codes. The app does not log or persist raw Intent data, provider messages, account identifiers, tokens, or exception causes. A generic cancellation/no-result message is not evidence that the user cancelled or that Cloud registration is absent. Google Cloud registration and actual consent remain separate prerequisites; this diagnostic improvement does not itself create or repair a Cloud client.

@@ -33,6 +33,7 @@ public final class SettingsActivity extends Activity {
     private EditText maxRetries;
     private EditText timeout;
     private TextView profileStatus;
+    private String googleAuthorizationStatus = "";
     private TextView projectStatus;
     private RequestProfileCaptureDialog captureDialog;
 
@@ -143,11 +144,8 @@ public final class SettingsActivity extends Activity {
                 toast("로그인 요청이 취소되었거나 화면이 다시 열렸습니다. 목록 업데이트가 필요하면 Google 로그인 버튼을 다시 눌러 주세요.");
                 return;
             }
-            if (resultCode == RESULT_OK && data != null) ProfileDriveAuthorization.fromIntent(this, data, authorizationCallback(attempt));
-            else {
-                authorizationAttempt.finish(attempt);
-                toast("Google 동의를 완료하지 않았습니다. 저장된 목록은 유지됩니다.");
-            }
+            // Google’s parser handles both successful and failed returned Intents.
+            ProfileDriveAuthorization.fromIntent(this, data, resultCode, authorizationCallback(attempt));
             return;
         }
         if ((requestCode != REQUEST_CHAT_PROFILE && requestCode != REQUEST_WORK_PROFILE)
@@ -167,6 +165,8 @@ public final class SettingsActivity extends Activity {
     private void authorizeProfiles() {
         long attempt = authorizationAttempt.begin();
         if (attempt == 0L) return;
+        googleAuthorizationStatus = "";
+        updateProfileStatus();
         try { ProfileDriveAuthorization.request(this, true, authorizationCallback(attempt)); }
         catch (RuntimeException error) {
             if (authorizationAttempt.finish(attempt)) toast("Google 로그인을 시작하지 못했습니다. Google Play 서비스를 확인해 주세요.");
@@ -177,6 +177,7 @@ public final class SettingsActivity extends Activity {
         return new ProfileDriveAuthorization.Callback() {
             public void authorized(String token) {
                 if (!authorizationAttempt.finish(attempt) || isFinishing() || isDestroyed()) return;
+                googleAuthorizationStatus = "";
                 try { profileRegistry.setSyncEnabled(true); }
                 catch (IllegalStateException error) { toast("설정을 저장하지 못했습니다. 저장 공간을 확인해 주세요."); return; }
                 updateProfileStatus();
@@ -191,11 +192,15 @@ public final class SettingsActivity extends Activity {
                 if (isFinishing() || isDestroyed()) { authorizationAttempt.finish(attempt); return; }
                 if (!authorizationAttempt.consentLaunched(attempt)) return;
                 try { startIntentSenderForResult(pendingIntent.getIntentSender(), REQUEST_DRIVE_CONSENT, null, 0, 0, 0); }
-                catch (android.content.IntentSender.SendIntentException | RuntimeException error) { failed(); }
+                catch (android.content.IntentSender.SendIntentException | RuntimeException error) {
+                    failed(new ProfileAuthorizationIssue(ProfileAuthorizationIssue.Kind.LAUNCH_ERROR,null,null));
+                }
             }
-            public void failed() {
-                if (authorizationAttempt.finish(attempt) && !isFinishing() && !isDestroyed())
-                    toast("Google 동의를 확인하지 못했습니다. 앱의 Google 연결 설정을 확인해 주세요.");
+            public void failed(ProfileAuthorizationIssue issue) {
+                if (!authorizationAttempt.finish(attempt) || isFinishing() || isDestroyed()) return;
+                googleAuthorizationStatus = issue.message();
+                updateProfileStatus();
+                toast(googleAuthorizationStatus + " 저장된 목록은 유지됩니다.");
             }
         };
     }
@@ -238,7 +243,8 @@ public final class SettingsActivity extends Activity {
 
     private String profileStatusText() {
         return "현재 등록: Chat " + profileRegistry.count(RequestProfileEngine.Mode.CHAT)
-                + "개 · Work " + profileRegistry.count(RequestProfileEngine.Mode.WORK) + "개\n" + profileRegistry.syncStatusText();
+                + "개 · Work " + profileRegistry.count(RequestProfileEngine.Mode.WORK) + "개\n" + profileRegistry.syncStatusText()
+                + (googleAuthorizationStatus.isEmpty() ? "" : "\nGoogle 연결: " + googleAuthorizationStatus);
     }
 
     private String projectStatusText() { return "등록된 프로젝트: " + projectCatalog.entries().size() + "개"; }

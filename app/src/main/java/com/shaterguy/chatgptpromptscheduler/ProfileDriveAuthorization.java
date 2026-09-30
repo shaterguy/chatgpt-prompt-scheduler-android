@@ -15,10 +15,8 @@ final class ProfileDriveAuthorization {
     static final String METADATA_SCOPE = "https://www.googleapis.com/auth/drive.metadata.readonly";
     static final String DOCUMENTS_SCOPE = "https://www.googleapis.com/auth/documents.readonly";
 
-    interface Callback {
-        void authorized(String accessToken);
+    interface Callback extends ProfileAuthorizationResultPolicy.Listener {
         void resolution(PendingIntent pendingIntent);
-        void failed();
     }
 
     static void request(Context context, boolean userInitiated, Callback callback) {
@@ -29,20 +27,32 @@ final class ProfileDriveAuthorization {
         Identity.getAuthorizationClient(context).authorize(builder.build())
                 .addOnSuccessListener(result -> {
                     if (result.hasResolution()) {
-                        if (result.getPendingIntent() == null) callback.failed();
+                        if (result.getPendingIntent() == null) callback.failed(new ProfileAuthorizationIssue(ProfileAuthorizationIssue.Kind.SDK_ERROR,null,null));
                         else callback.resolution(result.getPendingIntent());
                     } else deliver(result, callback);
-                }).addOnFailureListener(error -> callback.failed());
+                }).addOnFailureListener(error -> callback.failed(issue(error)));
     }
 
-    static void fromIntent(Context context, Intent data, Callback callback) {
-        try { deliver(Identity.getAuthorizationClient(context).getAuthorizationResultFromIntent(data), callback); }
-        catch (ApiException | RuntimeException error) { callback.failed(); }
+    static void fromIntent(Context context, Intent data, int resultCode, Callback callback) {
+        ProfileAuthorizationResultPolicy.handle(data, resultCode, value -> {
+            try {
+                AuthorizationResult result = Identity.getAuthorizationClient(context).getAuthorizationResultFromIntent(value);
+                return result == null ? null : result.getAccessToken();
+            } catch (ApiException error) {
+                throw new ProfileAuthorizationResultPolicy.GoogleStatusException(error.getStatusCode());
+            }
+        }, callback);
+    }
+
+    private static ProfileAuthorizationIssue issue(Exception error) {
+        return error instanceof ApiException
+                ? new ProfileAuthorizationIssue(ProfileAuthorizationIssue.Kind.GOOGLE_API,((ApiException)error).getStatusCode(),null)
+                : new ProfileAuthorizationIssue(ProfileAuthorizationIssue.Kind.SDK_ERROR,null,null);
     }
 
     private static void deliver(AuthorizationResult result, Callback callback) {
         String token = result == null ? null : result.getAccessToken();
-        if (token == null || token.isEmpty()) callback.failed();
+        if (token == null || token.isEmpty()) callback.failed(new ProfileAuthorizationIssue(ProfileAuthorizationIssue.Kind.NO_TOKEN,null,null));
         else callback.authorized(token);
     }
 
