@@ -72,7 +72,7 @@ public final class RequestProfileVersionContractTest {
         assertTrue(gradle.contains("versionCode 2100000008"));
         assertTrue(gradle.contains("versionName '0.5.3'"));
         String strings = source("app/src/main/res/values/strings.xml");
-        assertTrue(strings.contains("<string name=\\\"app_name\\\">ChatGPT Prompt Scheduler</string>"));
+        assertTrue(strings.contains("<string name=\"app_name\">ChatGPT Prompt Scheduler</string>"));
         assertFalse(strings.contains("ChatGPT Prompt Scheduler DEV"));
 
         String workflow = source(".github/workflows/android-dev.yml");
