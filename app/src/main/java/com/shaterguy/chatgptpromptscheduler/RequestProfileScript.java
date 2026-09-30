@@ -33,10 +33,6 @@ final class RequestProfileScript {
         String reasoning = "work".equals(experience)
                 ? Schedule.normalizedReasoningEffort(experience, schedule.reasoningEffort)
                 : Schedule.normalizedChatReasoning(experience, schedule.chatReasoning);
-        if (("chat".equals(experience) && ("keep".equals(reasoning) || "inherit".equals(reasoning)))
-                || ("work".equals(experience) && ("inherit".equals(model) || "inherit".equals(reasoning)))) {
-            return nativeInherit(experience, model.isEmpty() ? "chat" : model, reasoning);
-        }
         RequestProfileEngine.ProfilePlan plan;
         try {
             RequestProfileEngine.TargetProfile target = RequestProfileEngine.forSchedule(schedule);
@@ -94,17 +90,7 @@ final class RequestProfileScript {
                   const fail=reason=>{state.last={ok:false,reason:String(reason||'profile_failure').slice(0,80)};throw new Error('REQUEST_PROFILE:'+state.last.reason);};
                   const norm=value=>String(value??'').trim().toLowerCase();
                   const validateOps=operations=>{if(!Array.isArray(operations)||operations.length!==CONTROL.length)fail('operation_count_invalid');const seen=new Set();const out=[];for(const raw of operations){if(!Array.isArray(raw)||(raw.length!==2&&raw.length!==3))fail('operation_shape_invalid');const kind=norm(raw[0]),path=String(raw[1]??'');if(!CONTROL.includes(path)||seen.has(path))fail('control_allowlist_violation');seen.add(path);if(kind==='set'){if(raw.length!==3||typeof raw[2]!=='string'||raw[2].length<1||raw[2].length>128)fail('control_value_invalid');out.push(['set',path,raw[2]]);}else if(kind==='remove'){if(raw.length!==2)fail('remove_value_forbidden');out.push(['remove',path]);}else fail('unknown_operation');}if(seen.size!==CONTROL.length)fail('operation_set_incomplete');return out;};
-                  const configure=(mode,model,reasoning,operations)=>{const m=norm(mode),mo=norm(model),r=norm(reasoning);if(m!=='chat'&&m!=='work')fail('unsupported_mode');if(!r)fail('reasoning_missing');if(m==='work'&&!mo)fail('work_model_missing');const ops=validateOps(operations);state.target={mode:m,model:m==='chat'?'chat':mo,reasoning:r,profileVersion:__PROFILE_VERSION__,ready:true,operations:ops};state.last={ok:true,reason:'target_ready',mode:m,model:state.target.model,reasoning:r,operation:'configure'};return true;};
-                  const chatOps=reasoning=>{const r=norm(reasoning);if(r==='instant')return[['set','model','gpt-5-6'],['remove','thinking_effort'],['remove','conversation_origin'],['remove','service_tier']];if(r==='medium')return[['set','model','gpt-5-6-thinking'],['set','thinking_effort','standard'],['remove','conversation_origin'],['remove','service_tier']];if(r==='high')return[['set','model','gpt-5-6-thinking'],['set','thinking_effort','extended'],['remove','conversation_origin'],['remove','service_tier']];if(r==='xhigh')return[['set','model','gpt-5-6-thinking'],['set','thinking_effort','max'],['remove','conversation_origin'],['remove','service_tier']];if(r==='pro')return[['set','model','gpt-5-6-pro'],['set','thinking_effort','standard'],['remove','conversation_origin'],['remove','service_tier']];fail('unsupported_chat_reasoning');};
-                  const workOps=(model,reasoning)=>{const key=norm(model)+'/'+norm(reasoning);const values={
-                    'luna/max':['gpt-5.6-luna-wm','max','standard'],
-                    'sol/high':['gpt-5.6-sol-wm','extended','standard'],'sol/max':['gpt-5.6-sol-wm','max','standard'],'sol/ultra':['gpt-5.6-sol-wm','ultra','standard'],'sol/xhigh':['gpt-5.6-sol-wm','xhigh','standard'],
-                    'terra/high':['gpt-5.6-terra-wm','extended','standard'],'terra/max':['gpt-5.6-terra-wm','max','standard'],'terra/ultra':['gpt-5.6-terra-wm','ultra',null],'terra/xhigh':['gpt-5.6-terra-wm','xhigh','standard']
-                  }[key];if(!values)fail('unsupported_work_profile');return[['set','model',values[0]],['set','thinking_effort',values[1]],['set','conversation_origin','tpp'],values[2]===null?['remove','service_tier']:['set','service_tier',values[2]]];};
-                  const begin=mode=>{const m=norm(mode);if(m!=='chat'&&m!=='work')fail('unsupported_mode');state.target={mode:m,model:'',reasoning:'',profileVersion:__PROFILE_VERSION__,ready:false,operations:null};return true;};
-                  const setChatReasoning=reasoning=>configure('chat','',reasoning,chatOps(reasoning));
-                  const setWorkModel=model=>{if(!state.target||state.target.mode!=='work')fail('target_mode_not_initialized');state.target.model=norm(model);state.target.ready=false;return true;};
-                  const setWorkReasoning=reasoning=>{if(!state.target||state.target.mode!=='work'||!state.target.model)fail('work_model_missing');return configure('work',state.target.model,reasoning,workOps(state.target.model,reasoning));};
+                  const configure=(mode,model,reasoning,operations)=>{state.target=null;const m=norm(mode),mo=norm(model),r=norm(reasoning);if(m!=='chat'&&m!=='work')fail('unsupported_mode');if(!r)fail('reasoning_missing');if(m==='work'&&!mo)fail('work_model_missing');const ops=validateOps(operations);state.target={mode:m,model:m==='chat'?'chat':mo,reasoning:r,profileVersion:__PROFILE_VERSION__,ready:true,operations:ops};state.last={ok:true,reason:'target_ready',mode:m,model:state.target.model,reasoning:r,operation:'configure'};return true;};
                   const plan=()=>{const target=state.target;if(!target||!target.ready)fail('target_not_ready');if(target.profileVersion!==__PROFILE_VERSION__)fail('profile_version_mismatch');return validateOps(target.operations);};
                   const sameOrigin=url=>{try{return new URL(url,location.href).origin===location.origin;}catch(_){return false;}};
                   const conversationRoute=url=>{try{const path=new URL(url,location.href).pathname;return path==='/backend-api/conversation'||path==='/backend-api/conversation/'||path==='/backend-api/f/conversation'||path==='/backend-api/f/conversation/';}catch(_){return false;}};
@@ -118,7 +104,7 @@ final class RequestProfileScript {
                   const metadata=new WeakMap();
                   XMLHttpRequest.prototype.open=function(method,url,...rest){metadata.set(this,{method:String(method||''),url:String(url||'')});return nativeOpen.call(this,method,url,...rest);};
                   XMLHttpRequest.prototype.send=function(body){const request=metadata.get(this)||{method:'',url:''};const patched=patchText(request.url,request.method,body);return nativeSend.call(this,patched===null?body:patched);};
-                  window.__chatgptPromptSchedulerRequestProfileEngine={version:__ENGINE_VERSION__,configure,begin,setChatReasoning,setWorkModel,setWorkReasoning,diagnostics:()=>({...state.last}),target:()=>state.target?{mode:state.target.mode,model:state.target.model,reasoning:state.target.reasoning,profileVersion:state.target.profileVersion,ready:state.target.ready}:null};
+                  window.__chatgptPromptSchedulerRequestProfileEngine={version:__ENGINE_VERSION__,configure,diagnostics:()=>({...state.last}),target:()=>state.target?{mode:state.target.mode,model:state.target.model,reasoning:state.target.reasoning,profileVersion:state.target.profileVersion,ready:state.target.ready}:null};
                 })();
                 """
                 .replace("__ENGINE_VERSION__", jsQuote(ENGINE_VERSION))

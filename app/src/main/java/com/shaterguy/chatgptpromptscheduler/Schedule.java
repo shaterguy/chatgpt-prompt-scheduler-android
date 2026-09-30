@@ -32,6 +32,7 @@ public final class Schedule {
     public long nextRunAt = 0L;
     public String lastStatus = "NEVER";
     transient RequestProfileEngine.TargetProfile resolvedRequestProfile;
+    transient boolean requestProfileRegistryResolved;
 
     public static String normalizedExperience(String targetType, String experience) {
         if ("existing".equals(targetType)) return "inherit";

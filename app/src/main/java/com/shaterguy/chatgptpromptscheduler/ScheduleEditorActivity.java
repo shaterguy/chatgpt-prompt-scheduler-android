@@ -11,6 +11,7 @@ import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.Switch;
 import android.widget.Toast;
+import android.widget.TextView;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -39,6 +40,7 @@ public final class ScheduleEditorActivity extends Activity {
     private List<String> workReasoningValues = new ArrayList<>();
     private List<String> chatReasoningValues = new ArrayList<>();
     private String lastWorkModelValue = "";
+    private TextView profileListStatus;
     private EditText prompt;
     private Spinner recurrence;
     private EditText times;
@@ -66,6 +68,17 @@ public final class ScheduleEditorActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (projectTarget != null) reloadProjectChoices();
+        ProfileRegistrySync.refresh(this, result -> {
+            if (isFinishing() || isDestroyed() || workModel == null) return;
+            String chat = selectedProfileValue(chatReasoning, chatReasoningValues);
+            String model = selectedProfileValue(workModel, workModelValues);
+            String effort = selectedProfileValue(reasoningEffort, workReasoningValues);
+            lastWorkModelValue = model;
+            reloadChatReasoningChoices(chat);
+            reloadWorkModelChoices(model);
+            reloadWorkReasoningChoices(effort);
+            profileListStatus.setText(profileRegistry.syncStatusText());
+        });
     }
 
     private void buildUi() {
@@ -99,6 +112,10 @@ public final class ScheduleEditorActivity extends Activity {
         experience = spinner(experienceSection, "실행 모드", new String[]{"chat", "work"},
                 "work".equals(schedule.experience) ? "work" : "chat");
 
+        root.addView(Ui.body(this, "자동 목록에서 확인된 조합만 선택할 수 있습니다. 저장된 조합이 목록에 없으면 다시 선택해야 하며, 선택 전에는 기존 예약을 변경하지 않습니다."));
+        profileListStatus = Ui.body(this, profileRegistry.syncStatusText());
+        root.addView(profileListStatus);
+
         chatReasoningSection = section(root);
         chatReasoningSection.addView(Ui.body(this, "일반 Chat 추론 정도"));
         chatReasoning = new Spinner(this);
@@ -129,7 +146,7 @@ public final class ScheduleEditorActivity extends Activity {
                 String currentModel = selectedProfileValue(workModel, workModelValues);
                 if (currentModel.equals(lastWorkModelValue)) return;
                 lastWorkModelValue = currentModel;
-                reloadWorkReasoningChoices("inherit");
+                reloadWorkReasoningChoices("inherit".equals(currentModel) ? "inherit" : "");
             }
             @Override public void onNothingSelected(AdapterView<?> parent) {}
         });
@@ -164,62 +181,52 @@ public final class ScheduleEditorActivity extends Activity {
         Ui.setContent(this, scroll);
     }
 
-    private void reloadChatReasoningChoices() {
-        chatReasoningValues = new ArrayList<>();
-        chatReasoningValues.add("keep");
-        for (String value : profileRegistry.chatReasonings()) if (!chatReasoningValues.contains(value)) chatReasoningValues.add(value);
-        String current = Schedule.normalizedChatReasoning(schedule.experience, schedule.chatReasoning);
-        if (!"keep".equals(current) && !chatReasoningValues.contains(current)) chatReasoningValues.add(current);
-        ArrayList<String> labels = new ArrayList<>();
-        for (String value : chatReasoningValues) labels.add("keep".equals(value)
-                ? "현재 Chat 설정 유지"
-                : labelForRegistration(value, profileRegistry.find(RequestProfileEngine.Mode.CHAT, "", value) != null));
-        chatReasoning.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels));
-        selectValue(chatReasoning, chatReasoningValues, current);
+    private void reloadChatReasoningChoices() { reloadChatReasoningChoices(Schedule.normalizedChatReasoning(schedule.experience, schedule.chatReasoning)); }
+    private void reloadChatReasoningChoices(String requested) {
+        chatReasoningValues = profileChoices("keep", profileRegistry.chatReasonings());
+        setProfileChoices(chatReasoning, chatReasoningValues, "keep", "현재 Chat 설정 유지",
+                "inherit".equals(requested) ? "keep" : requested);
     }
 
-    private void reloadWorkModelChoices() {
-        workModelValues = new ArrayList<>();
-        workModelValues.add("inherit");
-        for (String value : profileRegistry.workModels()) if (!workModelValues.contains(value)) workModelValues.add(value);
-        String current = Schedule.normalizedWorkModel(schedule.experience, schedule.workModel);
-        if (!"inherit".equals(current) && !workModelValues.contains(current)) workModelValues.add(current);
-        ArrayList<String> labels = new ArrayList<>();
-        for (String value : workModelValues) labels.add("inherit".equals(value)
-                ? "현재 설정 유지"
-                : labelForRegistration(value, !profileRegistry.workReasoningsForModel(value).isEmpty()));
-        workModel.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels));
-        selectValue(workModel, workModelValues, current);
+    private void reloadWorkModelChoices() { reloadWorkModelChoices(Schedule.normalizedWorkModel(schedule.experience, schedule.workModel)); }
+    private void reloadWorkModelChoices(String requested) {
+        workModelValues = profileChoices("inherit", profileRegistry.workModels());
+        setProfileChoices(workModel, workModelValues, "inherit", "현재 설정 유지", requested);
+        lastWorkModelValue = selectedProfileValue(workModel, workModelValues);
     }
 
     private void reloadWorkReasoningChoices(String requested) {
         if (reasoningEffort == null || workModel == null) return;
         String model = selectedProfileValue(workModel, workModelValues);
-        workReasoningValues = new ArrayList<>();
-        workReasoningValues.add("inherit");
-        if (!"inherit".equals(model)) {
-            for (String value : profileRegistry.workReasoningsForModel(model)) {
-                if (!workReasoningValues.contains(value)) workReasoningValues.add(value);
-            }
-        }
-        String current = Schedule.normalizedReasoningEffort("work", requested);
-        if (!"inherit".equals(current) && !workReasoningValues.contains(current)) workReasoningValues.add(current);
+        boolean inherit = "inherit".equals(model);
+        workReasoningValues = profileChoices(inherit ? "inherit" : null,
+                inherit || model.isEmpty() ? List.of() : profileRegistry.workReasoningsForModel(model));
+        setProfileChoices(reasoningEffort, workReasoningValues, "inherit", "현재 설정 유지", requested);
+    }
+
+    static List<String> profileChoices(String nativeChoice, List<String> canonical) {
+        ArrayList<String> values = new ArrayList<>();
+        values.add("");
+        if (nativeChoice != null) values.add(nativeChoice);
+        for (String value : canonical) if (!values.contains(value)) values.add(value);
+        return values;
+    }
+
+    static int profileChoiceIndex(List<String> values, String requested) {
+        return Math.max(0, values.indexOf(requested));
+    }
+
+    private void setProfileChoices(Spinner spinner, List<String> values, String nativeValue,
+                                   String nativeLabel, String requested) {
         ArrayList<String> labels = new ArrayList<>();
-        for (String value : workReasoningValues) {
-            boolean registered = "inherit".equals(value)
-                    || profileRegistry.find(RequestProfileEngine.Mode.WORK, model, value) != null;
-            labels.add("inherit".equals(value) ? "현재 설정 유지" : labelForRegistration(value, registered));
-        }
-        reasoningEffort.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels));
-        selectValue(reasoningEffort, workReasoningValues, current);
-    }
-
-    private String labelForRegistration(String value, boolean registered) {
-        return registered ? value : value + " · 등록되지 않음";
-    }
-
-    private static void selectValue(Spinner spinner, List<String> values, String value) {
-        spinner.setSelection(Math.max(0, values.indexOf(value)));
+        for (String value : values) labels.add(value.isEmpty() ? "선택 필요 · 목록을 확인해 주세요"
+                : nativeValue.equals(value) ? nativeLabel : value);
+        spinner.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, labels) {
+            @Override public boolean areAllItemsEnabled() { return false; }
+            @Override public boolean isEnabled(int position) { return position > 0 && position < values.size(); }
+        });
+        spinner.setSelection(profileChoiceIndex(values, requested));
+        spinner.setEnabled(values.size() > 1);
     }
 
     private static String selectedProfileValue(Spinner spinner, List<String> values) {
@@ -399,6 +406,14 @@ public final class ScheduleEditorActivity extends Activity {
             }
         }
 
+        if (!profileRegistry.isSelectionAvailable(type, selected(experience),
+                selectedProfileValue(chatReasoning, chatReasoningValues),
+                selectedProfileValue(workModel, workModelValues),
+                selectedProfileValue(reasoningEffort, workReasoningValues))) {
+            toast("선택한 모델·추론 조합이 자동 목록에 없습니다. 목록을 업데이트하거나 사용 가능한 조합을 선택해 주세요. 기존 예약은 변경하지 않았습니다.");
+            return;
+        }
+
         schedule.name = name.getText().toString().trim().isEmpty()
                 ? "예약" : name.getText().toString().trim();
         schedule.targetType = type;
@@ -435,6 +450,8 @@ public final class ScheduleEditorActivity extends Activity {
         }
         schedule.enabled = enabled.isChecked();
         profileRegistry.attach(schedule);
+        try { RequestProfileEngine.forSchedule(schedule); }
+        catch (IllegalArgumentException unavailable) { toast("선택한 모델·추론 조합이 현재 목록에 없습니다. 다른 조합을 선택하거나 목록을 업데이트해 주세요."); return; }
         store.saveSchedule(schedule);
         AlarmEngine.cancel(this, schedule.id);
         if (schedule.enabled) AlarmEngine.scheduleNext(this, schedule, System.currentTimeMillis());

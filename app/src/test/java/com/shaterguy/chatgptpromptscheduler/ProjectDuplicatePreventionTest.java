@@ -17,12 +17,13 @@ public class ProjectDuplicatePreventionTest {
         assertFalse(script.contains("actualProject===expectedProject&&(afterSubmit||!actualConversation)"));
     }
 
-    @Test public void chatRequestProfileActivationUsesExactOperationPlan() {
+    @Test public void chatRequestProfileActivationUsesExactOperationPlan() throws Exception {
         Schedule schedule = new Schedule();
         schedule.targetType = "project";
         schedule.targetUrl = "https://chatgpt.com/g/proj/project";
         schedule.experience = "chat";
         schedule.chatReasoning = "medium";
+        LegacyProfileFixtures.attach(schedule);
         String script = AutomationScript.build(schedule, "prompt", "run-chat-profile", 0);
         assertTrue(script.contains("__chatgptPromptSchedulerRequestProfileEngine"));
         assertTrue(script.contains("profileEngine.configure(\"chat\",\"\",\"medium\""));
@@ -33,13 +34,14 @@ public class ProjectDuplicatePreventionTest {
         assertFalse(script.contains("modeTrigger"));
     }
 
-    @Test public void workRequestProfileActivationUsesOnlyRegisteredCombination() {
+    @Test public void workRequestProfileActivationUsesOnlyRegisteredCombination() throws Exception {
         Schedule schedule = new Schedule();
         schedule.targetType = "general";
         schedule.targetUrl = "https://chatgpt.com/";
         schedule.experience = "work";
         schedule.workModel = "terra";
         schedule.reasoningEffort = "xhigh";
+        LegacyProfileFixtures.attach(schedule);
         String script = AutomationScript.build(schedule, "prompt", "run-work-profile", 0);
         assertTrue(script.contains("profileEngine.configure(\"work\",\"terra\",\"xhigh\""));
         assertTrue(script.contains("[\"set\",\"model\",\"gpt-5.6-terra-wm\"]"));
@@ -49,13 +51,14 @@ public class ProjectDuplicatePreventionTest {
         assertFalse(script.contains("openMenu("));
     }
 
-    @Test public void terraUltraPreservesRegistryServiceTierRemoval() {
+    @Test public void terraUltraPreservesRegistryServiceTierRemoval() throws Exception {
         Schedule schedule = new Schedule();
         schedule.targetType = "general";
         schedule.targetUrl = "https://chatgpt.com/";
         schedule.experience = "work";
         schedule.workModel = "terra";
         schedule.reasoningEffort = "ultra";
+        LegacyProfileFixtures.attach(schedule);
         String script = AutomationScript.build(schedule, "prompt", "run-ultra-profile", 0);
         assertTrue(script.contains("profileEngine.configure(\"work\",\"terra\",\"ultra\""));
         assertTrue(script.contains("[\"remove\",\"service_tier\"]"));
