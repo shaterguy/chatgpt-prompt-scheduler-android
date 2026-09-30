@@ -1,4 +1,4 @@
-# Canonical model/effort updates (0.5.2-dev2)
+# Canonical model/effort updates (0.5.2-dev3)
 
 Settings → **Google 로그인 · 목록 업데이트** opens Google-managed account selection and consent. The requested scopes are `drive.metadata.readonly` and `documents.readonly`. Although Google grants these scopes at account level, this app's read-only client accepts only the two canonical profile document IDs already used by SelfRun. It never creates, modifies, shares, or deletes Drive/Docs files, and never stores or logs an access token.
 
@@ -38,3 +38,14 @@ This creates an unsigned DEV release candidate. Delivery must use the existing D
 The result returned by Google's authorization UI is always decoded by the Google SDK when result data is present. An Android Activity result code alone no longer discards the Google response. A valid SDK-returned access token is required before sync can be enabled, and stale/disabled Activity attempts are still rejected.
 
 If authorization fails, Settings retains an in-memory, readable error summary using only fixed categories and numeric Google status codes. The app does not log or persist raw Intent data, provider messages, account identifiers, tokens, or exception causes. A generic cancellation/no-result message is not evidence that the user cancelled or that Cloud registration is absent. Google Cloud registration and actual consent remain separate prerequisites; this diagnostic improvement does not itself create or repair a Cloud client.
+
+
+### Controlled authorization comparison (dev3)
+
+The normal Settings button now omits the optional prompt parameter, matching SelfRun's runtime authorization request. Background refresh always uses this default. The Google SDK remains pinned to 21.6.0 and the two read-only scopes are unchanged. This is a controlled diagnostic comparison, not proof that optional CONSENT caused INTERNAL_ERROR (8).
+
+Open Google connection diagnostics only when needed. The single comparison checkbox selects the previous CONSENT request for the next explicit login-button tap; opening the panel or changing the checkbox never starts authorization. Changing mode, disabling sync, or destroying Settings invalidates the pending attempt. Each launched result has a distinct request code; only the next unused numeric code survives recreation, never authorization state. No retries, grant revocation, token clearing, or extra scopes are added.
+
+Up to four attempts remain only in the current Settings instance. The report contains fixed phases/modes/outcomes, numeric Google and Activity result codes, a result-data-present flag, monotonic elapsed times, and Google Play services version/availability snapshots. The copy button adds the public app identity/version/signing-certificate SHA-1, Android SDK level, and current Google Play services metadata. No accounts, access tokens, Intent contents, provider messages or exception causes are recorded, persisted or automatically copied. Direct SDK success is recorded as DIRECT_RESULT with grant_source=UNKNOWN; it does not prove a new grant or cache hit.
+
+Try the default request once; if it succeeds, stop the comparison. If it fails, the previous-mode checkbox allows one explicit comparison without reinstalling. A successful grant or server-side change can affect later attempts, so these observations do not establish causality. Do not revoke SelfRun access or clear Google data to repeat the comparison. Live OAuth completion and document refresh still need user verification.

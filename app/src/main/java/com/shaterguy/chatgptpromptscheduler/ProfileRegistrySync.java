@@ -32,7 +32,7 @@ final class ProfileRegistrySync {
         ProfileSyncCoordinator.Operation operation = begin(registry, callback);
         if (operation == null) return;
         try {
-            ProfileDriveAuthorization.request(context.getApplicationContext(), false, new ProfileDriveAuthorization.Callback() {
+            ProfileDriveAuthorization.request(context.getApplicationContext(), ProfileAuthorizationSession.Mode.DEFAULT, new ProfileDriveAuthorization.Callback() {
                 public void authorized(String token) { fetch(registry, token, operation); }
                 public void resolution(android.app.PendingIntent ignored) { failAuthorization(registry, operation, "AUTH_REQUIRED"); }
                 public void failed(ProfileAuthorizationIssue ignored) { failAuthorization(registry, operation, "AUTH_FAILED"); }

@@ -76,12 +76,12 @@ public final class ProfileAuthorizationResultPolicyTest {
         java.nio.file.Path file=java.nio.file.Paths.get("app/src/main/java/com/shaterguy/chatgptpromptscheduler/SettingsActivity.java");
         if(!java.nio.file.Files.exists(file))file=java.nio.file.Paths.get("..").resolve(file);
         String source=new String(java.nio.file.Files.readAllBytes(file),java.nio.charset.StandardCharsets.UTF_8);
-        String result=source.substring(source.indexOf("if (requestCode == REQUEST_DRIVE_CONSENT)"),source.indexOf("if ((requestCode != REQUEST_CHAT_PROFILE"));
+        String result=source.substring(source.indexOf("if (requestCode >= ProfileAuthorizationSession.FIRST_REQUEST_CODE"),source.indexOf("if ((requestCode != REQUEST_CHAT_PROFILE"));
         assertFalse(result.contains("resultCode == RESULT_OK"));
-        assertTrue(result.indexOf("authorizationAttempt.takeConsentResult()")<result.indexOf("ProfileDriveAuthorization.fromIntent"));
+        assertTrue(result.indexOf("authorizationAttempt.takeConsentResult(")>=0 && result.indexOf("authorizationAttempt.takeConsentResult(")<result.indexOf("ProfileDriveAuthorization.fromIntent"));
         assertTrue(result.contains("fromIntent(this, data, resultCode, authorizationCallback(attempt))"));
         String authorized=source.substring(source.indexOf("public void authorized(String token)"),source.indexOf("public void resolution("));
-        assertTrue(authorized.indexOf("authorizationAttempt.finish(attempt)")<authorized.indexOf("profileRegistry.setSyncEnabled(true)"));
+        assertTrue(authorized.indexOf("authorizationAttempt.succeed(attempt,")>=0 && authorized.indexOf("authorizationAttempt.succeed(attempt,")<authorized.indexOf("profileRegistry.setSyncEnabled(true)"));
     }
     private static ProfileAuthorizationResultPolicy.Listener guarded(ProfileAuthorizationAttempt gate,long attempt,boolean[] enabled) {
         return new ProfileAuthorizationResultPolicy.Listener() {

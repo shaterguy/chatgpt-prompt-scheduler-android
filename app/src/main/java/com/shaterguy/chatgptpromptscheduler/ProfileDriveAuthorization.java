@@ -19,11 +19,11 @@ final class ProfileDriveAuthorization {
         void resolution(PendingIntent pendingIntent);
     }
 
-    static void request(Context context, boolean userInitiated, Callback callback) {
+    static void request(Context context, ProfileAuthorizationSession.Mode mode, Callback callback) {
         AuthorizationRequest.Builder builder = AuthorizationRequest.builder()
                 .setRequestedScopes(List.of(new Scope(METADATA_SCOPE), new Scope(DOCUMENTS_SCOPE)))
                 .setOptOutIncludingGrantedScopes(true);
-        if (userInitiated) builder.setPrompt(AuthorizationRequest.Prompt.CONSENT);
+        if (mode == ProfileAuthorizationSession.Mode.PREVIOUS_CONSENT) builder.setPrompt(AuthorizationRequest.Prompt.CONSENT);
         Identity.getAuthorizationClient(context).authorize(builder.build())
                 .addOnSuccessListener(result -> {
                     if (result.hasResolution()) {

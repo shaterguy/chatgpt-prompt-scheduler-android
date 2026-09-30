@@ -67,13 +67,13 @@ public final class RequestProfileVersionContractTest {
         String gradle = source("app/build.gradle");
         assertEquals(1, occurrences(gradle, "androidx.webkit:webkit:1.17.0"));
         assertTrue(gradle.contains("applicationId 'com.shaterguy.chatgptpromptscheduler.dev'"));
-        assertTrue(gradle.contains("versionCode 5002002"));
-        assertTrue(gradle.contains("versionName '0.5.2-dev2'"));
+        assertTrue(gradle.contains("versionCode 5002003"));
+        assertTrue(gradle.contains("versionName '0.5.2-dev3'"));
 
         String workflow = source(".github/workflows/android-dev.yml");
-        assertTrue(workflow.contains("DEV_VERSION_CODE: '5002002'"));
-        assertTrue(workflow.contains("DEV_VERSION_NAME: 0.5.2-dev2"));
-        assertTrue(workflow.contains("DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.5.2-dev2-unsigned.apk"));
+        assertTrue(workflow.contains("DEV_VERSION_CODE: '5002003'"));
+        assertTrue(workflow.contains("DEV_VERSION_NAME: 0.5.2-dev3"));
+        assertTrue(workflow.contains("DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.5.2-dev3-unsigned.apk"));
         assertTrue(workflow.contains("attempt-${{ github.run_attempt }}"));
         assertTrue(workflow.contains(":app:connectedDebugAndroidTest"));
         assertTrue(workflow.contains(":app:testDebugUnitTest :app:assembleRelease"));

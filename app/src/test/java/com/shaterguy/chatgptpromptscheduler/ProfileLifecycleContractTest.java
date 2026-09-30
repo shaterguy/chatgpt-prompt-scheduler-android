@@ -14,9 +14,9 @@ public final class ProfileLifecycleContractTest {
     }
     @Test public void disabledAndDestroyedSettingsInvalidatePendingAuthorization() throws Exception {
         String value = source("SettingsActivity.java");
-        assertTrue("Disable must invalidate before persisting", value.contains("authorizationAttempt.cancel();\n                        profileRegistry.setSyncEnabled(false)"));
-        assertTrue("Destroyed activities must invalidate", value.contains("authorizationAttempt.cancel();\n        super.onDestroy()"));
-        assertTrue("Results must claim a launched attempt", value.contains("authorizationAttempt.takeConsentResult()"));
+        assertTrue("Disable must invalidate before persisting", value.indexOf("authorizationAttempt.cancel(ProfileAuthorizationSession.Outcome.DISABLED") >= 0 && value.indexOf("authorizationAttempt.cancel(ProfileAuthorizationSession.Outcome.DISABLED") < value.indexOf("profileRegistry.setSyncEnabled(false)"));
+        assertTrue("Destroyed activities must invalidate", value.contains("authorizationAttempt.cancel(ProfileAuthorizationSession.Outcome.DESTROYED"));
+        assertTrue("Results must claim a launched attempt", value.contains("authorizationAttempt.takeConsentResult("));
         assertTrue("Callbacks must capture their own attempt", value.contains("authorizationCallback(long attempt)"));
     }
     @Test public void scheduledRefreshHoldsBoundedPreparationLeaseUntilHandoff() throws Exception {
