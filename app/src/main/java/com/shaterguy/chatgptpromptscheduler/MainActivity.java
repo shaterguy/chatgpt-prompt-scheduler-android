@@ -45,6 +45,7 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (root != null) render();
+        ProfileRegistrySync.refresh(this, result -> { if (!isFinishing() && !isDestroyed() && root != null && result.updated) render(); });
     }
 
     private void render() {

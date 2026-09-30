@@ -66,6 +66,16 @@ public final class ScheduleEditorActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (projectTarget != null) reloadProjectChoices();
+        ProfileRegistrySync.refresh(this, result -> {
+            if (isFinishing() || isDestroyed() || workModel == null) return;
+            String chat = selectedProfileValue(chatReasoning, chatReasoningValues);
+            String model = selectedProfileValue(workModel, workModelValues);
+            String effort = selectedProfileValue(reasoningEffort, workReasoningValues);
+            lastWorkModelValue = model;
+            reloadChatReasoningChoices(chat);
+            reloadWorkModelChoices(model);
+            reloadWorkReasoningChoices(effort);
+        });
     }
 
     private void buildUi() {
@@ -164,11 +174,12 @@ public final class ScheduleEditorActivity extends Activity {
         Ui.setContent(this, scroll);
     }
 
-    private void reloadChatReasoningChoices() {
+    private void reloadChatReasoningChoices() { reloadChatReasoningChoices(Schedule.normalizedChatReasoning(schedule.experience, schedule.chatReasoning)); }
+    private void reloadChatReasoningChoices(String requested) {
         chatReasoningValues = new ArrayList<>();
         chatReasoningValues.add("keep");
         for (String value : profileRegistry.chatReasonings()) if (!chatReasoningValues.contains(value)) chatReasoningValues.add(value);
-        String current = Schedule.normalizedChatReasoning(schedule.experience, schedule.chatReasoning);
+        String current = Schedule.normalizedChatReasoning("chat", requested);
         if (!"keep".equals(current) && !chatReasoningValues.contains(current)) chatReasoningValues.add(current);
         ArrayList<String> labels = new ArrayList<>();
         for (String value : chatReasoningValues) labels.add("keep".equals(value)
@@ -178,11 +189,12 @@ public final class ScheduleEditorActivity extends Activity {
         selectValue(chatReasoning, chatReasoningValues, current);
     }
 
-    private void reloadWorkModelChoices() {
+    private void reloadWorkModelChoices() { reloadWorkModelChoices(Schedule.normalizedWorkModel(schedule.experience, schedule.workModel)); }
+    private void reloadWorkModelChoices(String requested) {
         workModelValues = new ArrayList<>();
         workModelValues.add("inherit");
         for (String value : profileRegistry.workModels()) if (!workModelValues.contains(value)) workModelValues.add(value);
-        String current = Schedule.normalizedWorkModel(schedule.experience, schedule.workModel);
+        String current = Schedule.normalizedWorkModel("work", requested);
         if (!"inherit".equals(current) && !workModelValues.contains(current)) workModelValues.add(current);
         ArrayList<String> labels = new ArrayList<>();
         for (String value : workModelValues) labels.add("inherit".equals(value)
@@ -435,6 +447,8 @@ public final class ScheduleEditorActivity extends Activity {
         }
         schedule.enabled = enabled.isChecked();
         profileRegistry.attach(schedule);
+        try { RequestProfileEngine.forSchedule(schedule); }
+        catch (IllegalArgumentException unavailable) { toast("선택한 모델·추론 조합이 현재 목록에 없습니다. 다른 조합을 선택하거나 목록을 업데이트해 주세요."); return; }
         store.saveSchedule(schedule);
         AlarmEngine.cancel(this, schedule.id);
         if (schedule.enabled) AlarmEngine.scheduleNext(this, schedule, System.currentTimeMillis());

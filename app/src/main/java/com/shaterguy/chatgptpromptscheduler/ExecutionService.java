@@ -48,6 +48,7 @@ public final class ExecutionService extends Service {
     private HeadlessWebViewHost webViewHost;
     private WebView webView;
     private PowerManager.WakeLock wakeLock;
+    private final ProfilePreparationLease profilePreparation = new ProfilePreparationLease();
     private JSONObject currentItem;
     private Schedule currentSchedule;
     private RequestProfileEngine.TargetProfile currentRequestProfile;
@@ -57,6 +58,7 @@ public final class ExecutionService extends Service {
     private int engineAttempt;
     private int routeRecoveryAttempts;
     private int navigationGeneration;
+    private boolean serviceDestroyed;
     private int traceDropped;
     private int projectCandidateIndex;
     private boolean submitted;
@@ -98,7 +100,11 @@ public final class ExecutionService extends Service {
     }
 
     private void processNext() {
+        if (serviceDestroyed) return;
         cleanupEngine();
+        currentSchedule = null;
+        startedAt = 0L;
+        resetTrace();
         currentRequestProfile = null;
         projectDisplayName = "";
         projectCandidateIndex = 0;
@@ -117,6 +123,22 @@ public final class ExecutionService extends Service {
             stopSelf();
             return;
         }
+        final String claimedRunId = currentItem.optString("runId");
+        try {
+            acquireProfilePreparationWakeLock();
+            ProfileRegistrySync.refresh(this, result -> {
+                if (serviceDestroyed || !processing.get() || currentItem == null || !claimedRunId.equals(currentItem.optString("runId"))) return;
+                // processClaimedItem acquires the run lock before the preparation lease is released.
+                try { processClaimedItem(); }
+                finally { profilePreparation.close(); }
+            });
+        } catch (RuntimeException error) {
+            profilePreparation.close();
+            finish(false, "PROFILE_PREPARATION_FAILED", "모델 목록 확인을 시작하지 못했습니다.");
+        }
+    }
+
+    private void processClaimedItem() {
         startedAt = 0L;
         resetTrace();
         trace("QUEUE_CLAIMED", object("runId", currentItem.optString("runId"), "manual", currentItem.optBoolean("manual", false)));
@@ -154,7 +176,7 @@ public final class ExecutionService extends Service {
         try {
             currentRequestProfile = RequestProfileEngine.forSchedule(currentSchedule);
         } catch (IllegalArgumentException invalidProfile) {
-            finish(false, "REQUEST_PROFILE_INVALID", "명시적인 지원 모델과 추론 수준을 선택해야 합니다.");
+            finish(false, "REQUEST_PROFILE_INVALID", "선택한 모델·추론 조합이 현재 목록에 없습니다. 설정에서 목록을 업데이트하거나 예약의 조합을 다시 선택해 주세요.");
             return;
         }
         if (currentRequestProfile != null && !RequestProfileScript.isDocumentStartSupported()) {
@@ -194,6 +216,13 @@ public final class ExecutionService extends Service {
         trace("NETWORK_CHECK", object("available", available,
                 "validated", capabilities != null && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)));
         return available;
+    }
+
+    private void acquireProfilePreparationWakeLock() {
+        PowerManager manager = getSystemService(PowerManager.class);
+        PowerManager.WakeLock lock = manager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ChatGPTPromptScheduler:ProfilePreparation");
+        lock.acquire(ProfilePreparationLease.TIMEOUT_MS);
+        profilePreparation.hold(() -> { if (lock.isHeld()) lock.release(); });
     }
 
     private void acquireWakeLock() {
@@ -696,6 +725,7 @@ public final class ExecutionService extends Service {
     }
 
     private void cleanupEngine() {
+        profilePreparation.close();
         handler.removeCallbacks(automationRunnable);
         handler.removeCallbacks(watchdogRunnable);
         cleanupWebViewOnly();
@@ -709,6 +739,7 @@ public final class ExecutionService extends Service {
 
     @Override
     public void onDestroy() {
+        serviceDestroyed = true;
         cleanupEngine();
         super.onDestroy();
     }

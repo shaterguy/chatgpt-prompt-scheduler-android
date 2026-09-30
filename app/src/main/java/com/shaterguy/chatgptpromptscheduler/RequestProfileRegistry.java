@@ -30,6 +30,8 @@ final class RequestProfileRegistry {
     private static final Set<String> PROFILE_KEYS = Set.of("signal", "request", "operations", "fingerprint", "builtIn");
     private static final Set<String> OP_KEYS = Set.of("op", "path", "value");
     private final SharedPreferences prefs;
+    private static final Object STORAGE_LOCK = new Object();
+    private static final Map<RequestProfileEngine.Mode, String> TRANSIENT_SYNC_ERRORS = new java.util.concurrent.ConcurrentHashMap<>();
 
     static final class ImportResult {
         final int added, updated, unchanged, total;
@@ -39,15 +41,22 @@ final class RequestProfileRegistry {
     }
 
     RequestProfileRegistry(Context context) {
-        prefs = context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        ensureBuiltIns();
+        this(context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE));
+    }
+
+    RequestProfileRegistry(SharedPreferences preferences) {
+        prefs = preferences;
+        synchronized (STORAGE_LOCK) { ensureBuiltIns(); }
     }
 
     synchronized ImportResult importChat(String raw) throws JSONException { return merge(RequestProfileEngine.Mode.CHAT, parseRegistryText(raw, RequestProfileEngine.Mode.CHAT)); }
     synchronized ImportResult importWork(String raw) throws JSONException { return merge(RequestProfileEngine.Mode.WORK, parseRegistryText(raw, RequestProfileEngine.Mode.WORK)); }
 
     synchronized void attach(Schedule schedule) {
-        if (schedule == null || "existing".equals(schedule.targetType)) return;
+        if (schedule == null) return;
+        schedule.resolvedRequestProfile = null;
+        schedule.requestProfileRegistryResolved = true;
+        if ("existing".equals(schedule.targetType)) return;
         String experience = Schedule.normalizedExperience(schedule.targetType, schedule.experience);
         RequestProfileEngine.Mode mode = "work".equals(experience) ? RequestProfileEngine.Mode.WORK : RequestProfileEngine.Mode.CHAT;
         String model = mode == RequestProfileEngine.Mode.WORK ? Schedule.normalizedWorkModel(experience, schedule.workModel) : "";
@@ -152,6 +161,8 @@ final class RequestProfileRegistry {
             if (!seenPaths.equals(RequestProfileEngine.CONTROL_PATHS)) throw new JSONException("control path 집합이 완전하지 않습니다.");
             RequestProfileEngine.TargetProfile parsed = new RequestProfileEngine.TargetProfile(expectedMode, model, reasoning, parsedOps);
             RequestProfileEngine.validateOperations(parsed.operations);
+            if (profile.has("fingerprint") && !fingerprint(expectedMode, parsed.operations).equals(profile.getString("fingerprint")))
+                throw new JSONException("fingerprint 검증에 실패했습니다.");
             if (!seenProfiles.add(RequestProfileEngine.key(parsed))) throw new JSONException("중복 profile 조합입니다.");
             out.add(parsed);
         }
@@ -159,6 +170,8 @@ final class RequestProfileRegistry {
     }
 
     private ImportResult merge(RequestProfileEngine.Mode mode, List<RequestProfileEngine.TargetProfile> incoming) throws JSONException {
+        synchronized (STORAGE_LOCK) {
+        if (syncEnabled() || prefs.contains(rawKey(mode))) throw new IllegalStateException("Drive에서 관리하는 프로필은 공식 문서에서 수정해 주세요.");
         LinkedHashMap<String, RequestProfileEngine.TargetProfile> merged = new LinkedHashMap<>();
         for (RequestProfileEngine.TargetProfile profile : profiles(mode)) merged.put(RequestProfileEngine.key(profile), profile);
         int added = 0, updated = 0, unchanged = 0;
@@ -174,9 +187,16 @@ final class RequestProfileRegistry {
         String key = mode == RequestProfileEngine.Mode.CHAT ? KEY_CHAT : KEY_WORK;
         if (!prefs.edit().putString(key, stored.toString()).commit()) throw new IllegalStateException("프로필 레지스트리를 저장하지 못했습니다.");
         return new ImportResult(added, updated, unchanged, incoming.size());
+        }
     }
 
     private synchronized List<RequestProfileEngine.TargetProfile> profiles(RequestProfileEngine.Mode mode) {
+        synchronized (STORAGE_LOCK) {
+        if (prefs.contains(rawKey(mode))) {
+            try { return parseCanonicalRegistry(prefs.getString(rawKey(mode), ""), mode); }
+            catch (Exception invalidCache) { return Collections.emptyList(); }
+        }
+        if (syncEnabled()) return Collections.emptyList();
         String key = mode == RequestProfileEngine.Mode.CHAT ? KEY_CHAT : KEY_WORK;
         String stored = prefs.getString(key, null);
         ArrayList<RequestProfileEngine.TargetProfile> out = new ArrayList<>();
@@ -190,6 +210,7 @@ final class RequestProfileRegistry {
             } catch (Throwable ignored) { out.clear(); }
         }
         return out;
+        }
     }
 
     private void ensureBuiltIns() {
@@ -197,14 +218,17 @@ final class RequestProfileRegistry {
         LinkedHashMap<String, RequestProfileEngine.TargetProfile> work = mapByKey(profiles(RequestProfileEngine.Mode.WORK));
         boolean changed = false;
         for (RequestProfileEngine.TargetProfile profile : RequestProfileEngine.builtInProfiles()) {
+            if (prefs.contains(rawKey(profile.mode))) continue;
             LinkedHashMap<String, RequestProfileEngine.TargetProfile> target = profile.mode == RequestProfileEngine.Mode.CHAT ? chat : work;
             if (!target.containsKey(RequestProfileEngine.key(profile))) { target.put(RequestProfileEngine.key(profile), profile); changed = true; }
         }
         if (changed || prefs.getString(KEY_CHAT, null) == null || prefs.getString(KEY_WORK, null) == null) {
             SharedPreferences.Editor editor = prefs.edit();
             try {
-                editor.putString(KEY_CHAT, toStoredArray(new ArrayList<>(chat.values())).toString());
-                editor.putString(KEY_WORK, toStoredArray(new ArrayList<>(work.values())).toString());
+                if (!prefs.contains(rawKey(RequestProfileEngine.Mode.CHAT)) && !syncEnabled())
+                    editor.putString(KEY_CHAT, toStoredArray(new ArrayList<>(chat.values())).toString());
+                if (!prefs.contains(rawKey(RequestProfileEngine.Mode.WORK)) && !syncEnabled())
+                    editor.putString(KEY_WORK, toStoredArray(new ArrayList<>(work.values())).toString());
             } catch (JSONException error) { throw new IllegalStateException(error); }
             if (!editor.commit()) throw new IllegalStateException("기본 프로필 레지스트리를 저장하지 못했습니다.");
         }
@@ -256,6 +280,184 @@ final class RequestProfileRegistry {
         }
         return true;
     }
+
+
+    boolean syncEnabled() { return prefs.getBoolean("drive_sync_enabled", false); }
+
+    void setSyncEnabled(boolean enabled) {
+        synchronized (STORAGE_LOCK) {
+            boolean previous = syncEnabled();
+            if (!prefs.edit().putBoolean("drive_sync_enabled", enabled).commit()) {
+                prefs.edit().putBoolean("drive_sync_enabled", previous).commit();
+                throw new IllegalStateException("자동 업데이트 설정을 저장하지 못했습니다.");
+            }
+        }
+    }
+
+    String sourceVersion(RequestProfileEngine.Mode mode) { return prefs.getString(versionKey(mode), ""); }
+
+    boolean hasCanonicalSnapshot(RequestProfileEngine.Mode mode) {
+        if (!prefs.contains(rawKey(mode))) return false;
+        try { return !parseCanonicalRegistry(prefs.getString(rawKey(mode), ""), mode).isEmpty(); }
+        catch (Exception invalidCache) { return false; }
+    }
+
+    void replaceCanonicalSnapshot(RequestProfileEngine.Mode mode, String raw, String version) throws JSONException {
+        replaceCanonicalSnapshot(mode, raw, version, null);
+    }
+
+    boolean replaceCanonicalSnapshot(RequestProfileEngine.Mode mode, String raw, String version,
+                                     ProfileSyncOperation operation) throws JSONException {
+        // Validation/serialization are outside both the disk boundary and cancellation monitor.
+        List<RequestProfileEngine.TargetProfile> replacement = parseCanonicalRegistry(raw, mode);
+        String cleaned = cleanText(raw), stored = toStoredArray(replacement).toString();
+        boolean publishing = false;
+        try {
+            synchronized (STORAGE_LOCK) {
+                if (operation != null && (!syncEnabled() || !operation.beginPublication())) return false;
+                publishing = operation != null;
+                String effectiveKey = mode == RequestProfileEngine.Mode.CHAT ? KEY_CHAT : KEY_WORK;
+                String checkedKey = "checked_" + mode.name(), errorKey = "error_" + mode.name();
+                Map<String, Object> previous = new LinkedHashMap<>();
+                previous.put(rawKey(mode), prefs.getString(rawKey(mode), null));
+                previous.put(versionKey(mode), prefs.getString(versionKey(mode), null));
+                previous.put(effectiveKey, prefs.getString(effectiveKey, null));
+                previous.put(checkedKey, prefs.contains(checkedKey) ? prefs.getLong(checkedKey, 0L) : null);
+                previous.put(errorKey, prefs.getString(errorKey, null));
+                SharedPreferences.Editor editor = prefs.edit().putString(rawKey(mode), cleaned)
+                        .putString(versionKey(mode), version == null ? "" : version)
+                        .putString(mode == RequestProfileEngine.Mode.CHAT ? KEY_CHAT : KEY_WORK, stored)
+                        .putLong("checked_" + mode.name(), System.currentTimeMillis()).remove("error_" + mode.name());
+                if (!editor.commit()) {
+                    // Android may publish preference changes in memory before disk commit reports failure.
+                    // Restore the prior live snapshot while the shared lock excludes registry readers.
+                    SharedPreferences.Editor rollback = prefs.edit();
+                    for (Map.Entry<String, Object> entry : previous.entrySet()) {
+                        if (entry.getValue() == null) rollback.remove(entry.getKey());
+                        else if (entry.getValue() instanceof Long) rollback.putLong(entry.getKey(), (Long)entry.getValue());
+                        else rollback.putString(entry.getKey(), (String)entry.getValue());
+                    }
+                    rollback.commit();
+                    throw new IllegalStateException("공식 프로필을 저장하지 못했습니다.");
+                }
+                TRANSIENT_SYNC_ERRORS.remove(mode);
+                return true;
+            }
+        } finally {
+            if (publishing) operation.endPublication();
+        }
+    }
+
+    void recordSyncSuccess(RequestProfileEngine.Mode mode) { recordSyncMetadata(mode, null, null, false); }
+    boolean recordSyncSuccess(RequestProfileEngine.Mode mode, ProfileSyncOperation operation) {
+        return recordSyncMetadata(mode, null, operation, true);
+    }
+    void recordSyncFailure(RequestProfileEngine.Mode mode, String code) { recordSyncMetadata(mode, code, null, false); }
+    boolean recordSyncFailure(RequestProfileEngine.Mode mode, String code, ProfileSyncOperation operation) {
+        return recordSyncMetadata(mode, code, operation, true);
+    }
+    void recordTransientSyncFailure(RequestProfileEngine.Mode mode, String code) {
+        TRANSIENT_SYNC_ERRORS.put(mode, safeSyncError(code));
+    }
+
+    private static String safeSyncError(String code) {
+        return Set.of("AUTH_REQUIRED", "AUTH_FAILED", "NETWORK", "ACCESS_DENIED", "DOCUMENT_INVALID", "SYNC_TIMEOUT", "PERSISTENCE")
+                .contains(code) ? code : "DOCUMENT_INVALID";
+    }
+
+    private boolean recordSyncMetadata(RequestProfileEngine.Mode mode, String code,
+                                       ProfileSyncOperation operation, boolean requireEnabled) {
+        boolean publishing = false;
+        try {
+            synchronized (STORAGE_LOCK) {
+                if (requireEnabled && !syncEnabled()) return false;
+                if (operation != null && !operation.beginPublication()) return false;
+                publishing = operation != null;
+                if (code == null) {
+                    if (!prefs.edit().putLong("checked_" + mode.name(), System.currentTimeMillis()).remove("error_" + mode.name()).commit())
+                        throw new IllegalStateException("프로필 확인 결과를 저장하지 못했습니다.");
+                    TRANSIENT_SYNC_ERRORS.remove(mode);
+                } else {
+                    // Only fixed categories enter preferences, never provider responses or tokens.
+                    String safe = safeSyncError(code);
+                    prefs.edit().putString("error_" + mode.name(), safe).commit();
+                }
+                return true;
+            }
+        } finally {
+            if (publishing) operation.endPublication();
+        }
+    }
+
+    String syncStatusText() {
+        StringBuilder text = new StringBuilder(syncEnabled() ? "Drive 자동 업데이트 켜짐" : "Drive 자동 업데이트 꺼짐");
+        for (RequestProfileEngine.Mode mode : RequestProfileEngine.Mode.values()) {
+            text.append("\n").append(mode == RequestProfileEngine.Mode.CHAT ? "Chat" : "Work").append(": ");
+            if (hasCanonicalSnapshot(mode)) {
+                long checked = prefs.getLong("checked_" + mode.name(), 0L);
+                text.append(count(mode)).append("개 · 마지막 확인 ")
+                        .append(checked == 0L ? "없음" : java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(new java.util.Date(checked)));
+                if (TRANSIENT_SYNC_ERRORS.containsKey(mode) || !prefs.getString("error_" + mode.name(), "").isEmpty()) text.append(" · 확인 실패, 마지막 정상 목록 유지");
+            } else text.append(syncEnabled() ? "아직 공식 목록을 받지 못했습니다" : "로컬 목록 사용");
+        }
+        return text.toString();
+    }
+
+    static List<RequestProfileEngine.TargetProfile> parseCanonicalRegistry(String raw, RequestProfileEngine.Mode mode) throws JSONException {
+        String cleaned = cleanText(raw);
+        List<RequestProfileEngine.TargetProfile> result = parseRegistryText(cleaned, mode);
+        JSONObject root = new JSONObject(cleaned);
+        if (root.getString("appVersion").length() > 128) throw new JSONException("appVersion이 너무 깁니다.");
+        JSONArray entries = root.getJSONArray("profiles");
+        Set<String> fingerprints = new HashSet<>();
+        Map<String, String> models = new LinkedHashMap<>(), reasonings = new LinkedHashMap<>();
+        for (int i = 0; i < result.size(); i++) {
+            JSONObject entry = entries.getJSONObject(i);
+            if (!entry.has("fingerprint") || !entry.has("builtIn")) throw new JSONException("공식 프로필 검증 필드가 없습니다.");
+            RequestProfileEngine.TargetProfile profile = result.get(i);
+            if (!fingerprints.add(fingerprint(mode, profile.operations))) throw new JSONException("중복 fingerprint입니다.");
+            String model = operationValue(profile, "model");
+            if (!model.startsWith("SET|")) throw new JSONException("모델 값이 없습니다.");
+            if (mode == RequestProfileEngine.Mode.WORK) {
+                String prior = models.putIfAbsent(profile.model, model);
+                if (prior != null && !prior.equals(model)) throw new JSONException("Work 모델 신호가 충돌합니다.");
+                String effort = operationValue(profile, "thinking_effort");
+                prior = reasonings.putIfAbsent(profile.reasoning, effort);
+                if (prior != null && !prior.equals(effort)) throw new JSONException("Work 추론 신호가 충돌합니다.");
+            }
+        }
+        return result;
+    }
+
+    private static String operationValue(RequestProfileEngine.TargetProfile profile, String path) {
+        for (RequestProfileEngine.Operation op : profile.operations) if (path.equals(op.path)) return op.kind.name() + "|" + (op.value == null ? "" : op.value);
+        return "";
+    }
+
+    static String fingerprint(RequestProfileEngine.Mode mode, List<RequestProfileEngine.Operation> operations) {
+        RequestProfileEngine.validateOperations(operations);
+        StringBuilder source = new StringBuilder("selfrun-profile-registry-v1\n").append(mode.name()).append('\n');
+        for (String path : List.of("model", "thinking_effort", "conversation_origin", "service_tier")) {
+            for (RequestProfileEngine.Operation op : operations) if (path.equals(op.path)) {
+                source.append(op.kind.name()).append('|').append(path).append('|');
+                if (op.value != null) source.append(op.value);
+                source.append('\n');
+            }
+        }
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(source.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder out = new StringBuilder(64);
+            for (byte value : digest) out.append(String.format(java.util.Locale.ROOT, "%02x", value & 255));
+            return out.toString();
+        } catch (java.security.NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
+    }
+
+    private static String cleanText(String raw) {
+        String text = raw == null ? "" : raw.trim();
+        return text.startsWith("\ufeff") ? text.substring(1).trim() : text;
+    }
+    private static String rawKey(RequestProfileEngine.Mode mode) { return "canonical_raw_" + mode.name(); }
+    private static String versionKey(RequestProfileEngine.Mode mode) { return "canonical_version_" + mode.name(); }
 
     private static String token(String value, String field) throws JSONException {
         String normalized = RequestProfileEngine.normalize(value);

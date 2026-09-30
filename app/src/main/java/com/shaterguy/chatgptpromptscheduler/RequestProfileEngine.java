@@ -90,6 +90,7 @@ final class RequestProfileEngine {
         if ("chat".equals(experience)) {
             String reasoning = Schedule.normalizedChatReasoning(experience, schedule.chatReasoning);
             if ("keep".equals(reasoning) || "inherit".equals(reasoning) || reasoning.isEmpty()) return null;
+            if (schedule.requestProfileRegistryResolved) throw new IllegalArgumentException("PROFILE_UNREGISTERED");
             TargetProfile target = builtIn(Mode.CHAT, "", reasoning);
             if (target == null) throw new IllegalArgumentException("PROFILE_UNREGISTERED");
             plan(target);
@@ -99,6 +100,7 @@ final class RequestProfileEngine {
             String model = Schedule.normalizedWorkModel(experience, schedule.workModel);
             String reasoning = Schedule.normalizedReasoningEffort(experience, schedule.reasoningEffort);
             if ("inherit".equals(model) || model.isEmpty() || "inherit".equals(reasoning) || reasoning.isEmpty()) return null;
+            if (schedule.requestProfileRegistryResolved) throw new IllegalArgumentException("PROFILE_UNREGISTERED");
             TargetProfile target = builtIn(Mode.WORK, model, reasoning);
             if (target == null) throw new IllegalArgumentException("PROFILE_UNREGISTERED");
             plan(target);

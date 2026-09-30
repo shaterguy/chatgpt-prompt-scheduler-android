@@ -20,6 +20,8 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
 public final class SettingsActivity extends Activity {
+    private static final int REQUEST_DRIVE_CONSENT = 2103;
+    private final ProfileAuthorizationAttempt authorizationAttempt = new ProfileAuthorizationAttempt();
     private static final int REQUEST_CHAT_PROFILE = 2101;
     private static final int REQUEST_WORK_PROFILE = 2102;
     private ConfigStore store;
@@ -46,6 +48,7 @@ public final class SettingsActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         if (profileStatus != null) profileStatus.setText(profileStatusText());
+        ProfileRegistrySync.refresh(this, result -> updateProfileStatus());
     }
 
     @Override protected void onPause() {
@@ -54,6 +57,12 @@ public final class SettingsActivity extends Activity {
             captureDialog = null;
         }
         super.onPause();
+    }
+
+    @Override protected void onDestroy() {
+        // Consent state intentionally does not survive Activity/process recreation.
+        authorizationAttempt.cancel();
+        super.onDestroy();
     }
 
     private void startCapture(RequestProfileEngine.Mode mode) {
@@ -75,7 +84,17 @@ public final class SettingsActivity extends Activity {
 
         root.addView(Ui.section(this, "모델 · 추론 프로필"));
         root.addView(Ui.body(this,
-                "ChatGPT에서 원하는 모델·추론 조합을 직접 캡처하거나 SelfRun 프로필 JSON을 모드별로 가져옵니다. 등록한 조합은 예약 편집에 바로 추가됩니다."));
+                "자동 업데이트를 켜기 전에는 직접 캡처하거나 SelfRun 프로필 JSON을 가져올 수 있습니다. 공식 목록을 받은 모드는 이후 Google 문서를 기준으로 관리합니다."));
+        root.addView(Ui.body(this, "Google 로그인·동의 후 공식 Chat/Work 문서가 바뀌면 모델과 추론 목록을 자동으로 갱신합니다. Drive 메타데이터와 Docs 읽기 전용 권한을 요청하며, 앱은 지정된 두 문서만 읽습니다. 동기화 실패 시 마지막 정상 목록을 유지합니다."));
+        root.addView(Ui.actionGrid(this,
+                Ui.button(this, "Google 로그인 · 목록 업데이트", v -> authorizeProfiles()),
+                Ui.button(this, "자동 업데이트 끄기", v -> {
+                    try {
+                        authorizationAttempt.cancel();
+                        profileRegistry.setSyncEnabled(false); updateProfileStatus();
+                        toast("자동 업데이트를 껐습니다. 마지막 목록은 유지됩니다. Google 계정의 앱 접근 권한은 계정 설정에서 관리할 수 있습니다.");
+                    } catch (IllegalStateException error) { toast("저장 공간을 확인해 주세요. 이전 설정은 유지됩니다."); }
+                })));
         root.addView(Ui.actionGrid(this,
                 Ui.button(this, "일반 Chat 모델·추론 캡처", v -> startCapture(RequestProfileEngine.Mode.CHAT)),
                 Ui.button(this, "Work 모델·추론 캡처", v -> startCapture(RequestProfileEngine.Mode.WORK))));
@@ -118,6 +137,19 @@ public final class SettingsActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_DRIVE_CONSENT) {
+            long attempt = authorizationAttempt.takeConsentResult();
+            if (attempt == 0L) {
+                toast("로그인 요청이 취소되었거나 화면이 다시 열렸습니다. 목록 업데이트가 필요하면 Google 로그인 버튼을 다시 눌러 주세요.");
+                return;
+            }
+            if (resultCode == RESULT_OK && data != null) ProfileDriveAuthorization.fromIntent(this, data, authorizationCallback(attempt));
+            else {
+                authorizationAttempt.finish(attempt);
+                toast("Google 동의를 완료하지 않았습니다. 저장된 목록은 유지됩니다.");
+            }
+            return;
+        }
         if ((requestCode != REQUEST_CHAT_PROFILE && requestCode != REQUEST_WORK_PROFILE)
                 || resultCode != RESULT_OK || data == null || data.getData() == null) return;
         try {
@@ -130,6 +162,46 @@ public final class SettingsActivity extends Activity {
         } catch (Exception error) {
             toast("프로필 가져오기 실패: " + error.getMessage());
         }
+    }
+
+    private void authorizeProfiles() {
+        long attempt = authorizationAttempt.begin();
+        if (attempt == 0L) return;
+        try { ProfileDriveAuthorization.request(this, true, authorizationCallback(attempt)); }
+        catch (RuntimeException error) {
+            if (authorizationAttempt.finish(attempt)) toast("Google 로그인을 시작하지 못했습니다. Google Play 서비스를 확인해 주세요.");
+        }
+    }
+
+    private ProfileDriveAuthorization.Callback authorizationCallback(long attempt) {
+        return new ProfileDriveAuthorization.Callback() {
+            public void authorized(String token) {
+                if (!authorizationAttempt.finish(attempt) || isFinishing() || isDestroyed()) return;
+                try { profileRegistry.setSyncEnabled(true); }
+                catch (IllegalStateException error) { toast("설정을 저장하지 못했습니다. 저장 공간을 확인해 주세요."); return; }
+                updateProfileStatus();
+                ProfileRegistrySync.refreshWithToken(SettingsActivity.this, token, result -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    updateProfileStatus();
+                    toast(result.failed ? "일부 목록을 확인하지 못했습니다. 문서 접근 권한과 연결을 확인해 주세요. 마지막 정상 목록은 유지됩니다."
+                            : "공식 모델·추론 목록을 확인했습니다.");
+                });
+            }
+            public void resolution(android.app.PendingIntent pendingIntent) {
+                if (isFinishing() || isDestroyed()) { authorizationAttempt.finish(attempt); return; }
+                if (!authorizationAttempt.consentLaunched(attempt)) return;
+                try { startIntentSenderForResult(pendingIntent.getIntentSender(), REQUEST_DRIVE_CONSENT, null, 0, 0, 0); }
+                catch (android.content.IntentSender.SendIntentException | RuntimeException error) { failed(); }
+            }
+            public void failed() {
+                if (authorizationAttempt.finish(attempt) && !isFinishing() && !isDestroyed())
+                    toast("Google 동의를 확인하지 못했습니다. 앱의 Google 연결 설정을 확인해 주세요.");
+            }
+        };
+    }
+
+    private void updateProfileStatus() {
+        if (!isFinishing() && !isDestroyed() && profileStatus != null) profileStatus.setText(profileStatusText());
     }
 
     private String readBounded(Uri uri) throws Exception {
@@ -166,7 +238,7 @@ public final class SettingsActivity extends Activity {
 
     private String profileStatusText() {
         return "현재 등록: Chat " + profileRegistry.count(RequestProfileEngine.Mode.CHAT)
-                + "개 · Work " + profileRegistry.count(RequestProfileEngine.Mode.WORK) + "개";
+                + "개 · Work " + profileRegistry.count(RequestProfileEngine.Mode.WORK) + "개\n" + profileRegistry.syncStatusText();
     }
 
     private String projectStatusText() { return "등록된 프로젝트: " + projectCatalog.entries().size() + "개"; }
@@ -183,7 +255,7 @@ public final class SettingsActivity extends Activity {
 
     private void save() {
         try {
-            JSONObject settings = new JSONObject();
+            JSONObject settings = new JSONObject(store.settings().toString());
             settings.put("notifySuccess", notifySuccess.isChecked());
             settings.put("notifyFailure", notifyFailure.isChecked());
             settings.put("missedGraceMinutes", clamp(parse(missedGrace, 30), 0, 1440));
