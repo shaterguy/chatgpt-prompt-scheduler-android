@@ -2,7 +2,11 @@ name: Build GPT Prompt Scheduler DEV APK
 run-name: GPT Prompt Scheduler DEV (${{ github.ref_name }}) #${{ github.run_number }}
 
 on:
+  push:
+    branches:
+      - 'v*-dev*'
   workflow_dispatch:
+
 permissions:
   contents: read
   actions: read
