@@ -3,6 +3,13 @@ name: Build and Release Android APK
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+    paths-ignore:
+      - '.github/release-selftest-report.json'
+      - '.github/release-selftest-jobs.json'
+      - '.github/artifact-maintenance-report.json'
+      - '.github/workflows/**'
   workflow_dispatch:
 
 permissions:
