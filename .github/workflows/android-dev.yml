@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - 'v*-dev*'
+      - 'ci-fallback/**'
   workflow_dispatch:
 
 permissions:
@@ -24,6 +25,8 @@ concurrency:
 
 jobs:
   build-dev:
+    if: >-
+      (github.event_name != 'push' || contains(github.event.head_commit.message, '[gh-fallback:android-dev.yml]'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
