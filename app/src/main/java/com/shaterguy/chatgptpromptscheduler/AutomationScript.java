@@ -41,9 +41,10 @@ public final class AutomationScript {
                 "const fire=(type,inputType,data)=>{try{return composer.dispatchEvent(new InputEvent(type,{bubbles:true,cancelable:type==='beforeinput',inputType,data}));}catch(_){return composer.dispatchEvent(new Event(type,{bubbles:true,cancelable:type==='beforeinput'}));}};" +
                 "const selectAll=()=>{composer.focus();const selection=window.getSelection();if(!selection)return false;const range=document.createRange();range.selectNodeContents(composer);selection.removeAllRanges();selection.addRange(range);return true;};" +
                 "const nativeSet=value=>{const proto=Object.getPrototypeOf(composer);const own=Object.getOwnPropertyDescriptor(proto,'value');const base=typeof HTMLTextAreaElement!=='undefined'?Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value'):null;const setter=own?.set||base?.set;if(setter)setter.call(composer,value);else composer.value=value;fire('input','insertText',value);composer.dispatchEvent(new Event('change',{bubbles:true}));};" +
-                "const execInsert=()=>{selectAll();let deleted=false,inserted=false;try{deleted=document.execCommand('delete',false,null);}catch(_){}try{inserted=document.execCommand('insertText',false,expected);}catch(_){}return {deleted,inserted};};" +
-                "let strategy='';composer.focus();if('value'in composer){strategy='native-value';nativeSet(expected);}else{strategy='single-execCommand';execInsert();}" +
-                "return result('RETRY',same()?'입력 반영 확인 대기':'예약 프롬프트 입력 미반영',diag('input-attempt',strategy));" +
+                "const pasteInsert=()=>{selectAll();try{const transfer=new DataTransfer();transfer.setData('text/plain',expected);const event=new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:transfer});composer.dispatchEvent(event);return {supported:true,handled:event.defaultPrevented};}catch(error){return {supported:false,handled:false,error:String(error?.name||'unknown')};}};" +
+                "const execInsert=()=>{selectAll();let deleted=false,inserted=false;try{if(canonical(raw()))deleted=document.execCommand('delete',false,null);}catch(_){}try{inserted=document.execCommand('insertText',false,expected);}catch(_){}return {deleted,inserted};};" +
+                "let strategy='',input={};composer.focus();if('value'in composer){strategy='native-value';nativeSet(expected);}else{strategy='synthetic-paste';input=pasteInsert();if(!input.handled&&!same()){strategy='execCommand-fallback';input.exec=execInsert();}}" +
+                "return result('RETRY',same()?'입력 반영 확인 대기':'예약 프롬프트 입력 미반영',{...diag('input-attempt',strategy),input,observedLength:raw().length,expectedLength:expected.length});" +
                 "})()";
     }
 

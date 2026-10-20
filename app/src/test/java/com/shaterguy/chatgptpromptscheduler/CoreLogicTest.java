@@ -171,7 +171,7 @@ public class CoreLogicTest {
     }
 
     @Test
-    public void automationUsesOneIdempotentComposerStrategy() {
+    public void automationUsesStateAwarePasteWithFallbackAndNoPreview() {
         Schedule schedule = new Schedule();
         schedule.targetType = "existing";
         schedule.targetUrl = "https://chatgpt.com/g/proj/c/abc";
@@ -181,9 +181,9 @@ public class CoreLogicTest {
         assertTrue(first.contains("attempt:0"));
         assertTrue(paste.contains("attempt:2"));
         assertTrue(dom.contains("attempt:3"));
-        assertTrue(first.contains("single-execCommand"));
-        assertTrue(paste.contains("single-execCommand"));
-        assertTrue(dom.contains("single-execCommand"));
+        assertTrue(first.contains("synthetic-paste"));
+        assertTrue(paste.contains("execCommand-fallback"));
+        assertTrue(dom.contains("new ClipboardEvent('paste'"));
         assertFalse(first.contains("paste+execCommand"));
         assertFalse(first.contains("dom+input"));
         assertFalse(first.contains("fire('beforeinput','insertText',expected)"));

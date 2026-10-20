@@ -18,6 +18,8 @@ public class AutomationScriptEscapingTest {
         assertTrue(compose.contains("replace(/\\r\\n?/g,'\\n')"));
         assertTrue(compose.contains("replace(/ *\\n+ */g,'\\n')"));
         assertTrue(compose.contains("line1\\nline2"));
+        assertTrue(compose.contains("new ClipboardEvent('paste'"));
+        assertTrue(compose.contains("execCommand-fallback"));
         assertTrue(verify.contains("replace(/\\r\\n?/g,'\\n')"));
 
         assertFalse(compose.contains("\r"));
