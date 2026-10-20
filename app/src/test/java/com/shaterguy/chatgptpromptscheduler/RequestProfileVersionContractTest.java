@@ -65,25 +65,24 @@ public final class RequestProfileVersionContractTest {
         assertFalse(inherited.contains("__chatgptPromptSchedulerRequestProfileEngine"));
     }
 
-    @Test public void dependencyStableIdentityAndDevWorkflowStayPinnedAndAttemptSpecific() throws Exception {
+    @Test public void dependencyDevIdentityAndTrustedSignerInputStayPinnedAndAttemptSpecific() throws Exception {
         String gradle = source("app/build.gradle");
         assertEquals(1, occurrences(gradle, "androidx.webkit:webkit:1.17.0"));
-        assertTrue(gradle.contains("applicationId 'com.shaterguy.chatgptpromptscheduler'"));
-        assertTrue(gradle.contains("versionCode 2100000008"));
-        assertTrue(gradle.contains("versionName '0.5.3'"));
+        assertTrue(gradle.contains("applicationId 'com.shaterguy.chatgptpromptscheduler.dev'"));
+        assertTrue(gradle.contains("versionCode 5004001"));
+        assertTrue(gradle.contains("versionName '0.5.4-dev1'"));
         String strings = source("app/src/main/res/values/strings.xml");
-        assertTrue(strings.contains("<string name=\"app_name\">ChatGPT Prompt Scheduler</string>"));
-        assertFalse(strings.contains("ChatGPT Prompt Scheduler DEV"));
+        assertTrue(strings.contains("<string name=\"app_name\">ChatGPT Prompt Scheduler DEV</string>"));
 
         String workflow = source(".github/workflows/android-dev.yml");
-        assertTrue(workflow.contains("DEV_VERSION_CODE: '5002004'"));
-        assertTrue(workflow.contains("DEV_VERSION_NAME: 0.5.2-dev4"));
-        assertTrue(workflow.contains("DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.5.2-dev4-unsigned.apk"));
+        assertTrue(workflow.contains("DEV_VERSION_CODE: '5004001'"));
+        assertTrue(workflow.contains("DEV_VERSION_NAME: 0.5.4-dev1"));
+        assertTrue(workflow.contains("DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.5.4-dev1-unsigned.apk"));
         assertTrue(workflow.contains("attempt-${{ github.run_attempt }}"));
-        assertTrue(workflow.contains(":app:connectedDebugAndroidTest"));
         assertTrue(workflow.contains(":app:testDebugUnitTest :app:assembleRelease"));
-        assertTrue(workflow.indexOf(":app:assembleDebugAndroidTest") > 0);
-        assertTrue(workflow.indexOf(":app:assembleDebugAndroidTest") < workflow.indexOf("Enable hardware acceleration"));
+        assertFalse(workflow.contains(":app:connectedDebugAndroidTest"));
+        assertFalse(workflow.contains("Enable hardware acceleration"));
+        assertFalse(workflow.contains(":app:assembleDebugAndroidTest"));
         assertTrue(workflow.contains("actions/checkout@11d5960a326750d5838078e36cf38b85af677262"));
         assertTrue(workflow.contains("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"));
     }

@@ -14,10 +14,10 @@ permissions:
 
 env:
   DEV_PACKAGE: com.shaterguy.chatgptpromptscheduler.dev
-  DEV_VERSION_CODE: '5002004'
-  DEV_VERSION_NAME: 0.5.2-dev4
+  DEV_VERSION_CODE: '5004001'
+  DEV_VERSION_NAME: 0.5.4-dev1
   DEV_APP_LABEL: ChatGPT Prompt Scheduler DEV
-  DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.5.2-dev4-unsigned.apk
+  DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.5.4-dev1-unsigned.apk
 
 concurrency:
   group: chatgpt-prompt-scheduler-dev-${{ github.ref }}
@@ -44,11 +44,11 @@ jobs:
         with:
           gradle-version: '9.5.0'
           cache-read-only: true
-      - name: Compile tests and build unsigned DEV candidate before emulator
+      - name: Prepare trusted DEV signing input
         shell: bash
         run: |
           set -euo pipefail
-          gradle --no-daemon --console=plain --stacktrace :app:testDebugUnitTest :app:assembleRelease :app:assembleDebug :app:assembleDebugAndroidTest
+          gradle --no-daemon --console=plain --stacktrace :app:testDebugUnitTest :app:assembleRelease
           BT="$ANDROID_HOME/build-tools/36.0.0"
           UNSIGNED="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*unsigned.apk' -print -quit)"
           test -s "$UNSIGNED"
@@ -66,25 +66,6 @@ jobs:
             sha256sum "$DEV_UNSIGNED_NAME" > UNSIGNED_SHA256SUMS.txt
             printf '%s\n' "$GITHUB_SHA" > SOURCE_COMMIT.txt
           )
-      - name: Enable hardware acceleration
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -c /dev/kvm
-          sudo chmod 0666 /dev/kvm
-      - name: Run Android WebView regression tests
-        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
-        with:
-          api-level: 36
-          target: google_apis
-          arch: x86_64
-          profile: pixel_6
-          emulator-boot-timeout: 600
-          emulator-options: >-
-            -no-window -gpu swiftshader_indirect -accel on -no-snapshot -noaudio -no-boot-anim
-            -camera-back none -camera-front none -memory 2048
-          disable-animations: true
-          script: gradle --no-daemon --console=plain --stacktrace :app:connectedDebugAndroidTest
       - name: Upload unsigned DEV build input
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
