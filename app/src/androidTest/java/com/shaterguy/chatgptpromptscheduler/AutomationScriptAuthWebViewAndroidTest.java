@@ -35,17 +35,15 @@ public final class AutomationScriptAuthWebViewAndroidTest {
         assertNotEquals("AUTH_REQUIRED", result.getString("status"));
     }
 
-    @Test public void populatedProseMirrorDraftRequestsNativeImeWithoutChangingDom() throws Exception {
+    @Test public void populatedProseMirrorDraftUsesDomClearPhase() throws Exception {
         JSONObject result = runScenario(
                 "<main><form><div class='ProseMirror' role='textbox' contenteditable='true' "
                         + "style='display:block;width:400px;height:100px'><p>stale draft</p></div>"
                         + "<button data-testid='send-button'>Send</button></form></main>",
                 "composer-ime");
-        assertEquals("CDP_INPUT_REQUIRED", result.getString("status"));
+        assertEquals("RETRY", result.getString("status"));
         JSONObject diagnostics = result.getJSONObject("diagnostics");
-        assertEquals("devtools-insert", diagnostics.getString("strategy"));
-        assertTrue(diagnostics.getBoolean("selectionReady"));
-        assertEquals("stale draft".length(), diagnostics.getInt("preInputLength"));
+        assertEquals("clear", diagnostics.getString("phase"));
     }
 
     @Test public void explicitLoginControlWithoutComposerRequiresAuth() throws Exception {

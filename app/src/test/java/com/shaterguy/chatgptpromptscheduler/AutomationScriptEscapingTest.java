@@ -18,8 +18,8 @@ public class AutomationScriptEscapingTest {
         assertTrue(compose.contains("replace(/\\r\\n?/g,'\\n')"));
         assertTrue(compose.contains("replace(/ *\\n+ */g,'\\n')"));
         assertTrue(compose.contains("line1\\nline2"));
-        assertTrue(compose.contains("CDP_INPUT_REQUIRED"));
-        assertTrue(compose.contains("window.__chatgptSchedulerInputTarget"));
+        assertTrue(compose.contains("DOM 입력 확정 대기"));
+        assertTrue(compose.contains("domState.phase"));
         assertTrue(verify.contains("replace(/\\r\\n?/g,'\\n')"));
 
         assertFalse(compose.contains("\r"));
