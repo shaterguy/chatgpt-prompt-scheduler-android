@@ -7,11 +7,11 @@ android {
     compileSdk 36
 
     defaultConfig {
-        applicationId 'com.shaterguy.chatgptpromptscheduler.dev'
+        applicationId 'com.shaterguy.chatgptpromptscheduler'
         minSdk 26
         targetSdk 36
-        versionCode 5004006
-        versionName '0.5.4-dev6'
+        versionCode 2100000009
+        versionName '0.5.4'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
 
