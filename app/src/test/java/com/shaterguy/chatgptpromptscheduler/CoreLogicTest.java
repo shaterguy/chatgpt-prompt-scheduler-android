@@ -184,6 +184,11 @@ public class CoreLogicTest {
         assertTrue(first.contains("DOM 입력 확정 대기"));
         assertTrue(first.contains("domState.reverts>=3"));
         assertTrue(first.contains("domTextStable()"));
+        assertTrue(first.contains("matchByTokens()"));
+        assertTrue(first.contains("composer.isContentEditable&&matchByTokens()"));
+        assertTrue(first.contains("matchMode:exactSame()"));
+        assertTrue(first.contains("mismatchSince"));
+        assertTrue(first.contains("await-editor-render"));
         assertFalse(first.contains("__chatgptSchedulerInputTarget"));
         assertTrue(paste.contains("domStates"));
         assertFalse(dom.contains("new ClipboardEvent('paste'"));

@@ -4,11 +4,20 @@ package com.shaterguy.chatgptpromptscheduler;
 final class DomComposerScript {
     private DomComposerScript() {}
 
+    static String whitespaceAwareReadback() {
+        return """
+                const domTokens=s=>canonical(s).split(/\\s+/).filter(Boolean);
+                const exactSame=()=>canonical(raw())===canonical(expected);
+                const matchByTokens=()=>{const actual=domTokens(raw()),want=domTokens(expected);return want.length>0&&actual.length===want.length&&actual.every((value,index)=>value===want[index]);};
+                const same=()=>exactSame()||(composer.isContentEditable&&matchByTokens());
+                """.replace("\n", "");
+    }
+
     static String statePrelude() {
         return """
                 const domStates=window.__schedulerComposerStates||(window.__schedulerComposerStates={});
                 const domKey=markerKey+':dom';
-                const domState=domStates[domKey]||(domStates[domKey]={phase:'clearing',reverts:0,verifiedAt:0});
+                const domState=domStates[domKey]||(domStates[domKey]={phase:'clearing',reverts:0,verifiedAt:0,mismatchSince:0});
                 const domTextStable=()=>{const now=Date.now();if(domState.phase!=='verified'){domState.phase='verified';domState.verifiedAt=now;return false;}return now-domState.verifiedAt>=550;};
                 """.replace("\n", "");
     }
@@ -59,9 +68,13 @@ final class DomComposerScript {
                     return 'paragraph-input';
                 };
                 if(domState.phase==='verified'||domState.phase==='inputting'){
+                    const now=Date.now();
+                    if(!domState.mismatchSince)domState.mismatchSince=now;
+                    if(now-domState.mismatchSince<2400)return result('RETRY','DOM 입력 동기화 대기',{...diag('readback','await-editor-render'),observedLength:raw().length,expectedLength:expected.length,normalizedMatch:matchByTokens()});
                     domState.reverts++;
-                    if(domState.reverts>=3)return result('COMPOSER_EDITOR_STATE_REVERTED','DOM 편집기 내용이 반복 초기화됩니다.',{...diag('input-failed','dom-readback'),reverts:domState.reverts,observedLength:raw().length,expectedLength:expected.length});
+                    if(domState.reverts>=3)return result('COMPOSER_EDITOR_STATE_REVERTED','DOM 편집기 내용이 반복 초기화됩니다.',{...diag('input-failed','dom-readback'),reverts:domState.reverts,observedLength:raw().length,expectedLength:expected.length,normalizedMatch:matchByTokens()});
                     domState.phase='clearing';
+                    domState.mismatchSince=0;
                     domState.verifiedAt=0;
                 }
                 if(domState.phase==='clearing'){
