@@ -35,6 +35,45 @@ public final class ConversationVerificationContractTest {
                 "https://chatgpt.com/c/conversation_1"));
     }
 
+    @Test public void missingUserMessageSelectorStillConfirmsStableServerConversation() {
+        Schedule general = new Schedule();
+        general.targetType = "general";
+        general.targetUrl = "https://chatgpt.com/";
+        String uuid = "6ad821ae-71e8-83ee-9fe1-40456ed0196a";
+        String actual = "https://chatgpt.com/c/" + uuid;
+        SubmissionRouteConfirmation confirm = new SubmissionRouteConfirmation();
+
+        // Provisional local routes must never be accepted as a server-created conversation.
+        assertFalse(confirm.observe(general,
+                "https://chatgpt.com/c/local-chatgpt%3A5742c868-e76a-4a42-8087-d936b319117d"));
+        assertFalse(confirm.observe(general, actual));   // First server URL observation.
+        assertTrue(confirm.observe(general, actual));    // Consecutive stable observation.
+        confirm.reset();
+        assertFalse(confirm.observe(general, actual));   // A new run cannot reuse prior proof.
+        assertFalse(confirm.observe(general, "https://chatgpt.com/c/not-a-server-uuid"));
+        assertFalse(confirm.observe(general, "https://chatgpt.com/g/" + PROJECT + "/c/" + uuid));
+        assertFalse(confirm.observe(general, "https://example.com/c/" + uuid));
+    }
+
+    @Test public void fallbackIsScopedToTheExpectedProjectAndNeverExistingChats() {
+        String uuid = "6ad821ae-71e8-83ee-9fe1-40456ed0196a";
+        Schedule project = new Schedule();
+        project.targetType = "project";
+        project.targetUrl = "https://chatgpt.com/g/" + PROJECT + "/project";
+        SubmissionRouteConfirmation confirm = new SubmissionRouteConfirmation();
+        assertFalse(confirm.observe(project, "https://chatgpt.com/g/" + OTHER_PROJECT + "/c/" + uuid));
+        String created = "https://chatgpt.com/g/" + PROJECT + "-vibe-coding/c/" + uuid;
+        assertFalse(confirm.observe(project, created));
+        assertTrue(confirm.observe(project, created));
+
+        Schedule existing = new Schedule();
+        existing.targetType = "existing";
+        existing.targetUrl = "https://chatgpt.com/c/" + uuid;
+        confirm.reset();
+        assertFalse(confirm.observe(existing, existing.targetUrl));
+        assertFalse(confirm.observe(existing, existing.targetUrl));
+    }
+
     @Test public void verificationScriptWaitsForConversationAddress() {
         Schedule project = new Schedule();
         project.targetType = "project";

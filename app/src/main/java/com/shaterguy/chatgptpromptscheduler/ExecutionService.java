@@ -68,6 +68,7 @@ public final class ExecutionService extends Service {
     private String lastObservedUrl = "";
     private String lastRetryDetail = "";
     private String verifiedConversationUrl = "";
+    private final SubmissionRouteConfirmation submittedRouteConfirmation = new SubmissionRouteConfirmation();
     private JSONArray traceEvents = new JSONArray();
 
     @Override
@@ -109,6 +110,7 @@ public final class ExecutionService extends Service {
         projectDisplayName = "";
         projectCandidateIndex = 0;
         verifiedConversationUrl = "";
+        submittedRouteConfirmation.reset();
         try {
             currentItem = queueStore.claimNext();
         } catch (RuntimeException error) {
@@ -438,6 +440,7 @@ public final class ExecutionService extends Service {
         switch (status) {
             case "SUBMITTED" -> {
                 submitted = true;
+                submittedRouteConfirmation.reset();
                 pageAttempts = 0;
                 lastRetryDetail = detail;
                 scheduleAutomationStep(2500L);
@@ -482,6 +485,18 @@ public final class ExecutionService extends Service {
                 }
             }
             case "RETRY" -> {
+                // ChatGPT can persist a new conversation before its user-turn DOM selector appears.
+                // A send click plus the same server-assigned conversation URL on consecutive reads
+                // confirms creation without trusting provisional local-chatgpt URLs or stale chats.
+                if (submitted && submittedRouteConfirmation.observe(currentSchedule, resultUrl)) {
+                    verifiedConversationUrl = resultUrl;
+                    trace("VERIFY_PERSISTED_CONVERSATION", object("url", resultUrl,
+                            "routeConfirmed", true, "userMessageSelectorCount",
+                            result.optJSONObject("diagnostics") == null ? -1 :
+                                    result.optJSONObject("diagnostics").optInt("userMessages", -1)));
+                    finish(true, "VERIFIED", "전송 클릭 후 새 대화 주소가 연속 확인되었습니다.");
+                    return;
+                }
                 pageAttempts++;
                 lastRetryDetail = detail;
                 if (pageAttempts > 45) finish(false, "SUBMIT_VERIFICATION_FAILED",
