@@ -65,20 +65,29 @@ public final class RequestProfileVersionContractTest {
         assertFalse(inherited.contains("__chatgptPromptSchedulerRequestProfileEngine"));
     }
 
-    @Test public void devIdentityAndTrustedSignerStayPinned() throws Exception {
+    @Test public void formalReleaseIdentityAndSignerStayPinned() throws Exception {
         String gradle = source("app/build.gradle");
         assertEquals(1, occurrences(gradle, "androidx.webkit:webkit:1.17.0"));
-        assertTrue(gradle.contains("applicationId 'com.shaterguy.chatgptpromptscheduler.dev'"));
-        assertTrue(gradle.contains("versionCode 5006001"));
-        assertTrue(gradle.contains("versionName '0.5.6-dev1'"));
+        assertTrue(gradle.contains("applicationId 'com.shaterguy.chatgptpromptscheduler'"));
+        assertTrue(gradle.contains("versionCode 2100000011"));
+        assertTrue(gradle.contains("versionName '0.5.6'"));
         String strings = source("app/src/main/res/values/strings.xml");
-        assertTrue(strings.contains("ChatGPT Prompt Scheduler DEV"));
-        String workflow = source(".github/workflows/android-dev.yml");
-        assertTrue(workflow.contains("DEV_VERSION_CODE: '5006001'"));
-        assertTrue(workflow.contains("DEV_VERSION_NAME: 0.5.6-dev1"));
-        assertTrue(workflow.contains("DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.5.6-dev1-unsigned.apk"));
-        assertTrue(workflow.contains("attempt-"));
-        assertTrue(workflow.contains(":app:testDebugUnitTest :app:assembleRelease"));
+        assertTrue(strings.contains("<string name=\"app_name\">ChatGPT Prompt Scheduler</string>"));
+        assertFalse(strings.contains("Scheduler DEV"));
+        String workflow = source(".github/workflows/android-build.yml");
+        assertTrue(workflow.contains("APK_NAME: chatgpt-prompt-scheduler-android-v0.5.6.apk"));
+        assertTrue(workflow.contains("SOURCE_NAME: chatgpt-prompt-scheduler-android-v0.5.6-source.zip"));
+        assertTrue(workflow.contains("PACKAGE_NAME: com.shaterguy.chatgptpromptscheduler"));
+        assertTrue(workflow.contains("VERSION_CODE: '2100000011'"));
+        assertTrue(workflow.contains("VERSION_NAME: '0.5.6'"));
+        assertTrue(workflow.contains("UPDATE_BASELINE_TAG: v0.5.5"));
+        assertTrue(workflow.contains("OLD_VERSION_CODE: '2100000010'"));
+        assertTrue(workflow.contains("3cfe95acd09077a89cd8de85434cbd5d8bb3e2021d8e9eacb804a8da9ccce52a"));
+        assertTrue(workflow.contains("RELEASE_NOTES-v0.5.6.md"));
+        assertTrue(workflow.contains("gh release create v0.5.6"));
+        assertTrue(workflow.contains(":app:testDebugUnitTest"));
+        assertTrue(workflow.contains("apksigner"));
+        assertTrue(workflow.contains("SHA256SUMS.txt"));
         assertFalse(workflow.contains("android-emulator-runner"));
         assertFalse(workflow.contains("connectedDebugAndroidTest"));
         assertTrue(workflow.contains("actions/checkout@11d5960a326750d5838078e36cf38b85af677262"));
