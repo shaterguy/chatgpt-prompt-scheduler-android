@@ -69,15 +69,15 @@ public final class RequestProfileVersionContractTest {
         String gradle = source("app/build.gradle");
         assertEquals(1, occurrences(gradle, "androidx.webkit:webkit:1.17.0"));
         assertTrue(gradle.contains("applicationId 'com.shaterguy.chatgptpromptscheduler.dev'"));
-        assertTrue(gradle.contains("versionCode 5004001"));
-        assertTrue(gradle.contains("versionName '0.5.4-dev1'"));
+        assertTrue(gradle.contains("versionCode 5004002"));
+        assertTrue(gradle.contains("versionName '0.5.4-dev2'"));
         String strings = source("app/src/main/res/values/strings.xml");
         assertTrue(strings.contains("<string name=\"app_name\">ChatGPT Prompt Scheduler DEV</string>"));
 
         String workflow = source(".github/workflows/android-dev.yml");
-        assertTrue(workflow.contains("DEV_VERSION_CODE: '5004001'"));
-        assertTrue(workflow.contains("DEV_VERSION_NAME: 0.5.4-dev1"));
-        assertTrue(workflow.contains("DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.5.4-dev1-unsigned.apk"));
+        assertTrue(workflow.contains("DEV_VERSION_CODE: '5004002'"));
+        assertTrue(workflow.contains("DEV_VERSION_NAME: 0.5.4-dev2"));
+        assertTrue(workflow.contains("DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.5.4-dev2-unsigned.apk"));
         assertTrue(workflow.contains("attempt-${{ github.run_attempt }}"));
         assertTrue(workflow.contains(":app:testDebugUnitTest :app:assembleRelease"));
         assertFalse(workflow.contains(":app:connectedDebugAndroidTest"));

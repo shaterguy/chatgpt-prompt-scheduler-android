@@ -144,7 +144,7 @@ public class CoreLogicTest {
         String script = AutomationScript.build(schedule, "[2026.07.24 | 22:31:02]\n새 프롬프트", "run-1", 0);
         assertTrue(script.contains("textarea#prompt-textarea"));
         assertTrue(script.contains("main form [contenteditable=\"true\"]"));
-        assertTrue(script.contains("execCommand('delete'"));
+        assertTrue(script.contains("composer.replaceChildren(document.createTextNode(expected))"));
         assertTrue(script.contains("TARGET_CONTEXT_MISMATCH"));
         assertTrue(script.contains("expectedConversation=\"abc\""));
         assertFalse(script.contains("DRAFT_PRESENT"));
@@ -152,7 +152,7 @@ public class CoreLogicTest {
         assertTrue(script.contains("beforeinput"));
         assertTrue(script.contains("composer-submit-button"));
         assertTrue(script.contains("diagnostics"));
-        assertTrue(script.contains("execCommand"));
+        assertTrue(script.contains("server-dom-replace"));
     }
 
     @Test
@@ -171,7 +171,7 @@ public class CoreLogicTest {
     }
 
     @Test
-    public void automationUsesStateAwarePasteWithFallbackAndNoPreview() {
+    public void automationUsesSelfRunServerReplacementWithoutPasteAccumulation() {
         Schedule schedule = new Schedule();
         schedule.targetType = "existing";
         schedule.targetUrl = "https://chatgpt.com/g/proj/c/abc";
@@ -181,10 +181,10 @@ public class CoreLogicTest {
         assertTrue(first.contains("attempt:0"));
         assertTrue(paste.contains("attempt:2"));
         assertTrue(dom.contains("attempt:3"));
-        assertTrue(first.contains("synthetic-paste"));
-        assertTrue(paste.contains("execCommand-fallback"));
-        assertTrue(dom.contains("new ClipboardEvent('paste'"));
-        assertFalse(first.contains("paste+execCommand"));
+        assertTrue(first.contains("server-dom-replace"));
+        assertTrue(paste.contains("composer.replaceChildren(document.createTextNode(expected))"));
+        assertFalse(dom.contains("new ClipboardEvent('paste'"));
+        assertFalse(first.contains("execCommand('insertText'"));
         assertFalse(first.contains("dom+input"));
         assertFalse(first.contains("fire('beforeinput','insertText',expected)"));
         assertFalse(dom.contains("actualPreview"));

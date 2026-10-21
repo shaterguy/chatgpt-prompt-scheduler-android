@@ -451,7 +451,7 @@ public final class ExecutionService extends Service {
                 pageAttempts++;
                 lastRetryDetail = detail;
                 if (pageAttempts > 48) finish(false, retryFailureStatus(detail), contextualDetail(detail));
-                else scheduleAutomationStep(1200L);
+                else scheduleAutomationStep("입력 반영 확인 대기".equals(detail) ? 350L : 1200L);
             }
             case "TARGET_CONTEXT_MISMATCH" -> recoverTargetRoute(detail);
             case "AUTH_REQUIRED", "DRAFT_PRESENT" -> finish(false, status, contextualDetail(detail));
