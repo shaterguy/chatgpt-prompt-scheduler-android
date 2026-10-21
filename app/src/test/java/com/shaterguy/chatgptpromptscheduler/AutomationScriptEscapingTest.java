@@ -18,8 +18,8 @@ public class AutomationScriptEscapingTest {
         assertTrue(compose.contains("replace(/\\r\\n?/g,'\\n')"));
         assertTrue(compose.contains("replace(/ *\\n+ */g,'\\n')"));
         assertTrue(compose.contains("line1\\nline2"));
-        assertTrue(compose.contains("composer.replaceChildren(document.createTextNode(expected))"));
-        assertTrue(compose.contains("server-dom-replace"));
+        assertTrue(compose.contains("NATIVE_INPUT_REQUIRED"));
+        assertTrue(compose.contains("selectionReady:selected"));
         assertTrue(verify.contains("replace(/\\r\\n?/g,'\\n')"));
 
         assertFalse(compose.contains("\r"));
