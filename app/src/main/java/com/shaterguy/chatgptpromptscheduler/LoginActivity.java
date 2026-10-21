@@ -23,13 +23,9 @@ public final class LoginActivity extends Activity {
             "const canonical='/g/'+id+'/project';" +
             "const clean=v=>String(v||'').replace(/\\s+/g,' ').trim().slice(0,120);" +
             "let name='';" +
-            "for(const a of document.querySelectorAll('a[href]')){try{" +
-            "const u=new URL(a.getAttribute('href'),location.origin);" +
-            "if(u.origin===location.origin&&u.pathname===canonical){const t=clean(a.innerText||a.textContent);if(t){name=t;break;}}" +
-            "}catch(e){}}" +
             "const atRoot=location.pathname===canonical||location.pathname===canonical+'/';" +
-            "if(!name&&atRoot){const h=document.querySelector('main h1,[role=\"main\"] h1,h1');name=clean(h&&(h.innerText||h.textContent));}" +
-            "if(!name&&atRoot){let t=clean(document.title);for(const s of [' | ChatGPT',' - ChatGPT',' · ChatGPT',' — ChatGPT',' – ChatGPT'])if(t.endsWith(s)){t=clean(t.slice(0,-s.length));break;}if(t&&t.toLowerCase()!=='chatgpt')name=t;}" +
+            "if(atRoot){let t=clean(document.title);if(t.startsWith('ChatGPT - ')||t.startsWith('ChatGPT | '))name=clean(t.slice(10));else for(const suf of [' | ChatGPT',' - ChatGPT',' · ChatGPT',' — ChatGPT',' – ChatGPT']){if(t.endsWith(suf)){name=clean(t.slice(0,-suf.length));break;}}}" +
+            "if(!name){for(const a of document.querySelectorAll('a[href]')){try{const u=new URL(a.getAttribute('href'),location.origin);if(u.origin!==location.origin||u.pathname!==canonical)continue;const label=clean(a.innerText||a.textContent||a.getAttribute('aria-label'));if(label){name=label;break;}}catch(e){}}}" +
             "return JSON.stringify({href:location.href,name:name});" +
             "})()";
 

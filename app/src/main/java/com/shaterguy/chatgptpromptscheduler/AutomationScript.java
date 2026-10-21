@@ -43,7 +43,8 @@ public final class AutomationScript {
                 "if('value'in composer){nativeSet(expected);return result('RETRY',same()?'입력 반영 확인 대기':'예약 프롬프트 입력 미반영',{...diag('input-attempt','native-value'),observedLength:raw().length,expectedLength:expected.length});}" +
                 "const selection=window.getSelection();let selected=false;try{composer.focus();const range=document.createRange();range.selectNodeContents(composer);selection.removeAllRanges();selection.addRange(range);selected=selection.rangeCount===1;}catch(_){}" +
                 "if(!selected)return result('COMPOSER_FOCUS_FAILED','편집기 선택 영역을 준비하지 못했습니다.',diag('native-prepare','android-ime'));" +
-                "return result('NATIVE_INPUT_REQUIRED','Android IME 입력 필요',{...diag('native-prepare','android-ime'),preInputLength:raw().length,selectionReady:selected});" +
+                 "window.__chatgptSchedulerInputTarget=" + run + ";" +
+                "return result('CDP_INPUT_REQUIRED','DevTools 입력 준비',{...diag('native-prepare','devtools-insert'),preInputLength:raw().length,selectionReady:selected});" +
                 "})()";
     }
 

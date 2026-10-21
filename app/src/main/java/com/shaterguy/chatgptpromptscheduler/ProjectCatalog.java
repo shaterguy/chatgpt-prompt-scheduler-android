@@ -47,8 +47,8 @@ final class ProjectCatalog {
         if (!alreadyPresent) urls.add(ref.canonicalUrl);
         while (urls.size() > MAX_ENTRIES) urls.remove(urls.iterator().next());
 
-        String cleanedName = normalizeDisplayName(displayName);
-        String priorName = normalizeDisplayName(prefs.getString(nameKey(ref.projectId), ""));
+        String cleanedName = validDisplayName(displayName);
+        String priorName = validDisplayName(prefs.getString(nameKey(ref.projectId), ""));
         boolean nameChanged = !cleanedName.isEmpty() && !cleanedName.equals(priorName);
         if (alreadyPresent && !nameChanged) return false;
 
@@ -65,7 +65,7 @@ final class ProjectCatalog {
 
     String recordedDisplayName(ProjectUrlPolicy.ProjectRef ref) {
         if (ref == null) return "";
-        return normalizeDisplayName(prefs.getString(nameKey(ref.projectId), ""));
+        return validDisplayName(prefs.getString(nameKey(ref.projectId), ""));
     }
 
     String displayName(ProjectUrlPolicy.ProjectRef ref) {
@@ -86,6 +86,15 @@ final class ProjectCatalog {
             if (out.length() < MAX_DISPLAY_NAME_LENGTH) out.append(c);
         }
         return out.toString().trim();
+    }
+
+    static String validDisplayName(String value) {
+        String name = normalizeDisplayName(value);
+        if (name.isEmpty() || name.equalsIgnoreCase("ChatGPT")
+                || name.matches("(?s)^.{1,60}님[, ]*반갑습니다[.!]?$")
+                || name.startsWith("오늘은 무엇을 해볼까요")
+                || name.equalsIgnoreCase("How can I help you today?")) return "";
+        return name;
     }
 
     private static LinkedHashSet<String> canonicalize(Set<String> raw) {

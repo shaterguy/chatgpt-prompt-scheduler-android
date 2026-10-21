@@ -6,42 +6,34 @@ final class ProjectDirectoryNavigationScript {
     private ProjectDirectoryNavigationScript() {}
 
     static String entryUrl(Schedule schedule) {
-        if (schedule != null && "project".equals(schedule.targetType)) return DIRECTORY_URL;
+        if (schedule != null && "project".equals(schedule.targetType)) return schedule.targetUrl;
         return schedule == null ? "https://chatgpt.com/" : schedule.targetUrl;
     }
 
     static boolean needsDirectoryStep(Schedule schedule, String actualUrl) {
-        return schedule != null
-                && "project".equals(schedule.targetType)
-                && !TargetParser.matchesTarget("project", schedule.targetUrl, actualUrl);
+        return schedule != null && "project".equals(schedule.targetType)
+                && actualUrl != null && actualUrl.startsWith(DIRECTORY_URL);
     }
 
-    static String build(String projectDisplayName, int candidateIndex) {
-        String expected = jsQuote(ProjectCatalog.normalizeDisplayName(projectDisplayName));
+    static String build(String projectTargetUrl, int candidateIndex) {
+        ProjectUrlPolicy.ProjectRef ref = ProjectUrlPolicy.parseProject(projectTargetUrl);
+        String expectedId = jsQuote(ref == null ? "" : ref.projectId);
         int ordinal = Math.max(0, candidateIndex);
         return "(()=>{" +
                 "const result=(status,detail='',diagnostics={})=>JSON.stringify({status,detail,url:location.href,diagnostics});" +
-                "const clean=s=>String(s??'').replace(/\\s+/g,' ').trim();" +
                 "const visible=e=>!!e&&e.isConnected&&e.offsetParent!==null;" +
-                "if(location.protocol!=='https:'||(location.hostname!=='chatgpt.com'&&location.hostname!=='www.chatgpt.com'))" +
-                "return result('TARGET_CONTEXT_MISMATCH','ChatGPT 호스트가 아닙니다.');" +
-                "const authPath=/^\\/auth\\/(?:login|signup|signin)(?:\\/|$)/i.test(location.pathname);" +
-                "const authControls=[...document.querySelectorAll('a[href],button,[role=\"button\"]')].filter(visible);" +
-                "const authControl=authControls.find(e=>{const label=clean(e.innerText||e.textContent||e.getAttribute?.('aria-label')).toLowerCase();const href=String(e.getAttribute?.('href')||'').toLowerCase();return /^(?:log in|sign in|sign up|create account|로그인|회원가입|가입)$/.test(label)||/(?:^|\\/)(?:auth\\/)?(?:login|signup|signin)(?:[\\/?#]|$)/.test(href);});" +
-                "if(authPath)return result('AUTH_REQUIRED','ChatGPT 로그인이 필요합니다.',{authPath:true});" +
-                "if(location.pathname!=='/projects')return result('NAVIGATE_DIRECTORY','프로젝트 목록 화면으로 이동합니다.',{path:location.pathname});" +
-                "const expected=clean(" + expected + ");" +
-                "const rows=[...document.querySelectorAll('[role=\"row\"][data-page-table-selectable-row=\"true\"]')].filter(visible);" +
-                "if(!rows.length&&authControl)return result('AUTH_REQUIRED','ChatGPT 로그인이 필요합니다.',{authPath:false,rows:0});" +
-                "const matches=[];" +
-                "for(let i=0;i<rows.length;i++){const row=rows[i];const labels=[...row.querySelectorAll('button[aria-label]')].map(b=>clean(b.getAttribute('aria-label'))).filter(Boolean);const label=labels.find(v=>v===expected||v.startsWith(expected+' '));if(label)matches.push({row,index:i,label});}" +
-                "if(!matches.length)return result('RETRY','프로젝트 목록에서 대상 대기',{expected,rows:rows.length,matchingRows:0,readyState:document.readyState});" +
+                "if(location.protocol!=='https:'||location.hostname!=='chatgpt.com')return result('TARGET_CONTEXT_MISMATCH','호스트 불일치');" +
+                "if(/^\\/auth\\/(?:login|signup|signin)(?:\\/|$)/.test(location.pathname))return result('AUTH_REQUIRED','로그인이 필요합니다.');" +
+                "if(location.pathname!=='/projects')return result('NAVIGATE_DIRECTORY','프로젝트 목록 화면으로 이동합니다.');" +
+                "const expected=" + expectedId + ";" +
+                "if(!expected)return result('TARGET_CONTEXT_MISMATCH','프로젝트 ID가 없습니다.');" +
+                "const normalize=id=>{const end=36;if(id.length>end+1&&id.startsWith('g-p-')&&id.charAt(end)==='-'&&/^[0-9a-fA-F]{32}$/.test(id.slice(4,end)))return id.slice(0,end);return id;};" +
+                "const matches=[...document.querySelectorAll('a[href]')].filter(visible).filter(a=>{try{const url=new URL(a.getAttribute('href'),location.origin);const p=url.pathname.split('/');return url.origin===location.origin&&p[1]==='g'&&normalize(p[2]||'')===expected&&p[3]==='project';}catch(e){return false;}});" +
+                "if(!matches.length)return result('RETRY','프로젝트 링크 대기',{expected,links:document.querySelectorAll('a[href]').length,matchingLinks:0});" +
                 "const ordinal=" + ordinal + ";" +
-                "if(ordinal>=matches.length)return result('PROJECT_NOT_FOUND','동일 이름 후보를 모두 확인했지만 대상 프로젝트를 찾지 못했습니다.',{expected,rows:rows.length,matchingRows:matches.length,ordinal});" +
-                "const pick=matches[ordinal];" +
-                "try{pick.row.scrollIntoView({block:'center',inline:'nearest'});}catch(_){}" +
-                "pick.row.click();" +
-                "return result('PROJECT_ROW_CLICKED','대상 프로젝트 행을 클릭했습니다.',{expected,rows:rows.length,matchingRows:matches.length,ordinal,rowIndex:pick.index,label:pick.label});" +
+                "if(ordinal>=matches.length)return result('PROJECT_NOT_FOUND','프로젝트 링크 후보를 모두 확인했습니다.',{expected,matchingLinks:matches.length,ordinal});" +
+                "const chosen=matches[ordinal];chosen.click();" +
+                "return result('PROJECT_ROW_CLICKED','프로젝트 링크를 클릭했습니다.',{expected,matchingLinks:matches.length,ordinal});" +
                 "})()";
     }
 

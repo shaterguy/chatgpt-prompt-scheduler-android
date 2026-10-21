@@ -28,31 +28,31 @@ public final class ProjectDirectoryNavigationWebViewAndroidTest {
     private static final String OTHER_PROJECT = "g-p-7a507cce80cc81919eeb9ba553b6ad9e";
 
     @Test public void selectsCapturedProjectRowAndInvokesItsClickMethod() throws Exception {
-        Scenario result = runScenario("💾 Vibe Coding", 0);
+        Scenario result = runScenario(TARGET_PROJECT, 0);
         assertEquals("PROJECT_ROW_CLICKED", result.result.getString("status"));
         assertEquals("target", result.clicked);
         assertEquals("/projects", result.pathname);
     }
 
     @Test public void missingProjectWaitsWithoutClickingAnotherRow() throws Exception {
-        Scenario result = runScenario("없는 프로젝트", 0);
+        Scenario result = runScenario("g-p-0a507cce80cc81919eeb9ba553b6ad9e", 0);
         assertEquals("RETRY", result.result.getString("status"));
         assertEquals("", result.clicked);
         assertEquals("/projects", result.pathname);
     }
 
     @SuppressWarnings("SetJavaScriptEnabled")
-    private static Scenario runScenario(String projectName, int candidateIndex) throws Exception {
+    private static Scenario runScenario(String projectId, int candidateIndex) throws Exception {
         Context context = ApplicationProvider.getApplicationContext();
         CountDownLatch done = new CountDownLatch(1);
         AtomicReference<String> rawResult = new AtomicReference<>();
         AtomicReference<String> pathname = new AtomicReference<>();
         AtomicReference<String> clicked = new AtomicReference<>();
         AtomicReference<HeadlessWebViewHost> hostRef = new AtomicReference<>();
-        String script = ProjectDirectoryNavigationScript.build(projectName, candidateIndex);
+        String script = ProjectDirectoryNavigationScript.build("https://chatgpt.com/g/" + projectId + "/project", candidateIndex);
         String installClickSpies = "(()=>{" +
                 "history.replaceState({},'', '/projects');" +
-                "for(const row of document.querySelectorAll('[data-marker]')){" +
+                "for(const row of document.querySelectorAll('a[data-marker]')){" +
                 "row.click=function(){window.__clicked=this.dataset.marker||'';};" +
                 "}" +
                 "return location.pathname;" +
@@ -101,10 +101,9 @@ public final class ProjectDirectoryNavigationWebViewAndroidTest {
     }
 
     private static String row(String name, String projectSegment, String marker) {
-        return "<div role='row' tabindex='0' data-page-table-selectable-row='true' style='display:block' "
-                + "data-marker='" + marker + "' data-route='/g/" + projectSegment + "/project'>"
-                + "<div role='gridcell'><div data-testid='project-folder-icon'></div><div>" + name + "</div></div>"
-                + "<button aria-label='" + name + " project options'>options</button></div>";
+        return "<div role='row' style='display:block'>"
+                + "<a href='/g/" + projectSegment + "/project' data-marker='" + marker + "'>"
+                + name + "</a></div>";
     }
 
     private static String decodeJsString(String raw) {

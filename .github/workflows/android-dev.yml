@@ -14,10 +14,10 @@ permissions:
 
 env:
   DEV_PACKAGE: com.shaterguy.chatgptpromptscheduler.dev
-  DEV_VERSION_CODE: '5004003'
-  DEV_VERSION_NAME: 0.5.4-dev3
+  DEV_VERSION_CODE: '5004004'
+  DEV_VERSION_NAME: 0.5.4-dev4
   DEV_APP_LABEL: ChatGPT Prompt Scheduler DEV
-  DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.5.4-dev3-unsigned.apk
+  DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.5.4-dev4-unsigned.apk
 
 concurrency:
   group: chatgpt-prompt-scheduler-dev-${{ github.ref }}
@@ -66,6 +66,21 @@ jobs:
             sha256sum "$DEV_UNSIGNED_NAME" > UNSIGNED_SHA256SUMS.txt
             printf '%s\n' "$GITHUB_SHA" > SOURCE_COMMIT.txt
           )
+      - name: Run headless WebView DevTools input regression
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          emulator-boot-timeout: 600
+          emulator-options: >-
+            -no-window -gpu swiftshader_indirect -accel on -no-snapshot -noaudio -no-boot-anim
+            -camera-back none -camera-front none -memory 2048
+          disable-animations: true
+          script: >-
+            gradle --no-daemon --console=plain :app:connectedDebugAndroidTest
+            -Pandroid.testInstrumentationRunnerArguments.class=com.shaterguy.chatgptpromptscheduler.DevToolsComposerInputWebViewAndroidTest
       - name: Upload unsigned DEV build input
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

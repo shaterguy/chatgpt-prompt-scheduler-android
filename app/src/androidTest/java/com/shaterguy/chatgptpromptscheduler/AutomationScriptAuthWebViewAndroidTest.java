@@ -41,9 +41,9 @@ public final class AutomationScriptAuthWebViewAndroidTest {
                         + "style='display:block;width:400px;height:100px'><p>stale draft</p></div>"
                         + "<button data-testid='send-button'>Send</button></form></main>",
                 "composer-ime");
-        assertEquals("NATIVE_INPUT_REQUIRED", result.getString("status"));
+        assertEquals("CDP_INPUT_REQUIRED", result.getString("status"));
         JSONObject diagnostics = result.getJSONObject("diagnostics");
-        assertEquals("android-ime", diagnostics.getString("strategy"));
+        assertEquals("devtools-insert", diagnostics.getString("strategy"));
         assertTrue(diagnostics.getBoolean("selectionReady"));
         assertEquals("stale draft".length(), diagnostics.getInt("preInputLength"));
     }

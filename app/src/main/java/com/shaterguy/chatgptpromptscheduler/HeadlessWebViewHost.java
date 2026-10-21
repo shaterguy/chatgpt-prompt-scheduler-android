@@ -38,6 +38,10 @@ public final class HeadlessWebViewHost {
     }
 
     public static HeadlessWebViewHost create(Context context) {
+        // Limited to the separately installed DEV package; never enable for production.
+        if (BuildConfig.APPLICATION_ID.endsWith(".dev")) {
+            WebView.setWebContentsDebuggingEnabled(true);
+        }
         SurfaceTexture texture = null;
         Surface surface = null;
         VirtualDisplay display = null;

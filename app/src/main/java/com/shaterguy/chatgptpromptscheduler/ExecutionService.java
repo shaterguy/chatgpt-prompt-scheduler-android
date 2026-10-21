@@ -14,8 +14,6 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
-import android.view.inputmethod.EditorInfo;
-import android.view.inputmethod.InputConnection;
 import android.webkit.ConsoleMessage;
 import android.webkit.CookieManager;
 import android.webkit.RenderProcessGoneDetail;
@@ -64,7 +62,7 @@ public final class ExecutionService extends Service {
     private int traceDropped;
     private int projectCandidateIndex;
     private boolean submitted;
-    private int nativeComposerInputAttempts;
+    private int devToolsInputAttempts;
     private boolean stepInFlight;
     private String stampedPrompt;
     private String projectDisplayName = "";
@@ -168,11 +166,6 @@ public final class ExecutionService extends Service {
                 return;
             }
             projectDisplayName = projectCatalog.recordedDisplayName(projectRef);
-            if (projectDisplayName.isBlank()) {
-                finish(false, "PROJECT_NAME_UNAVAILABLE",
-                        "프로젝트 목록에서 대상을 클릭하려면 저장된 프로젝트 이름이 필요합니다. 로그인 화면에서 해당 프로젝트를 한 번 열어 등록해 주세요.");
-                return;
-            }
             trace("PROJECT_ROUTE_PREPARED", object("projectId", projectRef.projectId,
                     "projectDisplayName", projectDisplayName, "entryUrl", ProjectDirectoryNavigationScript.DIRECTORY_URL));
         }
@@ -197,7 +190,7 @@ public final class ExecutionService extends Service {
         routeRecoveryAttempts = 0;
         navigationGeneration = 0;
         submitted = false;
-        nativeComposerInputAttempts = 0;
+        devToolsInputAttempts = 0;
         stepInFlight = false;
         lastObservedUrl = "";
         lastRetryDetail = "";
@@ -390,7 +383,7 @@ public final class ExecutionService extends Service {
                 "windowAttached", activeWebView.isAttachedToWindow(), "viewFocused", activeWebView.isFocused(),
                 "windowFocused", activeWebView.hasWindowFocus()));
         String script = projectDirectoryStep
-                ? ProjectDirectoryNavigationScript.build(projectDisplayName, projectCandidateIndex)
+                ? ProjectDirectoryNavigationScript.build(currentSchedule.targetUrl, projectCandidateIndex)
                 : (submitted
                 ? ConversationVerificationScript.build(currentSchedule, stampedPrompt)
                 : AutomationScript.build(currentSchedule, stampedPrompt, currentItem.optString("runId"), pageAttempts));
@@ -445,18 +438,7 @@ public final class ExecutionService extends Service {
         trace("SCRIPT_RESULT", object("status", status, "detail", detail, "url", resultUrl,
                 "diagnostics", result.optJSONObject("diagnostics"), "raw", clip(raw, 12_000)));
         switch (status) {
-            case "NATIVE_INPUT_REQUIRED" -> {
-                WebView preparedView = webView;
-                int preparedGeneration = navigationGeneration;
-                stepInFlight = true;
-                handler.postDelayed(() -> {
-                    stepInFlight = false;
-                    if (currentItem != null && preparedView == webView
-                            && preparedGeneration == navigationGeneration && !submitted) {
-                        commitNativeComposerInput();
-                    }
-                }, 200L);
-            }
+            case "CDP_INPUT_REQUIRED" -> commitDevToolsComposerInput();
             case "SUBMITTED" -> {
                 submitted = true;
                 pageAttempts = 0;
@@ -476,35 +458,40 @@ public final class ExecutionService extends Service {
     }
 
 
-    private void commitNativeComposerInput() {
+    private void commitDevToolsComposerInput() {
         if (webView == null || currentItem == null) return;
-        if (nativeComposerInputAttempts >= 3) {
-            finish(false, "COMPOSER_INPUT_FAILED", contextualDetail("Android 입력 후 편집기 상태가 유지되지 않았습니다."));
+        if (devToolsInputAttempts >= 3) {
+            finish(false, "COMPOSER_INPUT_FAILED",
+                    contextualDetail("DevTools 입력 후에도 편집기 상태가 일치하지 않습니다."));
             return;
         }
-        nativeComposerInputAttempts++;
-        WebView active = webView;
-        EditorInfo info = new EditorInfo();
-        boolean accepted = false;
-        String failure = "";
-        boolean textEditor = active.onCheckIsTextEditor();
-        try {
-            active.requestFocus();
-            InputConnection connection = active.onCreateInputConnection(info);
-            if (connection != null) accepted = connection.commitText(stampedPrompt, 1);
-            else failure = "no-input-connection";
-        } catch (RuntimeException error) {
-            failure = error.getClass().getSimpleName();
-        }
-        trace("COMPOSER_IME_COMMIT", object("attempt", nativeComposerInputAttempts,
-                "accepted", accepted, "reason", failure, "textEditor", textEditor,
-                "inputType", info.inputType, "viewFocused", active.isFocused(),
-                "windowFocused", active.hasWindowFocus()));
-        if (!accepted && nativeComposerInputAttempts >= 3) {
-            finish(false, "COMPOSER_INPUT_FAILED", contextualDetail("Android 입력 연결을 사용할 수 없습니다."));
-            return;
-        }
-        scheduleAutomationStep(accepted ? 650L : 1500L);
+        devToolsInputAttempts++;
+        final int attempt = devToolsInputAttempts;
+        final String runId = currentItem.optString("runId");
+        final String prompt = stampedPrompt;
+        final WebView view = webView;
+        final int generation = navigationGeneration;
+        stepInFlight = true;
+        Thread worker = new Thread(() -> {
+            DevToolsComposerInput.Result delivered = DevToolsComposerInput.insertText(runId, prompt);
+            handler.post(() -> {
+                stepInFlight = false;
+                if (currentItem == null || view != webView
+                        || generation != navigationGeneration
+                        || !runId.equals(currentItem.optString("runId"))) return;
+                trace("COMPOSER_CDP_INPUT", object("attempt", attempt,
+                        "accepted", delivered.accepted, "code", delivered.code,
+                        "matchingPages", delivered.pageCount,
+                        "viewFocused", view.isFocused(), "windowFocused", view.hasWindowFocus()));
+                if (delivered.accepted) scheduleAutomationStep(1200L);
+                else if (attempt >= 3)
+                    finish(false, "COMPOSER_INPUT_FAILED",
+                            contextualDetail("DevTools 입력 연결 실패: " + delivered.code));
+                else scheduleAutomationStep(1200L);
+            });
+        }, "scheduler-devtools-composer");
+        worker.setDaemon(true);
+        worker.start();
     }
 
     private void handleVerification(String raw) {
@@ -590,7 +577,7 @@ public final class ExecutionService extends Service {
         navigationGeneration++;
         if (webView != null) {
             webView.stopLoading();
-            webView.loadUrl(ProjectDirectoryNavigationScript.DIRECTORY_URL);
+            webView.loadUrl(currentSchedule.targetUrl);
         }
     }
 

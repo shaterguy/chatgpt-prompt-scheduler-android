@@ -9,11 +9,11 @@ import static org.junit.Assert.assertTrue;
 public final class ProjectDirectoryNavigationScriptTest {
     private static final String PROJECT = "g-p-6a507cce80cc81919eeb9ba553b6ad9e";
 
-    @Test public void projectEntryUsesProjectsDirectoryInsteadOfDirectProjectColdLoad() {
+    @Test public void projectEntryUsesSavedCanonicalProjectUrl() {
         Schedule project = new Schedule();
         project.targetType = "project";
         project.targetUrl = "https://chatgpt.com/g/" + PROJECT + "/project";
-        assertEquals("https://chatgpt.com/projects", ProjectDirectoryNavigationScript.entryUrl(project));
+        assertEquals(project.targetUrl, ProjectDirectoryNavigationScript.entryUrl(project));
 
         Schedule general = new Schedule();
         general.targetType = "general";
@@ -27,19 +27,25 @@ public final class ProjectDirectoryNavigationScriptTest {
         project.targetUrl = "https://chatgpt.com/g/" + PROJECT + "/project";
 
         assertTrue(ProjectDirectoryNavigationScript.needsDirectoryStep(project, "https://chatgpt.com/projects"));
-        assertTrue(ProjectDirectoryNavigationScript.needsDirectoryStep(project,
+        assertFalse(ProjectDirectoryNavigationScript.needsDirectoryStep(project,
                 "https://chatgpt.com/g/g-p-7a507cce80cc81919eeb9ba553b6ad9e/project"));
         assertFalse(ProjectDirectoryNavigationScript.needsDirectoryStep(project,
                 "https://chatgpt.com/g/" + PROJECT + "-vibe-coding/project"));
     }
 
+    @Test public void greetingIsNeverUsedAsProjectName() {
+        assertEquals("", ProjectCatalog.validDisplayName("진수님, 반갑습니다."));
+        assertEquals("", ProjectCatalog.validDisplayName("오늘은 무엇을 해볼까요?"));
+        assertEquals("💾 Vibe Coding", ProjectCatalog.validDisplayName("💾 Vibe Coding"));
+    }
+
     @Test public void generatedScriptTargetsCapturedSelectableRows() {
-        String script = ProjectDirectoryNavigationScript.build("💾 Vibe Coding", 1);
+        String script = ProjectDirectoryNavigationScript.build("https://chatgpt.com/g/" + PROJECT + "/project", 1);
         assertTrue(script.contains("location.pathname!=='/projects'"));
-        assertTrue(script.contains("[role=\"row\"][data-page-table-selectable-row=\"true\"]"));
-        assertTrue(script.contains("button[aria-label]"));
-        assertTrue(script.contains("pick.row.click()"));
+        assertTrue(script.contains("a[href]"));
+        assertTrue(script.contains("normalize(p[2]"));
+        assertTrue(script.contains("chosen.click()"));
         assertTrue(script.contains("const ordinal=1"));
-        assertTrue(script.contains("💾 Vibe Coding"));
+        assertTrue(script.contains(PROJECT));
     }
 }
