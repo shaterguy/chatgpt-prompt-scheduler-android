@@ -152,7 +152,7 @@ public class CoreLogicTest {
         assertTrue(script.contains("beforeinput"));
         assertTrue(script.contains("composer-submit-button"));
         assertTrue(script.contains("diagnostics"));
-        assertTrue(script.contains("dom-stability"));
+        assertTrue(script.contains("hasText:canonical(raw())!==''"));
     }
 
     @Test
@@ -183,12 +183,17 @@ public class CoreLogicTest {
         assertTrue(dom.contains("attempt:3"));
         assertTrue(first.contains("DOM 입력 확정 대기"));
         assertTrue(first.contains("domState.reverts>=3"));
-        assertTrue(first.contains("domTextStable()"));
-        assertTrue(first.contains("matchByTokens()"));
-        assertTrue(first.contains("composer.isContentEditable&&matchByTokens()"));
-        assertTrue(first.contains("matchMode:exactSame()"));
-        assertTrue(first.contains("mismatchSince"));
-        assertTrue(first.contains("await-editor-render"));
+        assertTrue(first.contains("if((domState.phase==='inputting'||domState.phase==='verified')&&canonical(raw())!==''"));
+        assertFalse(first.contains("if(same()){"));
+        assertFalse(first.contains("domTextStable()"));
+        assertTrue(first.contains("COMPOSER_EDITOR_EMPTY"));
+        assertTrue(first.contains("if(!empty())return"));
+        assertFalse(first.contains("whitespaceAwareReadback"));
+
+
+
+
+
         assertFalse(first.contains("__chatgptSchedulerInputTarget"));
         assertTrue(paste.contains("domStates"));
         assertFalse(dom.contains("new ClipboardEvent('paste'"));

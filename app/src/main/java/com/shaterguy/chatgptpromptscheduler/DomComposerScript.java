@@ -4,21 +4,11 @@ package com.shaterguy.chatgptpromptscheduler;
 final class DomComposerScript {
     private DomComposerScript() {}
 
-    static String whitespaceAwareReadback() {
-        return """
-                const domTokens=s=>canonical(s).split(/\\s+/).filter(Boolean);
-                const exactSame=()=>canonical(raw())===canonical(expected);
-                const matchByTokens=()=>{const actual=domTokens(raw()),want=domTokens(expected);return want.length>0&&actual.length===want.length&&actual.every((value,index)=>value===want[index]);};
-                const same=()=>exactSame()||(composer.isContentEditable&&matchByTokens());
-                """.replace("\n", "");
-    }
-
     static String statePrelude() {
         return """
                 const domStates=window.__schedulerComposerStates||(window.__schedulerComposerStates={});
                 const domKey=markerKey+':dom';
-                const domState=domStates[domKey]||(domStates[domKey]={phase:'clearing',reverts:0,verifiedAt:0,mismatchSince:0});
-                const domTextStable=()=>{const now=Date.now();if(domState.phase!=='verified'){domState.phase='verified';domState.verifiedAt=now;return false;}return now-domState.verifiedAt>=550;};
+                const domState=domStates[domKey]||(domStates[domKey]={phase:'clearing',reverts:0});
                 """.replace("\n", "");
     }
 
@@ -56,10 +46,10 @@ final class DomComposerScript {
                     if('value'in composer){inputEvent('beforeinput','insertText',expected);setValue(expected);emitChange('insertText',expected);return 'native-value';}
                     putCaretAtEnd();
                     inputEvent('beforeinput','insertText',expected);
-                    if(same())return 'beforeinput';
+                    if(!empty())return 'beforeinput';
                     let nativeDone=false;
                     try{nativeDone=!!editorDoc.execCommand('insertText',false,expected);}catch(_){}
-                    if(same())return nativeDone?'native-insertText':'native-input';
+                    if(!empty())return nativeDone?'native-insertText':'native-input';
                     let p=composer.querySelector('p');
                     if(!p){p=editorDoc.createElement('p');composer.replaceChildren(p);}
                     p.textContent=expected;
@@ -68,14 +58,10 @@ final class DomComposerScript {
                     return 'paragraph-input';
                 };
                 if(domState.phase==='verified'||domState.phase==='inputting'){
-                    const now=Date.now();
-                    if(!domState.mismatchSince)domState.mismatchSince=now;
-                    if(now-domState.mismatchSince<2400)return result('RETRY','DOM 입력 동기화 대기',{...diag('readback','await-editor-render'),observedLength:raw().length,expectedLength:expected.length,normalizedMatch:matchByTokens()});
+                    if(!empty())return result('RETRY','DOM 전송 준비 중',{...diag('readback','nonempty')});
                     domState.reverts++;
-                    if(domState.reverts>=3)return result('COMPOSER_EDITOR_STATE_REVERTED','DOM 편집기 내용이 반복 초기화됩니다.',{...diag('input-failed','dom-readback'),reverts:domState.reverts,observedLength:raw().length,expectedLength:expected.length,normalizedMatch:matchByTokens()});
+                    if(domState.reverts>=3)return result('COMPOSER_EDITOR_EMPTY','DOM 입력 후 작성창이 비워졌습니다.',{...diag('input-failed','empty-after-input'),reverts:domState.reverts});
                     domState.phase='clearing';
-                    domState.mismatchSince=0;
-                    domState.verifiedAt=0;
                 }
                 if(domState.phase==='clearing'){
                     if(!empty()){const strategy=clearDom();return result('RETRY','DOM 편집기 초기화 중',{...diag('clear',strategy),observedLength:raw().length});}
