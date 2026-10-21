@@ -80,8 +80,8 @@ public final class RequestProfileVersionContractTest {
         assertTrue(workflow.contains("DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.5.4-dev4-unsigned.apk"));
         assertTrue(workflow.contains("attempt-${{ github.run_attempt }}"));
         assertTrue(workflow.contains(":app:testDebugUnitTest :app:assembleRelease"));
-        assertTrue(workflow.contains(":app:connectedDebugAndroidTest"));
-        assertTrue(workflow.contains("DevToolsComposerInputWebViewAndroidTest"));
+        assertFalse(workflow.contains(":app:connectedDebugAndroidTest"));
+        assertFalse(workflow.contains("DevToolsComposerInputWebViewAndroidTest"));
         assertFalse(workflow.contains("Enable hardware acceleration"));
         assertFalse(workflow.contains(":app:assembleDebugAndroidTest"));
         assertTrue(workflow.contains("actions/checkout@11d5960a326750d5838078e36cf38b85af677262"));
