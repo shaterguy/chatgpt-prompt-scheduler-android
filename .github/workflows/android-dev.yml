@@ -66,6 +66,12 @@ jobs:
             sha256sum "$DEV_UNSIGNED_NAME" > UNSIGNED_SHA256SUMS.txt
             printf '%s\n' "$GITHUB_SHA" > SOURCE_COMMIT.txt
           )
+      - name: Enable KVM acceleration for Android emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -c /dev/kvm
+          sudo chmod 0666 /dev/kvm
       - name: Run headless WebView DevTools input regression
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
