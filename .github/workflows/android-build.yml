@@ -22,8 +22,7 @@ concurrency:
 jobs:
   test:
     if: >-
-      github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      (github.event_name != 'push' || contains(github.event.head_commit.message, '[gh-fallback:android-build.yml]'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -68,8 +67,8 @@ jobs:
 
   release:
     if: >-
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      (github.event_name != 'push' || contains(github.event.head_commit.message, '[gh-fallback:android-build.yml]')) &&
+      (github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch'))
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 45
