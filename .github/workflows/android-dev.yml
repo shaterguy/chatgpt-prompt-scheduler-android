@@ -14,7 +14,7 @@ permissions:
 
 env:
   DEV_PACKAGE: com.shaterguy.chatgptpromptscheduler.dev
-  DEV_VERSION_CODE: '6010001'
+  DEV_VERSION_CODE: '6001001'
   DEV_VERSION_NAME: 0.6.1-dev1
   DEV_APP_LABEL: ChatGPT Prompt Scheduler DEV
   DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.6.1-dev1-unsigned.apk
