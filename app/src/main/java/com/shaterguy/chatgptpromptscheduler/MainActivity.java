@@ -31,9 +31,10 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         store = new ConfigStore(this);
+        sortKey = getPreferences(MODE_PRIVATE).getString("scheduleSort", ScheduleListPolicy.NEWEST);
+        if (!ScheduleListPolicy.DUE.equals(sortKey)) sortKey = ScheduleListPolicy.NEWEST;
         if (savedInstanceState != null) {
             filterKey = savedInstanceState.getString("scheduleFilter", ScheduleListPolicy.ALL);
-            sortKey = savedInstanceState.getString("scheduleSort", ScheduleListPolicy.NEWEST);
         }
         NotificationHelper.ensureChannels(this);
         requestNotificationPermission();
@@ -117,6 +118,7 @@ public final class MainActivity extends Activity {
                 String selected = position == 1 ? ScheduleListPolicy.DUE : ScheduleListPolicy.NEWEST;
                 if (!selected.equals(sortKey)) {
                     sortKey = selected;
+                    getPreferences(MODE_PRIVATE).edit().putString("scheduleSort", selected).apply();
                     render(true);
                 }
             }
