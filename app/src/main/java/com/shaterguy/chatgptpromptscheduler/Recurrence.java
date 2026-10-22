@@ -38,9 +38,14 @@ public final class Recurrence {
         return candidates.stream().min(Comparator.naturalOrder()).map(v -> v.toInstant().toEpochMilli()).orElse(0L);
     }
 
+    /** Shared next-run display target: persisted alarm times take precedence over recomputation. */
+    public static long effectiveNextRunAt(Schedule schedule, long now) {
+        if (!schedule.enabled) return 0L;
+        return schedule.nextRunAt > 0L ? schedule.nextRunAt : nextRunAt(schedule, now);
+    }
+
     public static String describeNext(Schedule schedule, long now) {
-        if (!schedule.enabled) return "다음 실행 없음";
-        long next = schedule.nextRunAt > 0L ? schedule.nextRunAt : nextRunAt(schedule, now);
+        long next = effectiveNextRunAt(schedule, now);
         if (next == 0L) return "다음 실행 없음";
         if ("interval".equals(schedule.recurrence)) {
             return Schedule.normalizedIntervalMinutes(schedule.intervalMinutes) + "분 간격 · 다음 "
