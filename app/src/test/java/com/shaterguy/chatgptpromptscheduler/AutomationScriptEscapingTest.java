@@ -27,4 +27,21 @@ public class AutomationScriptEscapingTest {
         assertFalse(verify.contains("\r"));
         assertFalse(verify.contains("\n"));
     }
+
+    @Test
+    public void composeWaitsForCompletePageBeforeProfileAndInput() {
+        Schedule schedule = new Schedule();
+        schedule.targetType = "general";
+        schedule.targetUrl = "https://chatgpt.com/";
+
+        String compose = AutomationScript.build(schedule, "page load guard", "loading-test", 0);
+        String gate = "if(document.readyState!=='complete')return result('RETRY','페이지 로딩 완료 대기',{...routeDiagnostics,readyState:document.readyState});";
+
+        assertTrue(compose.contains(gate));
+        assertTrue(compose.indexOf("if(authRequired)") < compose.indexOf(gate));
+        assertTrue(compose.indexOf(gate) < compose.indexOf("modeDiagnostics"));
+        assertTrue(compose.indexOf(gate) < compose.indexOf("domState.phase"));
+        assertTrue(compose.indexOf(gate) < compose.indexOf("send.click()"));
+        assertFalse(AutomationScript.verify(schedule, "page load guard").contains(gate));
+    }
 }
