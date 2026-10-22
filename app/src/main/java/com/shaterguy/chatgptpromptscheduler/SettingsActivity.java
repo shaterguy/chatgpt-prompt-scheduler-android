@@ -1,9 +1,14 @@
 package com.shaterguy.chatgptpromptscheduler;
 
 import android.app.Activity;
+import android.app.AlarmManager;
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -14,8 +19,14 @@ import android.widget.Toast;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 
 public final class SettingsActivity extends Activity {
+    private static final int REQUEST_EXPORT = 1001;
+    private static final int REQUEST_IMPORT = 1002;
     private ProfileAuthorizationSession authorizationAttempt;
     private TextView diagnosticStatus;
     private ConfigStore store;
@@ -29,6 +40,7 @@ public final class SettingsActivity extends Activity {
     private TextView profileStatus;
     private String googleAuthorizationStatus = "";
     private TextView projectStatus;
+    private TextView readinessStatus;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -44,6 +56,8 @@ public final class SettingsActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         if (profileStatus != null) profileStatus.setText(profileStatusText());
+        if (projectStatus != null) projectStatus.setText(projectStatusText());
+        if (readinessStatus != null) readinessStatus.setText(readinessStatusText());
         ProfileRegistrySync.refresh(this, result -> updateProfileStatus());
     }
 
@@ -67,6 +81,15 @@ public final class SettingsActivity extends Activity {
         root.setPadding(Ui.dp(this, 18), Ui.dp(this, 12), Ui.dp(this, 18), Ui.dp(this, 24));
         scroll.addView(root);
         root.addView(Ui.title(this, "설정"));
+
+        root.addView(Ui.section(this, "실행 준비 상태"));
+        readinessStatus = Ui.body(this, readinessStatusText());
+        root.addView(readinessStatus);
+        root.addView(Ui.body(this, "프로젝트 등록은 로그인/세션 화면에서 관리합니다."));
+        root.addView(Ui.actionGrid(this,
+                Ui.button(this, "알람 권한", v -> requestExactAlarm()),
+                Ui.button(this, "절전 제외", v -> requestBatteryExemption()),
+                Ui.button(this, "로그인/세션", v -> startActivity(new Intent(this, LoginActivity.class)))));
 
         root.addView(Ui.section(this, "모델 · 추론 프로필"));
         root.addView(Ui.body(this,
@@ -103,6 +126,15 @@ public final class SettingsActivity extends Activity {
         missedGrace = field(root, "누락 실행 허용 시간(분)", String.valueOf(settings.optInt("missedGraceMinutes", 30)));
         maxRetries = field(root, "기본 재시도 횟수(0∼5)", String.valueOf(settings.optInt("maxRetries", 2)));
         timeout = field(root, "실행 제한 시간(초, 30∼300)", String.valueOf(settings.optInt("executionTimeoutSeconds", 90)));
+        root.addView(Ui.section(this, "백업 및 진단"));
+        root.addView(Ui.actionGrid(this,
+                Ui.button(this, "설정 내보내기", v -> exportConfig()),
+                Ui.button(this, "설정 가져오기", v -> importConfig()),
+                Ui.button(this, "실행 기록", v -> startActivity(new Intent(this, LogsActivity.class))),
+                Ui.button(this, "알람 재구축", v -> {
+                    AlarmEngine.rebuildAll(this);
+                    toast("알람을 다시 등록했습니다.");
+                })));
         root.addView(Ui.actionGrid(this,
                 Ui.button(this, "저장", v -> save()),
                 Ui.button(this, "취소", v -> finish())));
@@ -122,6 +154,34 @@ public final class SettingsActivity extends Activity {
             // Google’s parser handles both successful and failed returned Intents.
             ProfileDriveAuthorization.fromIntent(this, data, resultCode, authorizationCallback(attempt));
             return;
+        }
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        Uri uri = data.getData();
+        if (requestCode == REQUEST_EXPORT) {
+            try (OutputStream output = getContentResolver().openOutputStream(uri)) {
+                output.write(store.exportPortable().toString(2).getBytes(StandardCharsets.UTF_8));
+                toast("설정 JSON을 저장했습니다.");
+            } catch (Exception error) { toast("내보내기 실패: " + error.getMessage()); }
+        } else if (requestCode == REQUEST_IMPORT) {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                    getContentResolver().openInputStream(uri), StandardCharsets.UTF_8))) {
+                StringBuilder contents = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) contents.append(line).append('\n');
+                JSONObject incoming = new JSONObject(contents.toString());
+                int count = incoming.optJSONArray("schedules") == null ? 0 : incoming.optJSONArray("schedules").length();
+                new AlertDialog.Builder(this).setTitle("설정 가져오기")
+                        .setMessage("현재 예약과 설정을 교체하고 " + count
+                                + "개 예약을 가져옵니다. 로그인 쿠키와 실행 기록은 변경하지 않습니다.")
+                        .setNegativeButton("취소", null).setPositiveButton("교체", (dialog, which) -> {
+                            try {
+                                int imported = store.importPortable(incoming);
+                                AlarmEngine.rebuildAll(this);
+                                toast(imported + "개 예약을 가져왔습니다.");
+                                buildUi(); // Import replaces settings; reload form from the new snapshot.
+                            } catch (Exception error) { toast("가져오기 실패: " + error.getMessage()); }
+                        }).show();
+            } catch (Exception error) { toast("파일 읽기 실패: " + error.getMessage()); }
         }
     }
 
@@ -232,6 +292,41 @@ public final class SettingsActivity extends Activity {
                         toast(cleared + "개 프로젝트를 삭제했습니다. 다시 방문하면 처음부터 등록됩니다.");
                     } catch (RuntimeException error) { toast("프로젝트 삭제 실패: " + error.getMessage()); }
                 }).show();
+    }
+
+    private String readinessStatusText() {
+        AlarmManager alarms = getSystemService(AlarmManager.class);
+        boolean exact = Build.VERSION.SDK_INT < 31 || (alarms != null && alarms.canScheduleExactAlarms());
+        PowerManager power = getSystemService(PowerManager.class);
+        boolean battery = power != null && power.isIgnoringBatteryOptimizations(getPackageName());
+        return (exact ? "✓" : "✕") + " 정확한 알람 권한\n"
+                + (battery ? "✓" : "✕") + " 배터리 최적화 제외";
+    }
+
+    private void requestExactAlarm() {
+        if (Build.VERSION.SDK_INT >= 31) {
+            startActivity(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                    Uri.parse("package:" + getPackageName())));
+        } else toast("이 Android 버전에서는 별도 권한이 필요하지 않습니다.");
+    }
+
+    private void requestBatteryExemption() {
+        Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Uri.parse("package:" + getPackageName()));
+        try { startActivity(intent); }
+        catch (Exception error) { startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); }
+    }
+
+    private void exportConfig() {
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("application/json")
+                .putExtra(Intent.EXTRA_TITLE, "chatgpt-prompt-scheduler-settings.json");
+        startActivityForResult(intent, REQUEST_EXPORT);
+    }
+
+    private void importConfig() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("application/json")
+                .addCategory(Intent.CATEGORY_OPENABLE);
+        startActivityForResult(intent, REQUEST_IMPORT);
     }
 
     private String profileStatusText() {
