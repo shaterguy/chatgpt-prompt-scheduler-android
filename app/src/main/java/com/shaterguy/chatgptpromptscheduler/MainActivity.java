@@ -11,7 +11,14 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.PowerManager;
 import android.provider.Settings;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.Spinner;
+import android.view.View;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Switch;
@@ -26,8 +33,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 public final class MainActivity extends Activity {
-    private static final int REQUEST_EXPORT = 1001;
-    private static final int REQUEST_IMPORT = 1002;
+    private static final String NON_PROJECT = "#nonproject";
+    private String projectFilter = "";
+    private int sortMode = 0;
     private ConfigStore store;
     private LinearLayout root;
     private ScrollView scrollView;
@@ -36,9 +44,20 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         store = new ConfigStore(this);
+        if (savedInstanceState != null) {
+            projectFilter = savedInstanceState.getString("projectFilter", "");
+            sortMode = savedInstanceState.getInt("sortMode", 0);
+        }
         NotificationHelper.ensureChannels(this);
         requestNotificationPermission();
         render();
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle state) {
+        state.putString("projectFilter", projectFilter);
+        state.putInt("sortMode", sortMode);
+        super.onSaveInstanceState(state);
     }
 
     @Override
@@ -66,31 +85,80 @@ public final class MainActivity extends Activity {
         boolean battery = power.isIgnoringBatteryOptimizations(getPackageName());
         root.addView(Ui.body(this, (exact ? "✓" : "✕") + " 정확한 알람 권한"));
         root.addView(Ui.body(this, (battery ? "✓" : "✕") + " 배터리 최적화 제외"));
-        root.addView(Ui.body(this, "로그인 세션과 프로젝트 등록은 아래 ‘로그인/세션’ 화면에서 확인합니다."));
-
-        root.addView(Ui.actionGrid(this,
-                Ui.button(this, "알람 권한", v -> requestExactAlarm()),
-                Ui.button(this, "절전 제외", v -> requestBatteryExemption()),
-                Ui.button(this, "로그인/세션", v -> startActivity(new Intent(this, LoginActivity.class))),
-                Ui.button(this, "설정", v -> startActivity(new Intent(this, SettingsActivity.class)))));
+        root.addView(Ui.button(this, "설정 및 관리", v ->
+                startActivity(new Intent(this, SettingsActivity.class))));
 
         root.addView(Ui.section(this, "예약 작업"));
         Button add = Ui.button(this, "+ 예약 추가", v -> startActivity(new Intent(this, ScheduleEditorActivity.class)));
         root.addView(add);
         List<Schedule> schedules = store.loadSchedules();
-        if (schedules.isEmpty()) root.addView(Ui.body(this, "등록된 예약이 없습니다."));
+        addListControls(schedules);
         long now = System.currentTimeMillis();
-        for (Schedule schedule : schedules) addScheduleCard(schedule, now);
-
-        root.addView(Ui.section(this, "백업 및 진단"));
-        root.addView(Ui.actionGrid(this,
-                Ui.button(this, "설정 내보내기", v -> exportConfig()),
-                Ui.button(this, "설정 가져오기", v -> importConfig()),
-                Ui.button(this, "실행 기록", v -> startActivity(new Intent(this, LogsActivity.class))),
-                Ui.button(this, "알람 재구축", v -> { AlarmEngine.rebuildAll(this); toast("알람을 다시 등록했습니다."); })));
+        List<Schedule> visible = ScheduleListOrder.visible(schedules, projectFilter, sortMode, now);
+        if (visible.isEmpty()) root.addView(Ui.body(this,
+                schedules.isEmpty() ? "등록된 예약이 없습니다." : "이 보기에 해당하는 예약이 없습니다."));
+        for (Schedule schedule : visible) addScheduleCard(schedule, now);
         Ui.setContent(this, scroll);
         scroll.post(() -> {
             if (scrollView == scroll) scroll.scrollTo(0, previousScrollY);
+        });
+    }
+
+    private void addListControls(List<Schedule> schedules) {
+        ProjectCatalog catalog = new ProjectCatalog(this);
+        Map<String, String> projects = new LinkedHashMap<>();
+        for (ProjectUrlPolicy.ProjectRef ref : catalog.entries())
+            projects.put(ref.projectId, catalog.displayName(ref));
+        boolean hasNonProject = false;
+        for (Schedule schedule : schedules) {
+            ProjectUrlPolicy.ProjectRef ref = ScheduleListOrder.projectOf(schedule);
+            if (ref != null) {
+                if (!projects.containsKey(ref.projectId))
+                    projects.put(ref.projectId, catalog.displayName(ref));
+            } else hasNonProject = true;
+        }
+        ArrayList<String> keys = new ArrayList<>();
+        ArrayList<String> labels = new ArrayList<>();
+        keys.add(""); labels.add("전체보기");
+        for (Map.Entry<String, String> entry : projects.entrySet()) {
+            keys.add(entry.getKey());
+            int duplicates = 0;
+            for (String name : projects.values()) if (name.equals(entry.getValue())) duplicates++;
+            labels.add(duplicates > 1 ? entry.getValue() + " (" + entry.getKey() + ")" : entry.getValue());
+        }
+        if (hasNonProject) { keys.add(NON_PROJECT); labels.add("일반·기존 대화"); }
+        if (!keys.contains(projectFilter)) projectFilter = "";
+
+        root.addView(Ui.body(this, "프로젝트별 보기"));
+        Spinner filter = new Spinner(this);
+        ArrayAdapter<String> filterAdapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, labels);
+        filterAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        filter.setAdapter(filterAdapter);
+        filter.setSelection(keys.indexOf(projectFilter), false);
+        root.addView(filter);
+        filter.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            public void onNothingSelected(AdapterView<?> parent) {}
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                String selected = keys.get(position);
+                if (!selected.equals(projectFilter)) { projectFilter = selected; render(); }
+            }
+        });
+
+        root.addView(Ui.body(this, "정렬 기준"));
+        Spinner ordering = new Spinner(this);
+        ArrayAdapter<String> orderAdapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item,
+                new String[]{"최신 등록순", "예약 도래순"});
+        orderAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        ordering.setAdapter(orderAdapter);
+        ordering.setSelection(sortMode, false);
+        root.addView(ordering);
+        ordering.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            public void onNothingSelected(AdapterView<?> parent) {}
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (sortMode != position) { sortMode = position; render(); }
+            }
         });
     }
 
@@ -165,66 +233,6 @@ public final class MainActivity extends Activity {
                     store.deleteSchedule(schedule.id);
                     render();
                 }).show();
-    }
-
-    private void exportConfig() {
-        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("application/json")
-                .putExtra(Intent.EXTRA_TITLE, "chatgpt-prompt-scheduler-settings.json");
-        startActivityForResult(intent, REQUEST_EXPORT);
-    }
-
-    private void importConfig() {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("application/json")
-                .addCategory(Intent.CATEGORY_OPENABLE);
-        startActivityForResult(intent, REQUEST_IMPORT);
-    }
-
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
-        Uri uri = data.getData();
-        if (requestCode == REQUEST_EXPORT) {
-            try (OutputStream output = getContentResolver().openOutputStream(uri)) {
-                output.write(store.exportPortable().toString(2).getBytes(StandardCharsets.UTF_8));
-                toast("설정 JSON을 저장했습니다.");
-            } catch (Exception error) { toast("내보내기 실패: " + error.getMessage()); }
-        } else if (requestCode == REQUEST_IMPORT) {
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                    getContentResolver().openInputStream(uri), StandardCharsets.UTF_8))) {
-                StringBuilder text = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) text.append(line).append('\n');
-                JSONObject incoming = new JSONObject(text.toString());
-                int count = incoming.optJSONArray("schedules") == null ? 0 : incoming.optJSONArray("schedules").length();
-                new AlertDialog.Builder(this).setTitle("설정 가져오기")
-                        .setMessage("현재 예약과 설정을 교체하고 " + count
-                                + "개 예약을 가져옵니다. 로그인 쿠키와 실행 기록은 변경하지 않습니다.")
-                        .setNegativeButton("취소", null).setPositiveButton("교체", (dialog, which) -> {
-                            try {
-                                int imported = store.importPortable(incoming);
-                                AlarmEngine.rebuildAll(this);
-                                toast(imported + "개 예약을 가져왔습니다.");
-                                render();
-                            } catch (Exception error) { toast("가져오기 실패: " + error.getMessage()); }
-                        }).show();
-            } catch (Exception error) { toast("파일 읽기 실패: " + error.getMessage()); }
-        }
-    }
-
-    private void requestExactAlarm() {
-        if (Build.VERSION.SDK_INT >= 31) {
-            Intent intent = new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
-                    Uri.parse("package:" + getPackageName()));
-            startActivity(intent);
-        } else toast("이 Android 버전에서는 별도 권한이 필요하지 않습니다.");
-    }
-
-    private void requestBatteryExemption() {
-        Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                Uri.parse("package:" + getPackageName()));
-        try { startActivity(intent); }
-        catch (Exception error) { startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); }
     }
 
     private void requestNotificationPermission() {

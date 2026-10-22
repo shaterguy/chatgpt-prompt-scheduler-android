@@ -68,9 +68,15 @@ public final class RequestProfileVersionContractTest {
     @Test public void formalReleaseIdentityAndSignerStayPinned() throws Exception {
         String gradle = source("app/build.gradle");
         assertEquals(1, occurrences(gradle, "androidx.webkit:webkit:1.17.0"));
-        assertTrue(gradle.contains("applicationId 'com.shaterguy.chatgptpromptscheduler'"));
-        assertTrue(gradle.contains("versionCode 2100000011"));
-        assertTrue(gradle.contains("versionName '0.5.6'"));
+        // Keep the official v0.5.6 release workflow pinned while accepting this separate DEV lineage.
+        if (gradle.contains("versionName '0.5.7-dev1'")) {
+            assertTrue(gradle.contains("applicationId 'com.shaterguy.chatgptpromptscheduler.dev'"));
+            assertTrue(gradle.contains("versionCode 5007001"));
+        } else {
+            assertTrue(gradle.contains("applicationId 'com.shaterguy.chatgptpromptscheduler'"));
+            assertTrue(gradle.contains("versionCode 2100000011"));
+            assertTrue(gradle.contains("versionName '0.5.6'"));
+        }
         String strings = source("app/src/main/res/values/strings.xml");
         assertTrue(strings.contains("<string name=\"app_name\">ChatGPT Prompt Scheduler</string>"));
         assertFalse(strings.contains("Scheduler DEV"));
