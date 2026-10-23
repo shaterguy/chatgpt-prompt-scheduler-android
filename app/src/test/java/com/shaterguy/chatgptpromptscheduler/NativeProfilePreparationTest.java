@@ -79,15 +79,12 @@ public final class NativeProfilePreparationTest {
         assertEquals(s.targetUrl, NativeProfilePreparationScript.targetUrl(s, Mode.WORK));
     }
 
-    @Test public void pollingPatchesOnceAndVerificationReadsWithoutWriting() throws Exception {
+    @Test public void preparationPollingPatchesOnceAndKeepsCompletedReceipt() throws Exception {
         TargetProfile p = chatProfile();
         // Official CDN modules cannot load in Node; provide their API boundary, keeping the full polling script.
-        String prepare = NativeProfilePreparationScript.build(p,"run-fixture",true)
+        String prepare = NativeProfilePreparationScript.build(p,"run-fixture")
                 .replace("await import(runtime)", "await Promise.resolve({__webpack_require__:nativeRequire})");
-        String verify = NativeProfilePreparationScript.build(p,"run-fixture",false)
-                .replace("await import(runtime)", "await Promise.resolve({__webpack_require__:nativeRequire})");
-        run(ENV + browserBoundary() + "const prepare=" + RequestProfileScript.jsQuote(prepare)
-                + ",verify=" + RequestProfileScript.jsQuote(verify) + ";" + """
+        run(ENV + browserBoundary() + "const prepare=" + RequestProfileScript.jsQuote(prepare) + ";" + """
             (async()=>{
               const tick=()=>new Promise(r=>setImmediate(r));
               let release,patchCount=0;
@@ -97,21 +94,14 @@ public final class NativeProfilePreparationTest {
               for(let i=0;i<10;i++)assert.equal(poll(prepare).status,'RETRY');
               assert.equal(patchCount,1);release();await tick();
               assert.equal(poll(prepare).status,'PREPARED');assert.equal(patchCount,1);
-              delete window.__chatgptPromptSchedulerNativeProfile;
-              const snapshot=JSON.stringify([...atoms,...cookies]);
-              assert.equal(poll(verify).status,'RETRY');await tick();
-              assert.equal(poll(verify).status,'READY');assert.equal(patchCount,1);
-              assert.equal(JSON.stringify([...atoms,...cookies]),snapshot);
-              delete window.__chatgptPromptSchedulerNativeProfile;
-              atoms.set('chatgpt-last-selected-home-model-v1',{slug:'wrong',thinkingEffort:'standard'});
-              poll(verify);await tick();assert.equal(poll(verify).status,'NATIVE_PREFERENCE_FAILED');
+              for(let i=0;i<10;i++)assert.equal(poll(prepare).status,'PREPARED');
               assert.equal(patchCount,1);
             })().catch(e=>{console.error(e);process.exitCode=1;});
             """);
     }
 
     @Test public void priorSendMarkerSkipsAllPreferenceWrites() throws Exception {
-        String script=NativeProfilePreparationScript.build(chatProfile(),"run-fixture",true);
+        String script=NativeProfilePreparationScript.build(chatProfile(),"run-fixture");
         run(ENV + browserBoundary() + "const script=" + RequestProfileScript.jsQuote(script) + ";" + """
             window['chatgpt-prompt-scheduler:submit:run-fixture']='already-clicked';
             assert.equal(JSON.parse(eval(script)).status,'SUBMITTED');

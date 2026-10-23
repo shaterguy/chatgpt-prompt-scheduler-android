@@ -18,7 +18,7 @@ public class ProjectDuplicatePreventionTest {
         assertFalse(script.contains("actualProject===expectedProject&&(afterSubmit||!actualConversation)"));
     }
 
-    @Test public void chatCompositionRequiresPreparedRunAndCanonicalProfile() throws Exception {
+    @Test public void chatCompositionContinuesWithoutTargetPageRevalidation() throws Exception {
         Schedule schedule = new Schedule();
         schedule.targetType = "project";
         schedule.targetUrl = "https://chatgpt.com/g/proj/project";
@@ -27,8 +27,8 @@ public class ProjectDuplicatePreventionTest {
         LegacyProfileFixtures.attach(schedule);
         String script = AutomationScript.build(schedule, "prompt", "run-chat-profile", 0);
         assertTrue(script.contains("__chatgptPromptSchedulerNativeProfile"));
-        assertTrue(script.contains("nativeProfile.status!=='READY'"));
-        assertTrue(script.contains(RequestProfileScript.jsQuote(NativeProfilePreparationScript.key(schedule.resolvedRequestProfile,"run-chat-profile"))));
+        assertFalse(script.contains("NATIVE_PREFERENCE_NOT_READY"));
+        assertTrue(NativeProfilePreparationScript.profileJson(schedule.resolvedRequestProfile).contains("gpt-5-6-thinking"));
         assertFalse(script.contains("profileEngine.configure("));
         assertTrue(script.contains("action:'native-prepared'"));
         assertFalse(script.contains("data-tpp-toggle-value"));
@@ -47,7 +47,7 @@ public class ProjectDuplicatePreventionTest {
         String profile = NativeProfilePreparationScript.profileJson(schedule.resolvedRequestProfile);
         assertTrue(profile.contains("\"model\":\"gpt-5.6-terra-wm\""));
         assertTrue(profile.contains("\"thinking_effort\":\"xhigh\""));
-        assertTrue(script.contains("NATIVE_PREFERENCE_NOT_READY"));
+        assertFalse(script.contains("NATIVE_PREFERENCE_NOT_READY"));
         assertFalse(script.contains("profileEngine.configure("));
         assertFalse(script.contains("menuitemradio"));
         assertFalse(script.contains("open-reasoning-menu"));

@@ -63,7 +63,6 @@ public final class ExecutionService extends Service {
     private int projectCandidateIndex;
     private boolean submitted;
     private boolean nativeProfilePrepared;
-    private boolean nativeProfileVerified;
     private boolean stepInFlight;
     private String stampedPrompt;
     private String projectDisplayName = "";
@@ -191,7 +190,6 @@ public final class ExecutionService extends Service {
         navigationGeneration = 0;
         submitted = false;
         nativeProfilePrepared = false;
-        nativeProfileVerified = false;
         stepInFlight = false;
         lastObservedUrl = "";
         lastRetryDetail = "";
@@ -257,7 +255,7 @@ public final class ExecutionService extends Service {
             finish(false, "EXECUTION_TIMEOUT", timeoutDetail());
             return;
         }
-        if (!submitted) { nativeProfilePrepared = false; nativeProfileVerified = false; }
+        if (!submitted) nativeProfilePrepared = false;
         engineAttempt++;
         trace("ENGINE_LAUNCH", object("engineAttempt", engineAttempt));
         try {
@@ -364,7 +362,6 @@ public final class ExecutionService extends Service {
     }
 
     private void recordNavigation(String url) {
-        if (!submitted) nativeProfileVerified = false;
         navigationGeneration++;
         stepInFlight = false;
         lastObservedUrl = valueOrEmpty(url);
@@ -400,7 +397,7 @@ public final class ExecutionService extends Service {
         }
         WebView activeWebView = webView;
         int generation = navigationGeneration;
-        boolean preferenceStep = !submitted && currentRequestProfile != null && !nativeProfileVerified;
+        boolean preferenceStep = !submitted && currentRequestProfile != null && !nativeProfilePrepared;
         boolean projectDirectoryStep = !preferenceStep && !submitted
                 && ProjectDirectoryNavigationScript.needsDirectoryStep(currentSchedule, lastObservedUrl);
         stepInFlight = true;
@@ -409,7 +406,7 @@ public final class ExecutionService extends Service {
                 "windowAttached", activeWebView.isAttachedToWindow(), "viewFocused", activeWebView.isFocused(),
                 "windowFocused", activeWebView.hasWindowFocus()));
         String script = preferenceStep
-                ? NativeProfilePreparationScript.build(currentRequestProfile, currentItem.optString("runId"), !nativeProfilePrepared)
+                ? NativeProfilePreparationScript.build(currentRequestProfile, currentItem.optString("runId"))
                 : projectDirectoryStep
                 ? ProjectDirectoryNavigationScript.build(currentSchedule.targetUrl, projectCandidateIndex)
                 : (submitted
@@ -438,7 +435,6 @@ public final class ExecutionService extends Service {
         switch (status) {
             case "PREPARED" -> {
                 nativeProfilePrepared = true;
-                nativeProfileVerified = false;
                 pageAttempts = 0;
                 lastRetryDetail = detail;
                 String target = NativeProfilePreparationScript.targetUrl(currentSchedule, currentRequestProfile.mode);
@@ -446,11 +442,6 @@ public final class ExecutionService extends Service {
                 cancelAutomationStep();
                 navigationGeneration++;
                 webView.loadUrl(target);
-            }
-            case "READY" -> {
-                nativeProfileVerified = true;
-                pageAttempts = 0;
-                scheduleAutomationStep(0L);
             }
             case "RETRY" -> {
                 pageAttempts++;

@@ -38,9 +38,9 @@ final class NativeProfilePreparationScript {
     }
 
     /** evaluateJavascript does not await Promises: start once, then poll the same document state. */
-    static String build(RequestProfileEngine.TargetProfile target, String runId, boolean apply) {
+    static String build(RequestProfileEngine.TargetProfile target, String runId) {
         return "(()=>{const profile=" + profileJson(target) + ",key=" + q(key(target, runId))
-                + ",phase=" + q(apply ? "prepare" : "verify") + ",markerKey=" + q("chatgpt-prompt-scheduler:submit:" + runId) + ";"
+                + ",phase=\"prepare\",markerKey=" + q("chatgpt-prompt-scheduler:submit:" + runId) + ";"
                 + """
                   const result=(status,detail='',diagnostics={})=>JSON.stringify({status,detail,url:location.href,diagnostics});
                   if(location.origin!=='https://chatgpt.com')return result('TARGET_CONTEXT_MISMATCH','ChatGPT 호스트 확인 실패');
@@ -58,18 +58,12 @@ final class NativeProfilePreparationScript {
                   const state={key,phase,status:'RETRY',detail:'모델·추론 설정 준비 중',receipt:null};
                   window.__chatgptPromptSchedulerNativeProfile=state;
                 """
-                + preferenceFunction() + environmentFunction() + readbackFunction()
+                + preferenceFunction() + environmentFunction()
                 + """
                   (async()=>{
                     const env=await nativeEnvironment();
-                    if(phase==='prepare'){
-                      state.receipt=await applyPreference(env,profile);
-                      state.status='PREPARED';state.detail='모델·추론 설정 저장 완료';
-                    }else{
-                      state.receipt={mode:profile.mode,model:profile.model,effort:profile.thinking_effort,nativeMatches:matchesPreference(env,profile)};
-                      if(!state.receipt.nativeMatches)throw Error('NATIVE_SELECTION_MISMATCH');
-                      state.status='READY';state.detail='진입 화면의 모델·추론 설정 확인 완료';
-                    }
+                    state.receipt=await applyPreference(env,profile);
+                    state.status='PREPARED';state.detail='모델·추론 설정 저장 완료';
                   })().catch(e=>{
                     state.status='NATIVE_PREFERENCE_FAILED';
                     const code=String(e?.message||'');
@@ -128,18 +122,6 @@ final class NativeProfilePreparationScript {
                   if(receipt.serverReadback?.matches===false)throw Error('SERVER_READBACK_MISMATCH');
                   if(receipt.nativeMatches!==true)throw Error('NATIVE_SELECTION_MISMATCH');
                   return receipt;
-                }
-                """;
-    }
-
-    static String readbackFunction() {
-        return """
-                function matchesPreference(env,p){
-                  const same=v=>v?.slug===p.model&&v?.thinkingEffort===p.thinking_effort;
-                  if(env.cookie.a('codex_composer_mode')!==p.mode)return false;
-                  if(p.mode==='chat')return same(env.atoms.k('chatgpt-last-selected-model-v1',null))&&same(env.atoms.k('chatgpt-last-selected-home-model-v1',null));
-                  let c=null;try{c=JSON.parse(env.cookie.a('oai-tpp-model-settings')||'null');}catch{}
-                  return same(env.atoms.k('chatgpt-last-selected-tpp-model-v1',null))&&env.atoms.k('chatgpt-work-model-picker-selection-mode-v1',null)==='model'&&c?.modelSettings?.lastUsedModelSlug===p.model&&c?.thinkingEffort===p.thinking_effort&&c?.selectionMode==='model';
                 }
                 """;
     }

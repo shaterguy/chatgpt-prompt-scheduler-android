@@ -31,30 +31,22 @@ final class RequestProfileScript {
                 + "const result=(status,detail='',diagnostics={})=>JSON.stringify({status,detail,url:location.href,diagnostics:{...diagnostics,requestProfile:requestProfileDiagnostics()}});";
     }
 
-    static String activate(Schedule schedule) { return activate(schedule, ""); }
-
-    static String activate(Schedule schedule, String runId) {
+    static String activate(Schedule schedule) {
         if ("existing".equals(schedule.targetType)) return nativeInherit("inherit", "inherit", "inherit");
         String experience = Schedule.normalizedExperience(schedule.targetType, schedule.experience);
         String model = "work".equals(experience) ? Schedule.normalizedWorkModel(experience, schedule.workModel) : "";
         String reasoning = "work".equals(experience)
                 ? Schedule.normalizedReasoningEffort(experience, schedule.reasoningEffort)
                 : Schedule.normalizedChatReasoning(experience, schedule.chatReasoning);
-        RequestProfileEngine.ProfilePlan plan;
         try {
             RequestProfileEngine.TargetProfile target = RequestProfileEngine.forSchedule(schedule);
             if (target == null) return nativeInherit(experience, model.isEmpty() ? "chat" : model, reasoning);
-            plan = RequestProfileEngine.plan(target);
         } catch (IllegalArgumentException invalid) {
             return "return result('REQUEST_PROFILE_INVALID','요청 프로필이 지원되지 않습니다.',"
                     + "{mode:" + jsQuote(experience) + ",model:" + jsQuote(model)
                     + ",reasoning:" + jsQuote(reasoning) + ",operation:'validate'});";
         }
-        String key = NativeProfilePreparationScript.key(plan.target, runId);
-        return "const nativeProfile=window.__chatgptPromptSchedulerNativeProfile;"
-                + "if(!nativeProfile||nativeProfile.key!==" + jsQuote(key)
-                + "||nativeProfile.status!=='READY')return result('NATIVE_PREFERENCE_NOT_READY','진입 화면의 모델·추론 설정을 확인하지 못했습니다.');"
-                + "const modeDiagnostics={requested:" + jsQuote(experience) + ",ready:true,action:'native-prepared'};"
+        return "const modeDiagnostics={requested:" + jsQuote(experience) + ",ready:true,action:'native-prepared'};"
                 + "const modelDiagnostics={requested:" + jsQuote(model.isEmpty() ? "chat" : model) + ",ready:true,action:'native-prepared'};"
                 + "const reasoningDiagnostics={requested:" + jsQuote(reasoning) + ",ready:true,action:'native-prepared'};";
     }
