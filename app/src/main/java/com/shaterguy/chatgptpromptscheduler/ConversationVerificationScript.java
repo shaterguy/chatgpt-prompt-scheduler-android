@@ -10,7 +10,7 @@ public final class ConversationVerificationScript {
         String expectedProject = jsQuote(valueOrEmpty(TargetParser.projectId(schedule.targetUrl)));
         String expectedConversation = jsQuote(valueOrEmpty(TargetParser.conversationId(schedule.targetUrl)));
         return "(() => {" +
-                "const result=(status,detail='',diagnostics={})=>JSON.stringify({status,detail,url:location.href,diagnostics});" +
+                RequestProfileScript.resultFunction() +
                 "if(location.hostname!=='chatgpt.com'&&location.hostname!=='www.chatgpt.com')return result('TARGET_CONTEXT_MISMATCH','호스트 불일치 actual='+location.href);" +
                 "const norm=s=>String(s??'').replace(/[\\u200B-\\u200D\\uFEFF]/g,'').replace(/\\u00a0/g,' ').replace(/\\r\\n?/g,'\\n').replace(/[ \\t]+/g,' ').trim();" +
                 "const canonical=s=>norm(s).replace(/ *\\n+ */g,'\\n');" +

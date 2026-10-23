@@ -8,7 +8,7 @@ public final class AutomationScript {
         String run = jsQuote(runId);
         return "(() => {" +
                 "" +
-                "const result=(status,detail='',diagnostics={})=>JSON.stringify({status,detail,url:location.href,diagnostics});" +
+                RequestProfileScript.resultFunction() +
                 "if(location.hostname!=='chatgpt.com'&&location.hostname!=='www.chatgpt.com')return result('TARGET_CONTEXT_MISMATCH','호스트 불일치 actual='+location.href);" +
                 "const markerKey='chatgpt-prompt-scheduler:submit:' + " + run + ";" +
                 "const readMarker=()=>{try{return localStorage.getItem(markerKey)||sessionStorage.getItem(markerKey)||window[markerKey]||'';}catch(_){return window[markerKey]||'';}};" +
@@ -46,7 +46,7 @@ public final class AutomationScript {
     public static String verify(Schedule schedule, String stampedPrompt) {
         String tail = stampedPrompt.length() > 120 ? stampedPrompt.substring(0, 120) : stampedPrompt;
         return "(() => {" +
-                "const result=(status,detail='',diagnostics={})=>JSON.stringify({status,detail,url:location.href,diagnostics});" +
+                RequestProfileScript.resultFunction() +
                 "if(location.hostname!=='chatgpt.com'&&location.hostname!=='www.chatgpt.com')return result('TARGET_CONTEXT_MISMATCH','호스트 불일치 actual='+location.href);" +
                 "const norm=s=>String(s??'').replace(/[\\u200B-\\u200D\\uFEFF]/g,'').replace(/\\u00a0/g,' ').replace(/\\r\\n?/g,'\\n').replace(/[ \\t]+/g,' ').trim();" +
                 "const canonical=s=>norm(s).replace(/ *\\n+ */g,'\\n');" +

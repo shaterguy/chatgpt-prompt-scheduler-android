@@ -176,6 +176,7 @@ public final class ExecutionService extends Service {
             finish(false, "REQUEST_PROFILE_INVALID", "선택한 모델·추론 조합이 현재 목록에 없습니다. 설정에서 목록을 업데이트하거나 예약의 조합을 다시 선택해 주세요.");
             return;
         }
+        traceResolvedRequestProfile();
         if (currentRequestProfile != null && !RequestProfileScript.isDocumentStartSupported()) {
             finish(false, "REQUEST_PROFILE_UNSUPPORTED", "이 WebView는 안전한 요청 프로필 적용을 지원하지 않습니다.");
             return;
@@ -199,6 +200,27 @@ public final class ExecutionService extends Service {
         acquireWakeLock();
         startAsForeground(currentSchedule.name + " 실행 중");
         launchEngine();
+    }
+
+    private void traceResolvedRequestProfile() {
+        try {
+            RequestProfileEngine.Mode mode = currentRequestProfile != null ? currentRequestProfile.mode
+                    : "work".equals(Schedule.normalizedExperience(currentSchedule.targetType, currentSchedule.experience))
+                    ? RequestProfileEngine.Mode.WORK : RequestProfileEngine.Mode.CHAT;
+            JSONArray operations = new JSONArray();
+            if (currentRequestProfile != null) for (RequestProfileEngine.Operation operation : currentRequestProfile.operations) {
+                operations.put(operation.kind == RequestProfileEngine.OperationKind.SET
+                        ? object("op", operation.kind.name(), "path", operation.path, "value", clip(operation.value, 128))
+                        : object("op", operation.kind.name(), "path", operation.path));
+            }
+            RequestProfileRegistry registry = new RequestProfileRegistry(this);
+            trace("REQUEST_PROFILE_RESOLVED", object("mode", mode.name(),
+                    "key", currentRequestProfile == null ? "native-inherit" : RequestProfileEngine.key(currentRequestProfile),
+                    "operations", operations, "sourceVersion", clip(registry.sourceVersion(mode), 256),
+                    "syncEnabled", registry.syncEnabled()));
+        } catch (RuntimeException ignored) {
+            // Diagnostics must not change the existing execution decision.
+        }
     }
 
     private boolean networkAvailable() {

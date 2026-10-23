@@ -14,10 +14,10 @@ permissions:
 
 env:
   DEV_PACKAGE: com.shaterguy.chatgptpromptscheduler.dev
-  DEV_VERSION_CODE: '6001002'
-  DEV_VERSION_NAME: 0.6.1-dev2
+  DEV_VERSION_CODE: '6001003'
+  DEV_VERSION_NAME: 0.6.1-dev3
   DEV_APP_LABEL: ChatGPT Prompt Scheduler DEV
-  DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.6.1-dev2-unsigned.apk
+  DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.6.1-dev3-unsigned.apk
 
 concurrency:
   group: chatgpt-prompt-scheduler-dev-${{ github.ref }}
