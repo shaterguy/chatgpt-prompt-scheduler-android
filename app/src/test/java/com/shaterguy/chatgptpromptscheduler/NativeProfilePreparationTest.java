@@ -109,6 +109,23 @@ public final class NativeProfilePreparationTest {
             """);
     }
 
+    @Test public void readyComposerPreparesWhileDocumentIsStillInteractive() throws Exception {
+        String prepare=NativeProfilePreparationScript.build(chatProfile(),"run-interactive")
+                .replace("await import(runtime)","await Promise.resolve({__webpack_require__:nativeRequire})");
+        run(ENV + browserBoundary() + "const prepare=" + RequestProfileScript.jsQuote(prepare) + ";" + """
+            (async()=>{
+              document.readyState='interactive';
+              assert.equal(JSON.parse(eval(prepare)).status,'RETRY');
+              await new Promise(r=>setImmediate(r));
+              assert.equal(JSON.parse(eval(prepare)).status,'PREPARED');
+              assert.deepEqual(events.filter(x=>x.query).map(x=>x.query),[
+                {model_slug:'fixture-model',thinking_effort:'extended'}]);
+              assert.deepEqual(atoms.get('chatgpt-last-selected-home-model-v1'),
+                {slug:'fixture-model',thinkingEffort:'extended'});
+            })().catch(e=>{console.error(e);process.exitCode=1;});
+            """);
+    }
+
     private static TargetProfile chatProfile() {
         return new TargetProfile(Mode.CHAT,"","fixture-signal",List.of(
                 Operation.set("model","fixture-model"),Operation.set("thinking_effort","extended"),

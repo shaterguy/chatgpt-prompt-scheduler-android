@@ -446,8 +446,7 @@ public final class ExecutionService extends Service {
             case "RETRY" -> {
                 pageAttempts++;
                 lastRetryDetail = detail;
-                if (pageAttempts > 48) finish(false, "NATIVE_PREFERENCE_TIMEOUT", contextualDetail(detail));
-                else scheduleAutomationStep(700L);
+                scheduleAutomationStep(700L);
             }
             case "SUBMITTED" -> handleAutomationResult(raw);
             default -> finish(false, status, contextualDetail(detail.isBlank()

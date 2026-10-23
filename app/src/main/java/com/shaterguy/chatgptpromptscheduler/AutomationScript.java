@@ -32,7 +32,6 @@ public final class AutomationScript {
                 "const authControl=authControls.find(e=>{const label=authLabel(e),href=String(e.getAttribute?.('href')||'').toLowerCase();return /^(?:log in|sign in|sign up|create account|로그인|회원가입|가입)$/.test(label)||/(?:^|\\/)(?:auth\\/)?(?:login|signup|signin)(?:[\\/?#]|$)/.test(href);});" +
                 "const authRequired=authPath||(!composer&&!!authControl);" +
                 "if(authRequired)return result('AUTH_REQUIRED','ChatGPT 로그인이 필요합니다.',{...routeDiagnostics,authPath,authLabel:authControl?authLabel(authControl):'',composerPresent:!!composer,readyState:document.readyState});" +
-                "if(document.readyState!=='complete')return result('RETRY','페이지 로딩 완료 대기',{...routeDiagnostics,readyState:document.readyState});" +
                 RequestProfileScript.activate(schedule) +
                 "if(!composer)return result('RETRY','입력창 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics,selectors,readyState:document.readyState,activeTag:document.activeElement?.tagName||'',forms:document.forms.length});" +
                 "const raw=()=>('value'in composer?composer.value:(composer.innerText||composer.textContent||''));" +

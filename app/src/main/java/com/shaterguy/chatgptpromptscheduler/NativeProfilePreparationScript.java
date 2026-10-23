@@ -47,7 +47,6 @@ final class NativeProfilePreparationScript {
                   let marker='';try{marker=localStorage.getItem(markerKey)||sessionStorage.getItem(markerKey)||window[markerKey]||'';}catch(_){marker=window[markerKey]||'';}
                   if(marker)return result('SUBMITTED','동일 실행의 전송 클릭 기록을 확인했습니다.');
                   if(/^\\/auth\\/(?:login|signup|signin)(?:\\/|$)/.test(location.pathname))return result('AUTH_REQUIRED','ChatGPT 로그인이 필요합니다.');
-                  if(document.readyState!=='complete')return result('RETRY','페이지 로딩 완료 대기');
                   const prior=window.__chatgptPromptSchedulerNativeProfile;
                   if(prior&&prior.key===key&&prior.phase===phase)return result(prior.status,prior.detail,{receipt:prior.receipt||null});
                   const composer=[...document.querySelectorAll('#prompt-textarea,textarea[data-testid="prompt-textarea"],[contenteditable="true"][data-lexical-editor="true"],main form [contenteditable="true"]')].find(e=>e.isConnected&&e.offsetParent!==null);
