@@ -33,7 +33,7 @@ public final class AutomationScript {
                 "const authRequired=authPath||(!composer&&!!authControl);" +
                 "if(authRequired)return result('AUTH_REQUIRED','ChatGPT 로그인이 필요합니다.',{...routeDiagnostics,authPath,authLabel:authControl?authLabel(authControl):'',composerPresent:!!composer,readyState:document.readyState});" +
                 "if(document.readyState!=='complete')return result('RETRY','페이지 로딩 완료 대기',{...routeDiagnostics,readyState:document.readyState});" +
-                RequestProfileScript.activate(schedule) +
+                RequestProfileScript.activate(schedule, runId) +
                 "if(!composer)return result('RETRY','입력창 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics,selectors,readyState:document.readyState,activeTag:document.activeElement?.tagName||'',forms:document.forms.length});" +
                 "const raw=()=>('value'in composer?composer.value:(composer.innerText||composer.textContent||''));" +
                 "const diag=(phase,strategy='')=>({phase,strategy,attempt:" + Math.max(0, attempt) + ",selector,tag:composer.tagName,contentEditable:composer.getAttribute('contenteditable')||'',connected:composer.isConnected,visible:composer.offsetParent!==null,activeIsComposer:document.activeElement===composer,hasFocus:document.hasFocus(),hasText:canonical(raw())!=='',readyState:document.readyState,route:routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics});" +

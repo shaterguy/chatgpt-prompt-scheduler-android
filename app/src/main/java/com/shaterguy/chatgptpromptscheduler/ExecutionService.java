@@ -62,6 +62,8 @@ public final class ExecutionService extends Service {
     private int traceDropped;
     private int projectCandidateIndex;
     private boolean submitted;
+    private boolean nativeProfilePrepared;
+    private boolean nativeProfileVerified;
     private boolean stepInFlight;
     private String stampedPrompt;
     private String projectDisplayName = "";
@@ -177,10 +179,6 @@ public final class ExecutionService extends Service {
             return;
         }
         traceResolvedRequestProfile();
-        if (currentRequestProfile != null && !RequestProfileScript.isDocumentStartSupported()) {
-            finish(false, "REQUEST_PROFILE_UNSUPPORTED", "이 WebView는 안전한 요청 프로필 적용을 지원하지 않습니다.");
-            return;
-        }
         if (!networkAvailable()) {
             finish(false, "NETWORK_UNAVAILABLE", "네트워크 연결이 없습니다.");
             return;
@@ -192,6 +190,8 @@ public final class ExecutionService extends Service {
         routeRecoveryAttempts = 0;
         navigationGeneration = 0;
         submitted = false;
+        nativeProfilePrepared = false;
+        nativeProfileVerified = false;
         stepInFlight = false;
         lastObservedUrl = "";
         lastRetryDetail = "";
@@ -257,6 +257,7 @@ public final class ExecutionService extends Service {
             finish(false, "EXECUTION_TIMEOUT", timeoutDetail());
             return;
         }
+        if (!submitted) { nativeProfilePrepared = false; nativeProfileVerified = false; }
         engineAttempt++;
         trace("ENGINE_LAUNCH", object("engineAttempt", engineAttempt));
         try {
@@ -277,7 +278,6 @@ public final class ExecutionService extends Service {
             settings.setUserAgentString(desktopUserAgent + " ChatGPTPromptScheduler/" + BuildConfig.VERSION_NAME);
             CookieManager.getInstance().setAcceptCookie(true);
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
-            if (currentRequestProfile != null) RequestProfileScript.installDocumentStart(webView);
             webView.setWebChromeClient(new WebChromeClient() {
                 @Override
                 public boolean onConsoleMessage(ConsoleMessage message) {
@@ -350,7 +350,9 @@ public final class ExecutionService extends Service {
                     return true;
                 }
             });
-            String entryUrl = ProjectDirectoryNavigationScript.entryUrl(currentSchedule);
+            String entryUrl = currentRequestProfile != null && !submitted
+                    ? NativeProfilePreparationScript.homeUrl(currentRequestProfile.mode)
+                    : ProjectDirectoryNavigationScript.entryUrl(currentSchedule);
             trace("ENGINE_ENTRY", object("url", entryUrl, "projectDirectory", "project".equals(currentSchedule.targetType)));
             webView.loadUrl(entryUrl);
             handler.removeCallbacks(watchdogRunnable);
@@ -362,6 +364,7 @@ public final class ExecutionService extends Service {
     }
 
     private void recordNavigation(String url) {
+        if (!submitted) nativeProfileVerified = false;
         navigationGeneration++;
         stepInFlight = false;
         lastObservedUrl = valueOrEmpty(url);
@@ -397,29 +400,68 @@ public final class ExecutionService extends Service {
         }
         WebView activeWebView = webView;
         int generation = navigationGeneration;
-        boolean projectDirectoryStep = !submitted
+        boolean preferenceStep = !submitted && currentRequestProfile != null && !nativeProfileVerified;
+        boolean projectDirectoryStep = !preferenceStep && !submitted
                 && ProjectDirectoryNavigationScript.needsDirectoryStep(currentSchedule, lastObservedUrl);
         stepInFlight = true;
-        trace("SCRIPT_EVALUATE", object("phase", projectDirectoryStep ? "project-directory" : (submitted ? "verify" : "compose"),
+        trace("SCRIPT_EVALUATE", object("phase", preferenceStep ? "native-preferences" : projectDirectoryStep ? "project-directory" : (submitted ? "verify" : "compose"),
                 "pageAttempts", pageAttempts, "generation", generation, "url", lastObservedUrl,
                 "windowAttached", activeWebView.isAttachedToWindow(), "viewFocused", activeWebView.isFocused(),
                 "windowFocused", activeWebView.hasWindowFocus()));
-        String script = projectDirectoryStep
+        String script = preferenceStep
+                ? NativeProfilePreparationScript.build(currentRequestProfile, currentItem.optString("runId"), !nativeProfilePrepared)
+                : projectDirectoryStep
                 ? ProjectDirectoryNavigationScript.build(currentSchedule.targetUrl, projectCandidateIndex)
                 : (submitted
                 ? ConversationVerificationScript.build(currentSchedule, stampedPrompt)
                 : AutomationScript.build(currentSchedule, stampedPrompt, currentItem.optString("runId"), pageAttempts));
         activeWebView.evaluateJavascript(script, raw -> {
-            stepInFlight = false;
             if (currentItem == null || activeWebView != webView || generation != navigationGeneration) {
                 trace("SCRIPT_RESULT_IGNORED", object("reason", "stale-callback", "generation", generation,
                         "currentGeneration", navigationGeneration));
                 return;
             }
-            if (projectDirectoryStep) handleProjectDirectoryResult(raw);
+            stepInFlight = false;
+            if (preferenceStep) handleNativePreferenceResult(raw);
+            else if (projectDirectoryStep) handleProjectDirectoryResult(raw);
             else if (submitted) handleVerification(raw);
             else handleAutomationResult(raw);
         });
+    }
+
+    private void handleNativePreferenceResult(String raw) {
+        JSONObject result = parseObject(raw);
+        String status = result.optString("status", "SCRIPT_RESULT_INVALID");
+        String detail = result.optString("detail", "");
+        trace("NATIVE_PREFERENCE_RESULT", object("status", status, "detail", detail,
+                "diagnostics", result.optJSONObject("diagnostics")));
+        switch (status) {
+            case "PREPARED" -> {
+                nativeProfilePrepared = true;
+                nativeProfileVerified = false;
+                pageAttempts = 0;
+                lastRetryDetail = detail;
+                String target = NativeProfilePreparationScript.targetUrl(currentSchedule, currentRequestProfile.mode);
+                trace("NATIVE_PROFILE_TARGET_ENTRY", object("url", target));
+                cancelAutomationStep();
+                navigationGeneration++;
+                webView.loadUrl(target);
+            }
+            case "READY" -> {
+                nativeProfileVerified = true;
+                pageAttempts = 0;
+                scheduleAutomationStep(0L);
+            }
+            case "RETRY" -> {
+                pageAttempts++;
+                lastRetryDetail = detail;
+                if (pageAttempts > 48) finish(false, "NATIVE_PREFERENCE_TIMEOUT", contextualDetail(detail));
+                else scheduleAutomationStep(700L);
+            }
+            case "SUBMITTED" -> handleAutomationResult(raw);
+            default -> finish(false, status, contextualDetail(detail.isBlank()
+                    ? "모델·추론 설정을 준비하지 못했습니다." : detail));
+        }
     }
 
     private void handleProjectDirectoryResult(String raw) {

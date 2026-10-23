@@ -46,8 +46,8 @@ public final class RequestProfileVersionContractTest {
         chat.resolvedRequestProfile = LegacyProfileFixtures.profile(RequestProfileEngine.Mode.CHAT, "", "medium");
         chat.requestProfileRegistryResolved = true;
         String compose = AutomationScript.build(chat, "opaque prompt", "opaque-run", 0);
-        assertTrue(compose.contains("__chatgptPromptSchedulerRequestProfileEngine"));
-        assertTrue(compose.contains("profileEngine.configure(\"chat\""));
+        assertTrue(compose.contains("__chatgptPromptSchedulerNativeProfile"));
+        assertFalse(compose.contains("profileEngine.configure("));
         assertFalse(compose.contains("menuitemradio"));
         assertFalse(compose.contains("desiredModelOption"));
         assertFalse(compose.contains("desiredEffortOption"));
@@ -66,20 +66,28 @@ public final class RequestProfileVersionContractTest {
         assertTrue(inherited.contains("requestProfileDiagnostics()"));
     }
 
+    @Test public void schedulerPreparesPreferencesBeforeTargetEntryWithoutInstallingInterceptors() throws Exception {
+        String service = source("app/src/main/java/com/shaterguy/chatgptpromptscheduler/ExecutionService.java");
+        assertFalse(service.contains("RequestProfileScript.installDocumentStart("));
+        assertFalse(service.contains("RequestProfileScript.isDocumentStartSupported("));
+        assertTrue(service.contains("NativeProfilePreparationScript.build("));
+        assertTrue(service.contains("NativeProfilePreparationScript.homeUrl("));
+    }
+
     @Test public void devIdentityAndPriorStableSignerContractRemainPinned() throws Exception {
         String gradle = source("app/build.gradle");
         assertEquals(1, occurrences(gradle, "androidx.webkit:webkit:1.17.0"));
         assertTrue(gradle.contains("applicationId 'com.shaterguy.chatgptpromptscheduler.dev'"));
-        assertTrue(gradle.contains("versionCode 6001003"));
-        assertTrue(gradle.contains("versionName '0.6.1-dev3'"));
+        assertTrue(gradle.contains("versionCode 6001004"));
+        assertTrue(gradle.contains("versionName '0.6.1-dev4'"));
         String strings = source("app/src/main/res/values/strings.xml");
         assertTrue(strings.contains("<string name=\"app_name\">ChatGPT Prompt Scheduler DEV</string>"));
         assertTrue(strings.contains("Scheduler DEV"));
         String devWorkflow = source(".github/workflows/android-dev.yml");
         assertTrue(devWorkflow.contains("DEV_PACKAGE: com.shaterguy.chatgptpromptscheduler.dev"));
-        assertTrue(devWorkflow.contains("DEV_VERSION_CODE: '6001003'"));
-        assertTrue(devWorkflow.contains("DEV_VERSION_NAME: 0.6.1-dev3"));
-        assertTrue(devWorkflow.contains("DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.6.1-dev3-unsigned.apk"));
+        assertTrue(devWorkflow.contains("DEV_VERSION_CODE: '6001004'"));
+        assertTrue(devWorkflow.contains("DEV_VERSION_NAME: 0.6.1-dev4"));
+        assertTrue(devWorkflow.contains("DEV_UNSIGNED_NAME: chatgpt-prompt-scheduler-dev-v0.6.1-dev4-unsigned.apk"));
         String workflow = source(".github/workflows/android-build.yml");
         assertTrue(workflow.contains("APK_NAME: chatgpt-prompt-scheduler-android-v0.6.0.apk"));
         assertTrue(workflow.contains("SOURCE_NAME: chatgpt-prompt-scheduler-android-v0.6.0-source.zip"));

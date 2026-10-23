@@ -8,7 +8,7 @@ import androidx.webkit.WebViewFeature;
 import java.util.List;
 import java.util.Set;
 
-/** Document-start fetch/XHR interceptor for scheduled ChatGPT conversation submissions. */
+/** Composition guards and historical request transformer; active runs use native preferences. */
 final class RequestProfileScript {
     static final String ENGINE_VERSION = "scheduler-request-profile-engine-v2";
     static final Set<String> CHATGPT_ORIGINS = Set.of("https://chatgpt.com", "https://www.chatgpt.com");
@@ -27,11 +27,13 @@ final class RequestProfileScript {
     }
 
     static String resultFunction() {
-        return "const requestProfileDiagnostics=()=>{try{return window.__chatgptPromptSchedulerRequestProfileEngine?.diagnostics?.()||null;}catch(_){return {unavailable:true};}};"
+        return "const requestProfileDiagnostics=()=>{try{const native=window.__chatgptPromptSchedulerNativeProfile;if(native)return {phase:native.phase,status:native.status,receipt:native.receipt||null};return window.__chatgptPromptSchedulerRequestProfileEngine?.diagnostics?.()||null;}catch(_){return {unavailable:true};}};"
                 + "const result=(status,detail='',diagnostics={})=>JSON.stringify({status,detail,url:location.href,diagnostics:{...diagnostics,requestProfile:requestProfileDiagnostics()}});";
     }
 
-    static String activate(Schedule schedule) {
+    static String activate(Schedule schedule) { return activate(schedule, ""); }
+
+    static String activate(Schedule schedule, String runId) {
         if ("existing".equals(schedule.targetType)) return nativeInherit("inherit", "inherit", "inherit");
         String experience = Schedule.normalizedExperience(schedule.targetType, schedule.experience);
         String model = "work".equals(experience) ? Schedule.normalizedWorkModel(experience, schedule.workModel) : "";
@@ -48,23 +50,13 @@ final class RequestProfileScript {
                     + "{mode:" + jsQuote(experience) + ",model:" + jsQuote(model)
                     + ",reasoning:" + jsQuote(reasoning) + ",operation:'validate'});";
         }
-        String operations = operationsJs(plan.operations);
-        return "const profileEngine=window.__chatgptPromptSchedulerRequestProfileEngine;"
-                + "const profileAvailability={mode:" + jsQuote(experience) + ",model:" + jsQuote(model)
-                + ",reasoning:" + jsQuote(reasoning) + ",operation:'activate'};"
-                + "if(!profileEngine)return result('REQUEST_PROFILE_ENGINE_ABSENT','요청 프로필 엔진을 사용할 수 없습니다.',profileAvailability);"
-                + "if(profileEngine.version!==" + jsQuote(ENGINE_VERSION)
-                + ")return result('REQUEST_PROFILE_VERSION_MISMATCH','요청 프로필 엔진 버전이 일치하지 않습니다.',profileAvailability);"
-                + "if(typeof profileEngine.configure!=='function'||typeof profileEngine.target!=='function')"
-                + "return result('REQUEST_PROFILE_ENGINE_INVALID','요청 프로필 엔진을 사용할 수 없습니다.',profileAvailability);"
-                + "try{profileEngine.configure(" + jsQuote(experience) + "," + jsQuote(model) + ","
-                + jsQuote(reasoning) + "," + operations + ");}catch(_){return result('REQUEST_PROFILE_REJECTED','요청 프로필 설정이 거부되었습니다.',profileAvailability);}"
-                + "const activeProfile=profileEngine.target();"
-                + "if(!activeProfile||!activeProfile.ready||activeProfile.profileVersion!==" + jsQuote(RequestProfileEngine.PROFILE_VERSION)
-                + ")return result('REQUEST_PROFILE_NOT_READY','요청 프로필이 준비되지 않았습니다.',profileAvailability);"
-                + "const modeDiagnostics={requested:" + jsQuote(experience) + ",ready:true,action:'request-profile'};"
-                + "const modelDiagnostics={requested:" + jsQuote(model.isEmpty() ? "chat" : model) + ",ready:true,action:'request-profile'};"
-                + "const reasoningDiagnostics={requested:" + jsQuote(reasoning) + ",ready:true,action:'request-profile'};";
+        String key = NativeProfilePreparationScript.key(plan.target, runId);
+        return "const nativeProfile=window.__chatgptPromptSchedulerNativeProfile;"
+                + "if(!nativeProfile||nativeProfile.key!==" + jsQuote(key)
+                + "||nativeProfile.status!=='READY')return result('NATIVE_PREFERENCE_NOT_READY','진입 화면의 모델·추론 설정을 확인하지 못했습니다.');"
+                + "const modeDiagnostics={requested:" + jsQuote(experience) + ",ready:true,action:'native-prepared'};"
+                + "const modelDiagnostics={requested:" + jsQuote(model.isEmpty() ? "chat" : model) + ",ready:true,action:'native-prepared'};"
+                + "const reasoningDiagnostics={requested:" + jsQuote(reasoning) + ",ready:true,action:'native-prepared'};";
     }
 
     private static String nativeInherit(String mode, String model, String reasoning) {
@@ -125,7 +117,7 @@ final class RequestProfileScript {
                 .replace("__PROFILE_VERSION__", jsQuote(RequestProfileEngine.PROFILE_VERSION));
     }
 
-    private static String jsQuote(String value) {
+    static String jsQuote(String value) {
         StringBuilder output = new StringBuilder((value == null ? 0 : value.length()) + 16).append('"');
         String source = value == null ? "" : value;
         for (int i = 0; i < source.length(); i++) {

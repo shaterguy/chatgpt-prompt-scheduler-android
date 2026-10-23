@@ -2,6 +2,7 @@ package com.shaterguy.chatgptpromptscheduler;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertEquals;
 
 import org.junit.Test;
 
@@ -17,7 +18,7 @@ public class ProjectDuplicatePreventionTest {
         assertFalse(script.contains("actualProject===expectedProject&&(afterSubmit||!actualConversation)"));
     }
 
-    @Test public void chatRequestProfileActivationUsesExactOperationPlan() throws Exception {
+    @Test public void chatCompositionRequiresPreparedRunAndCanonicalProfile() throws Exception {
         Schedule schedule = new Schedule();
         schedule.targetType = "project";
         schedule.targetUrl = "https://chatgpt.com/g/proj/project";
@@ -25,16 +26,16 @@ public class ProjectDuplicatePreventionTest {
         schedule.chatReasoning = "medium";
         LegacyProfileFixtures.attach(schedule);
         String script = AutomationScript.build(schedule, "prompt", "run-chat-profile", 0);
-        assertTrue(script.contains("__chatgptPromptSchedulerRequestProfileEngine"));
-        assertTrue(script.contains("profileEngine.configure(\"chat\",\"\",\"medium\""));
-        assertTrue(script.contains("[\"set\",\"model\",\"gpt-5-6-thinking\"]"));
-        assertTrue(script.contains("[\"remove\",\"service_tier\"]"));
-        assertTrue(script.contains("action:'request-profile'"));
+        assertTrue(script.contains("__chatgptPromptSchedulerNativeProfile"));
+        assertTrue(script.contains("nativeProfile.status!=='READY'"));
+        assertTrue(script.contains(RequestProfileScript.jsQuote(NativeProfilePreparationScript.key(schedule.resolvedRequestProfile,"run-chat-profile"))));
+        assertFalse(script.contains("profileEngine.configure("));
+        assertTrue(script.contains("action:'native-prepared'"));
         assertFalse(script.contains("data-tpp-toggle-value"));
         assertFalse(script.contains("modeTrigger"));
     }
 
-    @Test public void workRequestProfileActivationUsesOnlyRegisteredCombination() throws Exception {
+    @Test public void workPreparationUsesOnlyRegisteredCanonicalCombination() throws Exception {
         Schedule schedule = new Schedule();
         schedule.targetType = "general";
         schedule.targetUrl = "https://chatgpt.com/";
@@ -43,15 +44,17 @@ public class ProjectDuplicatePreventionTest {
         schedule.reasoningEffort = "xhigh";
         LegacyProfileFixtures.attach(schedule);
         String script = AutomationScript.build(schedule, "prompt", "run-work-profile", 0);
-        assertTrue(script.contains("profileEngine.configure(\"work\",\"terra\",\"xhigh\""));
-        assertTrue(script.contains("[\"set\",\"model\",\"gpt-5.6-terra-wm\"]"));
-        assertTrue(script.contains("[\"set\",\"service_tier\",\"standard\"]"));
+        String profile = NativeProfilePreparationScript.profileJson(schedule.resolvedRequestProfile);
+        assertTrue(profile.contains("\"model\":\"gpt-5.6-terra-wm\""));
+        assertTrue(profile.contains("\"thinking_effort\":\"xhigh\""));
+        assertTrue(script.contains("NATIVE_PREFERENCE_NOT_READY"));
+        assertFalse(script.contains("profileEngine.configure("));
         assertFalse(script.contains("menuitemradio"));
         assertFalse(script.contains("open-reasoning-menu"));
         assertFalse(script.contains("openMenu("));
     }
 
-    @Test public void terraUltraPreservesRegistryServiceTierRemoval() throws Exception {
+    @Test public void ultraPreparationLeavesSubmissionTierToNativeChatGpt() throws Exception {
         Schedule schedule = new Schedule();
         schedule.targetType = "general";
         schedule.targetUrl = "https://chatgpt.com/";
@@ -60,8 +63,12 @@ public class ProjectDuplicatePreventionTest {
         schedule.reasoningEffort = "ultra";
         LegacyProfileFixtures.attach(schedule);
         String script = AutomationScript.build(schedule, "prompt", "run-ultra-profile", 0);
-        assertTrue(script.contains("profileEngine.configure(\"work\",\"terra\",\"ultra\""));
-        assertTrue(script.contains("[\"remove\",\"service_tier\"]"));
+        RequestProfileEngine.Operation tier = schedule.resolvedRequestProfile.operations.stream()
+                .filter(op -> op.path.equals("service_tier")).findFirst().orElseThrow();
+        assertEquals(RequestProfileEngine.OperationKind.REMOVE,tier.kind);
+        assertTrue(NativeProfilePreparationScript.profileJson(schedule.resolvedRequestProfile).contains("\"thinking_effort\":\"ultra\""));
+        assertFalse(script.contains("profileEngine.configure("));
+        assertFalse(script.contains("[\"remove\",\"service_tier\"]"));
         assertFalse(script.contains("open-effort-menu"));
         assertFalse(script.contains("select-effort"));
     }
