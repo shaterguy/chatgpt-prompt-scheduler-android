@@ -66,7 +66,7 @@ final class NativeProfilePreparationScript {
                   })().catch(e=>{
                     state.status='NATIVE_PREFERENCE_FAILED';
                     const code=String(e?.message||'');
-                    state.detail=['SERVER_READBACK_MISMATCH','NATIVE_SELECTION_MISMATCH','NATIVE_RUNTIME_UNAVAILABLE'].includes(code)?code:'모델·추론 설정 저장 또는 확인 실패';
+                    state.detail=code==='NATIVE_RUNTIME_UNAVAILABLE'?code:'모델·추론 설정 저장 실패';
                   });
                   return result(state.status,state.detail,{receipt:state.receipt});
                 })()
@@ -81,7 +81,7 @@ final class NativeProfilePreparationScript {
                   const removesEffort=profile.mode==='chat'&&profile.effortOperation==='REMOVE'&&profile.thinking_effort===null;
                   if(typeof profile.model!=='string'||!/^[-a-zA-Z0-9_.]{1,128}$/.test(profile.model)||(!removesEffort&&!['standard','extended','min','max','ultra','xhigh','zero'].includes(profile.thinking_effort)))throw new Error('프로필 원본값이 올바르지 않습니다.');
                   const selection={slug:profile.model,thinkingEffort:profile.thinking_effort};
-                  const receipt={mode:profile.mode,model:profile.model,effort:profile.thinking_effort,strategy,serverAcknowledged:null,serverReadback:null,nativeMatches:null};
+                  const receipt={mode:profile.mode,model:profile.model,effort:profile.thinking_effort,strategy,serverAcknowledged:null};
                   if(strategy!=='native'){
                     const endpoint=profile.mode==='work'?'/settings/user_tpp_last_used_model_config':'/settings/user_last_used_model_config';
                     const query={model_slug:profile.model};
@@ -89,21 +89,11 @@ final class NativeProfilePreparationScript {
                     const saved=await env.api.safePatch(endpoint,{parameters:{query}});
                     if(saved?.success!==true)throw new Error('설정 저장 성공 응답을 받지 못했습니다.');
                     receipt.serverAcknowledged=true;
-                    if(profile.mode==='work'){
-                      try{
-                        const raw=await env.api.safeGet('/settings/user',{additionalHeaders:{'Oai-Ep-Cache-Bypass':'true'}});
-                        const prefs=raw?.settings?.tpp_last_used_model_config;
-                        const model=prefs?.slugs?.web??null,effort=prefs?.juices?.web?.[profile.model]??null;
-                        receipt.serverReadback={model,effort,matches:model===profile.model&&effort===profile.thinking_effort};
-                      }catch{receipt.serverReadback={unavailable:true};}
-                    }
                   }
                   if(strategy!=='server'){
                     if(profile.mode==='chat'){
                       env.atoms.u('chatgpt-last-selected-model-v1',selection);
                       env.atoms.u('chatgpt-last-selected-home-model-v1',selection);
-                      const actual=env.atoms.k('chatgpt-last-selected-model-v1',null),home=env.atoms.k('chatgpt-last-selected-home-model-v1',null);
-                      receipt.nativeMatches=actual?.slug===selection.slug&&actual?.thinkingEffort===selection.thinkingEffort&&home?.slug===selection.slug&&home?.thinkingEffort===selection.thinkingEffort;
                     }else{
                       let prior={};try{prior=JSON.parse(env.cookie.a('oai-tpp-model-settings')||'{}')||{};}catch{}
                       const cookie={...prior,modelSettings:{defaultModelSlug:prior.modelSettings?.defaultModelSlug??null,lastUsedModelSlug:profile.model},thinkingEffort:profile.thinking_effort,selectionMode:'model'};
@@ -111,15 +101,11 @@ final class NativeProfilePreparationScript {
                       if(env.cookie.b('oai-tpp-model-settings',JSON.stringify(cookie),{maxAge:2592000})!==true)throw new Error('Work 선택값을 저장하지 못했습니다.');
                       env.atoms.u('chatgpt-last-selected-tpp-model-v1',selection);
                       env.atoms.u('chatgpt-work-model-picker-selection-mode-v1','model');
-                      let actual=null;try{actual=JSON.parse(env.cookie.a('oai-tpp-model-settings')||'null');}catch{}
-                      receipt.nativeMatches=actual?.modelSettings?.lastUsedModelSlug===profile.model&&actual?.thinkingEffort===profile.thinking_effort&&actual?.selectionMode==='model';
                     }
                     if(env.cookie.b('codex_composer_mode',profile.mode,{maxAge:2592000})!==true)throw new Error('Chat·Work 화면 설정을 저장하지 못했습니다.');
                     env.atoms.f();
                     await env.flush();
                   }
-                  if(receipt.serverReadback?.matches===false)throw Error('SERVER_READBACK_MISMATCH');
-                  if(receipt.nativeMatches!==true)throw Error('NATIVE_SELECTION_MISMATCH');
                   return receipt;
                 }
                 """;

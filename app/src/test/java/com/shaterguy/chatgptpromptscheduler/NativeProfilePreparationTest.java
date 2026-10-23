@@ -11,13 +11,13 @@ public final class NativeProfilePreparationTest {
     private static final String ENV = """
         const assert=require('node:assert/strict');
         const atoms=new Map(),cookies=new Map(),events=[];
-        let reject=false,remoteModel='fixture-work',remoteEffort='ultra';
+        let reject=false;
         const env={origin:'https://chatgpt.com',
           atoms:{k:(k,f)=>atoms.has(k)?atoms.get(k):f,u:(k,v)=>atoms.set(k,v),f:()=>events.push('publish')},
           cookie:{a:k=>cookies.get(k),b:(k,v)=>{cookies.set(k,v);return true;}},
           flush:async()=>events.push('durable'),
           api:{safePatch:async(path,args)=>{events.push({path,query:args.parameters.query});return {success:!reject};},
-            safeGet:async()=>({settings:{tpp_last_used_model_config:{slugs:{web:remoteModel},juices:{web:{[remoteModel]:remoteEffort}}}}})}};
+            safeGet:async()=>{throw Error('Unexpected preference readback');}}};
         """;
 
     @Test public void profileUsesCanonicalOperationsRatherThanDisplayAliases() {
@@ -37,7 +37,7 @@ public final class NativeProfilePreparationTest {
                 atoms.set('chatgpt-last-selected-model-v1',{slug:'prior',thinkingEffort:'max'});
                 const p={mode:'chat',model,thinking_effort:null,effortOperation:'REMOVE'};
                 const r=await applyPreference(env,p);
-                assert.equal(r.nativeMatches,true);
+                assert.equal(r.serverAcknowledged,true);
                 assert.deepEqual(events.filter(x=>x.query).at(-1).query,{model_slug:model});
                 assert.deepEqual(atoms.get('chatgpt-last-selected-home-model-v1'),{slug:model,thinkingEffort:null});
               }
@@ -46,17 +46,16 @@ public final class NativeProfilePreparationTest {
             """);
     }
 
-    @Test public void workUltraPreservesValidLastStartedConfigAndRejectsServerMismatch() throws Exception {
+    @Test public void workUltraPreservesValidLastStartedConfigWithoutReadback() throws Exception {
         run(ENV + NativeProfilePreparationScript.preferenceFunction() + """
             (async()=>{
               const prior={modelSettings:{defaultModelSlug:'keep'},lastStartedModelConfig:{modelSlug:'prior',thinkingEffort:'standard'}};
               cookies.set('oai-tpp-model-settings',JSON.stringify(prior));
               const p={mode:'work',model:'fixture-work',thinking_effort:'ultra',effortOperation:'SET'};
               const r=await applyPreference(env,p),c=JSON.parse(cookies.get('oai-tpp-model-settings'));
-              assert.equal(r.serverReadback.matches,true);assert.equal(c.thinkingEffort,'ultra');
+              assert.equal(r.serverAcknowledged,true);assert.equal(c.thinkingEffort,'ultra');
               assert.equal(c.modelSettings.defaultModelSlug,'keep');
               assert.deepEqual(c.lastStartedModelConfig,prior.lastStartedModelConfig);
-              remoteEffort='standard';await assert.rejects(applyPreference(env,p),/SERVER_READBACK_MISMATCH/);
             })().catch(e=>{console.error(e);process.exitCode=1;});
             """);
     }
@@ -68,6 +67,33 @@ public final class NativeProfilePreparationTest {
               reject=true;await assert.rejects(applyPreference(env,p));assert.equal(atoms.size,0);
               reject=false;env.flush=async()=>{throw Error('durable-failure');};
               let prepared=false;await assert.rejects(applyPreference(env,p).then(()=>prepared=true));assert.equal(prepared,false);
+            })().catch(e=>{console.error(e);process.exitCode=1;});
+            """);
+    }
+
+    @Test public void workPreparationDoesNotReadBackPreferencesAfterWriting() throws Exception {
+        run(ENV + NativeProfilePreparationScript.preferenceFunction() + """
+            (async()=>{
+              let reads=0;
+              env.api.safeGet=async()=>{reads++;return {settings:{tpp_last_used_model_config:{}}};};
+              const p={mode:'work',model:'fixture-work',thinking_effort:'standard',effortOperation:'SET'};
+              await applyPreference(env,p);
+              assert.equal(reads,0);
+              assert.equal(JSON.parse(cookies.get('oai-tpp-model-settings')).modelSettings.lastUsedModelSlug,p.model);
+              assert.deepEqual(events.slice(-2),['publish','durable']);
+            })().catch(e=>{console.error(e);process.exitCode=1;});
+            """);
+    }
+
+    @Test public void preparationDoesNotReadNativeSelectionsBackAfterWriting() throws Exception {
+        run(ENV + NativeProfilePreparationScript.preferenceFunction() + """
+            (async()=>{
+              env.atoms.k=()=>{throw Error('Unexpected selection readback');};
+              const p={mode:'chat',model:'fixture-model',thinking_effort:'extended',effortOperation:'SET'};
+              await applyPreference(env,p);
+              assert.deepEqual(atoms.get('chatgpt-last-selected-home-model-v1'),
+                {slug:p.model,thinkingEffort:p.thinking_effort});
+              assert.deepEqual(events.slice(-2),['publish','durable']);
             })().catch(e=>{console.error(e);process.exitCode=1;});
             """);
     }

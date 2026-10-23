@@ -268,12 +268,6 @@ public final class ExecutionService extends Service {
             settings.setDomStorageEnabled(true);
             settings.setDatabaseEnabled(true);
             settings.setMediaPlaybackRequiresUserGesture(true);
-            settings.setUseWideViewPort(true);
-            settings.setLoadWithOverviewMode(false);
-            String desktopUserAgent = settings.getUserAgentString()
-                    .replaceFirst("\\([^)]*Android[^)]*\\)", "(X11; Linux x86_64)")
-                    .replace(" Version/4.0", "");
-            settings.setUserAgentString(desktopUserAgent + " ChatGPTPromptScheduler/" + BuildConfig.VERSION_NAME);
             CookieManager.getInstance().setAcceptCookie(true);
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
             webView.setWebChromeClient(new WebChromeClient() {
