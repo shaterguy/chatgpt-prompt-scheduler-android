@@ -14,7 +14,7 @@ public final class NativeProfilePreparationTest {
         let reject=false;
         const env={origin:'https://chatgpt.com',
           atoms:{k:(k,f)=>atoms.has(k)?atoms.get(k):f,u:(k,v)=>atoms.set(k,v),f:()=>events.push('publish')},
-          cookie:{a:k=>cookies.get(k),b:(k,v)=>{cookies.set(k,v);return true;}},
+          cookie:{a:k=>cookies.get(k),b:()=>undefined,c:(k,v)=>{/* setCookie deleteCookie */ cookies.set(k,v);return true;}},
           flush:async()=>events.push('durable'),
           api:{safePatch:async(path,args)=>{events.push({path,query:args.parameters.query});return {success:!reject};},
             safeGet:async()=>{throw Error('Unexpected preference readback');}}};
@@ -148,6 +148,83 @@ public final class NativeProfilePreparationTest {
                 {model_slug:'fixture-model',thinking_effort:'extended'}]);
               assert.deepEqual(atoms.get('chatgpt-last-selected-home-model-v1'),
                 {slug:'fixture-model',thinkingEffort:'extended'});
+            })().catch(e=>{console.error(e);process.exitCode=1;});
+            """);
+    }
+
+    @Test public void cookieWriterUsesExportCAndAcceptsVoidWhenReadbackMatches() throws Exception {
+        run(ENV + NativeProfilePreparationScript.preferenceFunction() + """
+            (async()=>{
+              env.cookie.b=()=>{throw Error('reader-must-not-write');};
+              const write=env.cookie.c;env.cookie.c=(...args)=>{write(...args);};
+              for(const mode of ['chat','work','chat']){
+                const r=await applyPreference(env,{mode,model:'fixture-model',thinking_effort:'max'},'native');
+                assert.equal(r.modeMatches,true);assert.equal(cookies.get('codex_composer_mode'),mode);
+              }
+            })().catch(e=>{console.error(e);process.exitCode=1;});
+            """);
+    }
+
+    @Test public void cookieReadbackMismatchPreservesFailurePhaseAndAcknowledgement() throws Exception {
+        run(ENV + NativeProfilePreparationScript.preferenceFunction() + """
+            (async()=>{
+              cookies.set('codex_composer_mode','work');env.cookie.c=()=>true;
+              const p={mode:'chat',model:'fixture-model',thinking_effort:'max'};
+              await assert.rejects(applyPreference(env,p),e=>e.phase==='composer-mode'&&e.receipt.serverAcknowledged===true&&e.receipt.modeReadback==='work');
+              assert.equal(events.includes('durable'),false);
+              await assert.rejects(applyPreference(env,{...p,mode:'work'}),e=>e.phase==='native-selection'&&e.message==='WORK_COOKIE_READBACK_MISMATCH');
+            })().catch(e=>{console.error(e);process.exitCode=1;});
+            """);
+    }
+
+    @Test public void failedPreparationKeepsOnePatchAndExposesActualPhaseOnPolling() throws Exception {
+        String prepare=NativeProfilePreparationScript.build(chatProfile(),"run-failure")
+                .replace("await import(runtime)","await Promise.resolve({__webpack_require__:nativeRequire})");
+        run(ENV + browserBoundary() + "const prepare=" + RequestProfileScript.jsQuote(prepare) + ";" + """
+            (async()=>{
+              let patches=0;env.api.safePatch=async()=>{patches++;return {success:true};};
+              env.cookie.c=(k,v)=>{/* setCookie deleteCookie */ return true;};
+              assert.equal(JSON.parse(eval(prepare)).status,'RETRY');
+              await new Promise(r=>setImmediate(r));
+              for(let i=0;i<5;i++){
+                const r=JSON.parse(eval(prepare));assert.equal(r.status,'NATIVE_PREFERENCE_FAILED');
+                assert.equal(r.diagnostics.error.phase,'composer-mode');
+                assert.match(r.detail,/COMPOSER_MODE_READBACK_MISMATCH/);
+                assert.equal(r.diagnostics.receipt.serverAcknowledged,true);
+              }
+              assert.equal(patches,1);
+            })().catch(e=>{console.error(e);process.exitCode=1;});
+            """);
+    }
+
+    @Test public void originalChatgptCookieFactoryPassesChatAndWorkPreparation() throws Exception {
+        String factory;
+        try(var in=NativeProfilePreparationTest.class.getResourceAsStream("/native-cookie-factory-20261031.txt")){
+            assertNotNull(in);factory=new String(in.readAllBytes(),StandardCharsets.UTF_8);
+        }
+        run(ENV + NativeProfilePreparationScript.preferenceFunction() + "const factory="+RequestProfileScript.jsQuote(factory)+";"+"""
+            (async()=>{
+              const registry={codex_composer_mode:{category:'essential',sameSite:'none'},'oai-tpp-model-settings':{category:'essential',sameSite:'lax'}};
+              const modules={XgFO:{parse:()=>Object.fromEntries(cookies)},y3LV:{getCookies:()=>Object.fromEntries(cookies),setCookie:(k,v)=>cookies.set(k,v),deleteCookie:k=>cookies.delete(k)},PmzS:{b(){}},NGML:{a:registry,b:k=>Object.hasOwn(registry,k),c:(k,v)=>Object.hasOwn(registry,k)?v:undefined}};
+              const req=id=>modules[id];req.d=(target,exports)=>Object.entries(exports).forEach(([k,get])=>Object.defineProperty(target,k,{get}));
+              const factories=new Function('window','document','return ({'+factory+'})')({location:{protocol:'https:'}},{cookie:''});
+              const exports={};factories.ZhRn({},exports,req);env.cookie=exports;
+              cookies.set('codex_composer_mode','work');assert.equal(exports.b('codex_composer_mode','chat'),undefined);
+              assert.equal(cookies.get('codex_composer_mode'),'work');
+              for(const mode of ['chat','work','chat']){
+                const r=await applyPreference(env,{mode,model:'fixture-model',thinking_effort:'max'},'native');
+                assert.equal(r.modeMatches,true);
+              }
+            })().catch(e=>{console.error(e);process.exitCode=1;});
+            """);
+    }
+
+    @Test public void plainObjectRejectionKeepsSafeMessageStatusAndPhase() throws Exception {
+        run(ENV + NativeProfilePreparationScript.preferenceFunction() + """
+            (async()=>{
+              env.api.safePatch=async()=>{throw {message:'Invalid arguments',status:400,body:'private'};};
+              await assert.rejects(applyPreference(env,{mode:'chat',model:'fixture-model',thinking_effort:'max'}),
+                e=>e.message==='Invalid arguments'&&e.status===400&&e.phase==='server-patch'&&!('body' in e));
             })().catch(e=>{console.error(e);process.exitCode=1;});
             """);
     }
