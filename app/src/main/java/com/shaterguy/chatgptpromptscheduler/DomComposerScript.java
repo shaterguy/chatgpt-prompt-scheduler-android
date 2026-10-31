@@ -45,11 +45,19 @@ final class DomComposerScript {
                     composer.focus();
                     if('value'in composer){inputEvent('beforeinput','insertText',expected);setValue(expected);emitChange('insertText',expected);return 'native-value';}
                     putCaretAtEnd();
-                    inputEvent('beforeinput','insertText',expected);
-                    if(!empty())return 'beforeinput';
+                    /* Insert one escaped multiline fragment instead of repeated text edits. */
+                    const multiline=expected.includes('\\n');
                     let nativeDone=false;
-                    try{nativeDone=!!editorDoc.execCommand('insertText',false,expected);}catch(_){}
-                    if(!empty())return nativeDone?'native-insertText':'native-input';
+                    if(multiline){
+                        const escaped=expected.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                        const html='<p>'+escaped.split('\\n').map(line=>line||'<br>').join('</p><p>')+'</p>';
+                        try{nativeDone=!!editorDoc.execCommand('insertHTML',false,html);}catch(_){}
+                    }else{
+                        inputEvent('beforeinput','insertText',expected);
+                        if(!empty())return 'beforeinput';
+                        try{nativeDone=!!editorDoc.execCommand('insertText',false,expected);}catch(_){}
+                    }
+                    if(!empty())return nativeDone?(multiline?'native-insertHTML':'native-insertText'):'native-input';
                     let p=composer.querySelector('p');
                     if(!p){p=editorDoc.createElement('p');composer.replaceChildren(p);}
                     p.textContent=expected;
