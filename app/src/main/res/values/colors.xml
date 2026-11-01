@@ -1,3 +1,13 @@
 <resources>
     <color name="launcher_background">#15171A</color>
+    <color name="page_surface">#F5F7F6</color>
+    <color name="card_surface">#FFFFFF</color>
+    <color name="control_surface">#F2F4F3</color>
+    <color name="hairline">#D8DEDB</color>
+    <color name="text_primary">#18221D</color>
+    <color name="text_secondary">#52605A</color>
+    <color name="accent">#006B5F</color>
+    <color name="on_accent">#FFFFFF</color>
+    <color name="accent_surface">#E0F1EC</color>
+    <color name="touch_highlight">#22006B5F</color>
 </resources>

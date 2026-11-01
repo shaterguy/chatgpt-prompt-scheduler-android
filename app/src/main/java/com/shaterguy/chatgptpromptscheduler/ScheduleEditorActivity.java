@@ -83,51 +83,65 @@ public final class ScheduleEditorActivity extends Activity {
 
     private void buildUi() {
         ScrollView scroll = Ui.scroll(this);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(Ui.dp(this, 18), Ui.dp(this, 12), Ui.dp(this, 18), Ui.dp(this, 24));
+        LinearLayout root = Ui.content(this);
         scroll.addView(root);
-        root.addView(Ui.title(this, "예약 편집"));
+        root.addView(Ui.title(this, getIntent().hasExtra("scheduleId") ? "예약 편집" : "예약 추가"));
+        root.addView(Ui.body(this, "내용을 확인한 뒤 맨 아래 예약 저장을 누르세요."));
 
-        name = edit(root, "예약 이름", schedule.name, false);
-        targetType = spinner(root, "대상 유형", new String[]{"general", "project", "existing"}, schedule.targetType);
+        root.addView(Ui.section(this, "기본 정보"));
+        LinearLayout basic = Ui.card(this, root);
+        name = edit(basic, "예약 이름", schedule.name, false);
+        enabled = new Switch(this);
+        enabled.setText("예약 활성화");
+        enabled.setMinHeight(Ui.dp(this, 48));
+        enabled.setChecked(schedule.enabled);
+        basic.addView(enabled);
 
-        projectTargetSection = section(root);
-        projectTargetSection.addView(Ui.body(this, "프로젝트"));
+        root.addView(Ui.section(this, "대상과 모델"));
+        LinearLayout target = Ui.card(this, root);
+        targetType = spinner(target, "대상 유형", new String[]{"general", "project", "existing"}, schedule.targetType);
+        projectTargetSection = section(target);
+        projectTargetSection.addView(Ui.label(this, "프로젝트"));
         projectTarget = new Spinner(this);
+        Ui.selector(this, projectTarget, "프로젝트");
         projectTargetSection.addView(projectTarget);
         projectTargetSection.addView(Ui.body(this,
-                "프로젝트는 메인 화면의 ‘로그인/세션’에서 해당 프로젝트를 직접 열면 자동 등록됩니다."));
+                "설정의 로그인/세션에서 프로젝트를 한 번 열면 목록에 등록됩니다."));
         reloadProjectChoices();
 
-        targetUrlSection = section(root);
-        targetUrlSection.addView(Ui.body(this, "기존 대화 URL"));
+        targetUrlSection = section(target);
+        targetUrlSection.addView(Ui.label(this, "기존 대화 URL"));
         targetUrl = new EditText(this);
+        Ui.input(this, targetUrl);
         targetUrl.setSingleLine(true);
         targetUrl.setHint("https://chatgpt.com/.../c/<conversation-id>");
         targetUrl.setText("existing".equals(schedule.targetType) ? schedule.targetUrl : "");
+        targetUrl.setContentDescription("기존 대화 URL");
         targetUrlSection.addView(targetUrl);
 
-        experienceSection = section(root);
+        experienceSection = section(target);
         experience = spinner(experienceSection, "실행 모드", new String[]{"chat", "work"},
                 "work".equals(schedule.experience) ? "work" : "chat");
-
-        root.addView(Ui.body(this, "자동 목록에서 확인된 조합만 선택할 수 있습니다. 저장된 조합이 목록에 없으면 다시 선택해야 하며, 선택 전에는 기존 예약을 변경하지 않습니다."));
         profileListStatus = Ui.body(this, profileRegistry.syncStatusText());
-        root.addView(profileListStatus);
+        target.addView(profileListStatus);
+        LinearLayout help = Ui.disclosure(this, target, "모델 선택 안내");
+        help.addView(Ui.body(this, "자동 목록에 있는 모델·추론 조합을 사용합니다. 현재 설정 유지를 선택하면 ChatGPT의 기존 설정을 따릅니다. 저장된 조합이 목록에 없으면 다른 조합을 선택하거나 설정에서 목록을 업데이트하세요."));
 
-        chatReasoningSection = section(root);
-        chatReasoningSection.addView(Ui.body(this, "일반 Chat 추론 정도"));
+        chatReasoningSection = section(target);
+        chatReasoningSection.addView(Ui.label(this, "일반 Chat 추론 정도"));
         chatReasoning = new Spinner(this);
+        Ui.selector(this, chatReasoning, "일반 Chat 추론 정도");
         chatReasoningSection.addView(chatReasoning);
         reloadChatReasoningChoices();
 
-        workReasoningSection = section(root);
-        workReasoningSection.addView(Ui.body(this, "Work 모델"));
+        workReasoningSection = section(target);
+        workReasoningSection.addView(Ui.label(this, "Work 모델"));
         workModel = new Spinner(this);
+        Ui.selector(this, workModel, "Work 모델");
         workReasoningSection.addView(workModel);
-        workReasoningSection.addView(Ui.body(this, "Work 추론 강도"));
+        workReasoningSection.addView(Ui.label(this, "Work 추론 강도"));
         reasoningEffort = new Spinner(this);
+        Ui.selector(this, reasoningEffort, "Work 추론 강도");
         workReasoningSection.addView(reasoningEffort);
         reloadWorkModelChoices();
         lastWorkModelValue = selectedProfileValue(workModel, workModelValues);
@@ -151,31 +165,38 @@ public final class ScheduleEditorActivity extends Activity {
             @Override public void onNothingSelected(AdapterView<?> parent) {}
         });
 
-        prompt = edit(root, "프롬프트", schedule.prompt, true);
-        recurrence = spinner(root, "반복", new String[]{"once", "daily", "weekly", "interval"}, schedule.recurrence);
+        root.addView(Ui.section(this, "프롬프트"));
+        LinearLayout promptCard = Ui.card(this, root);
+        prompt = edit(promptCard, "전송할 내용", schedule.prompt, true);
 
-        timesSection = section(root);
-        times = edit(timesSection, "실행 시각 · 쉼표 구분 (예: 08:00,17:00)", String.join(",", schedule.times), false);
-        weekdaysSection = section(root);
-        weekdays = edit(weekdaysSection, "주간 요일 · 1=월∼7=일 (예: 1,2,3,4,5)", joinInts(schedule.weekdays), false);
-        intervalSection = section(root);
-        intervalMinutes = edit(intervalSection, "분 간격 · 이전 실행 완료 후 (15∼10080)",
+        root.addView(Ui.section(this, "실행 일정"));
+        LinearLayout timing = Ui.card(this, root);
+        recurrence = spinner(timing, "반복", new String[]{"once", "daily", "weekly", "interval"}, schedule.recurrence);
+        timesSection = section(timing);
+        times = edit(timesSection, "실행 시각", String.join(",", schedule.times), false);
+        times.setHint("08:00,17:00");
+        timesSection.addView(Ui.body(this, "24시간 형식으로 입력하며, 여러 시각은 쉼표로 구분합니다."));
+        weekdaysSection = section(timing);
+        weekdaysSection.addView(Ui.label(this, "실행 요일"));
+        weekdays = edit(weekdaysSection, "요일 번호", joinInts(schedule.weekdays), false);
+        weekdays.setHint("1,2,3,4,5");
+        weekdaysSection.addView(Ui.body(this, "1 월요일 · 2 화요일 · 3 수요일 · 4 목요일\n5 금요일 · 6 토요일 · 7 일요일"));
+        intervalSection = section(timing);
+        intervalMinutes = edit(intervalSection, "실행 완료 후 간격(분, 15∼10080)",
                 String.valueOf(Schedule.normalizedIntervalMinutes(schedule.intervalMinutes)), false);
-
+        intervalMinutes.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
         recurrence.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) { updateRecurrenceOptionVisibility(); }
             @Override public void onNothingSelected(AdapterView<?> parent) { updateRecurrenceOptionVisibility(); }
         });
 
-        retryCount = edit(root, "웹 엔진 재시도 횟수 (0∼5)", String.valueOf(schedule.retryCount), false);
-        enabled = new Switch(this);
-        enabled.setText("예약 활성화");
-        enabled.setChecked(schedule.enabled);
-        root.addView(enabled);
+        root.addView(Ui.section(this, "추가 옵션"));
+        LinearLayout options = Ui.disclosure(this, root, "재시도 설정");
+        retryCount = edit(options, "웹 엔진 재시도 횟수(0∼5)", String.valueOf(schedule.retryCount), false);
+        retryCount.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
         root.addView(Ui.actionGrid(this,
-                Ui.button(this, "저장", v -> save()),
+                Ui.primaryButton(this, "예약 저장", v -> save()),
                 Ui.button(this, "취소", v -> finish())));
-
         updateTargetOptionVisibility();
         updateRecurrenceOptionVisibility();
         Ui.setContent(this, scroll);
@@ -326,8 +347,14 @@ public final class ScheduleEditorActivity extends Activity {
     }
 
     private String selected(Spinner spinner) {
-        return spinner == null || spinner.getSelectedItem() == null
-                ? "" : String.valueOf(spinner.getSelectedItem());
+        if (spinner == null) return "";
+        Object values = spinner.getTag();
+        if (values instanceof String[]) {
+            String[] raw = (String[]) values;
+            int index = spinner.getSelectedItemPosition();
+            return index >= 0 && index < raw.length ? raw[index] : "";
+        }
+        return spinner.getSelectedItem() == null ? "" : String.valueOf(spinner.getSelectedItem());
     }
 
     static String reasoningEffortValue(String label) {
@@ -339,8 +366,10 @@ public final class ScheduleEditorActivity extends Activity {
     }
 
     private EditText edit(LinearLayout root, String label, String value, boolean multiline) {
-        root.addView(Ui.body(this, label));
+        root.addView(Ui.label(this, label));
         EditText edit = new EditText(this);
+        Ui.input(this, edit);
+        edit.setContentDescription(label);
         edit.setText(value);
         if (multiline) {
             edit.setMinLines(7);
@@ -351,9 +380,13 @@ public final class ScheduleEditorActivity extends Activity {
     }
 
     private Spinner spinner(LinearLayout root, String label, String[] values, String selected) {
-        root.addView(Ui.body(this, label));
+        root.addView(Ui.label(this, label));
         Spinner spinner = new Spinner(this);
-        spinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, values));
+        ArrayList<String> labels = new ArrayList<>();
+        for (String value : values) labels.add(UiDisplayPolicy.label(value));
+        spinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels));
+        spinner.setTag(values.clone());
+        Ui.selector(this, spinner, label);
         spinner.setSelection(Math.max(0, Arrays.asList(values).indexOf(selected)));
         root.addView(spinner);
         return spinner;
@@ -368,7 +401,7 @@ public final class ScheduleEditorActivity extends Activity {
             default -> "";
         };
         if ("project".equals(type) && url.isEmpty()) {
-            toast("등록된 프로젝트가 없습니다. 메인 화면의 로그인/세션에서 프로젝트를 직접 연 뒤 다시 선택하세요.");
+            toast("등록된 프로젝트가 없습니다. 설정의 로그인/세션에서 프로젝트를 직접 연 뒤 다시 선택하세요.");
             return;
         }
         if (!isTargetValidForType(type, url)) {

@@ -35,9 +35,9 @@ public final class ScheduleViewAndSettingsAndroidTest {
             scenario.onActivity(activity -> {
                 View screen = activity.getWindow().getDecorView();
                 for (String label : new String[] {
-                        "실행 준비 상태", "알람 권한", "절전 제외", "로그인/세션",
-                        "모델 · 추론 프로필", "프로젝트 목록", "실행 설정",
-                        "백업 및 진단", "설정 내보내기", "설정 가져오기",
+                        "연결 및 권한", "알람 권한", "절전 제외", "로그인/세션",
+                        "모델과 프로젝트", "모델 목록 안내와 연결 관리 보기", "실행 옵션",
+                        "백업 및 관리", "설정 내보내기", "설정 가져오기",
                         "실행 기록", "알람 재구축"
                 }) {
                     assertTrue("Missing settings menu: " + label, hasExactText(screen, label));

@@ -76,68 +76,73 @@ public final class SettingsActivity extends Activity {
     private void buildUi() {
         JSONObject settings = store.settings();
         ScrollView scroll = Ui.scroll(this);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(Ui.dp(this, 18), Ui.dp(this, 12), Ui.dp(this, 18), Ui.dp(this, 24));
+        LinearLayout root = Ui.content(this);
         scroll.addView(root);
         root.addView(Ui.title(this, "설정"));
+        Ui.navigation(this, root, "settings");
+        root.addView(Ui.body(this, "예약 실행에 필요한 연결과 동작을 관리합니다."));
 
-        root.addView(Ui.section(this, "실행 준비 상태"));
+        root.addView(Ui.section(this, "연결 및 권한"));
+        LinearLayout connection = Ui.card(this, root);
         readinessStatus = Ui.body(this, readinessStatusText());
-        root.addView(readinessStatus);
-        root.addView(Ui.body(this, "프로젝트 등록은 로그인/세션 화면에서 관리합니다."));
-        root.addView(Ui.actionGrid(this,
+        connection.addView(readinessStatus);
+        connection.addView(Ui.actionGrid(this,
                 Ui.button(this, "알람 권한", v -> requestExactAlarm()),
                 Ui.button(this, "절전 제외", v -> requestBatteryExemption()),
                 Ui.button(this, "로그인/세션", v -> startActivity(new Intent(this, LoginActivity.class)))));
+        connection.addView(Ui.body(this, "ChatGPT 로그인과 프로젝트 등록은 로그인/세션에서 관리합니다."));
 
-        root.addView(Ui.section(this, "모델 · 추론 프로필"));
-        root.addView(Ui.body(this,
-                "자동으로 확인한 공식 목록의 모델·추론 조합만 선택할 수 있습니다. 예전 수동 목록은 더 이상 사용하지 않습니다. 기존 예약과 프롬프트는 유지되며, 목록에 없는 조합은 다시 선택해야 합니다."));
-        root.addView(Ui.body(this, "Google 로그인·동의 후 공식 Chat/Work 문서가 바뀌면 모델과 추론 목록을 자동으로 갱신합니다. Drive 메타데이터와 Docs 읽기 전용 권한을 요청하며, 앱은 지정된 두 문서만 읽습니다. 동기화 실패 시 마지막 정상 목록을 유지합니다."));
-        root.addView(Ui.actionGrid(this,
-                Ui.button(this, "Google 로그인 · 목록 업데이트", v -> authorizeProfiles()),
-                Ui.button(this, "자동 업데이트 끄기", v -> {
-                    try {
-                        authorizationAttempt.cancel(ProfileAuthorizationSession.Outcome.DISABLED, android.os.SystemClock.elapsedRealtime());
-                        updateDiagnosticStatus();
-                        profileRegistry.setSyncEnabled(false); updateProfileStatus();
-                        toast("자동 업데이트를 껐습니다. 마지막 목록은 유지됩니다. Google 계정의 앱 접근 권한은 계정 설정에서 관리할 수 있습니다.");
-                    } catch (IllegalStateException error) { toast("저장 공간을 확인해 주세요. 이전 설정은 유지됩니다."); }
-                })));
+        root.addView(Ui.section(this, "모델과 프로젝트"));
+        LinearLayout profiles = Ui.card(this, root);
         profileStatus = Ui.body(this, profileStatusText());
-        root.addView(profileStatus);
-        addAuthorizationDiagnostics(root);
-
-        root.addView(Ui.section(this, "프로젝트 목록"));
+        profiles.addView(profileStatus);
+        profiles.addView(Ui.button(this, "Google 로그인 · 목록 업데이트", v -> authorizeProfiles()));
         projectStatus = Ui.body(this, projectStatusText());
-        root.addView(projectStatus);
-        root.addView(Ui.button(this, "프로젝트 목록 전체 삭제", v -> confirmClearProjects()));
+        profiles.addView(projectStatus);
+        LinearLayout profileDetails = Ui.disclosure(this, profiles, "모델 목록 안내와 연결 관리");
+        profileDetails.addView(Ui.body(this, "자동으로 확인한 공식 모델·추론 조합만 사용합니다. 문서 접근에는 Drive 메타데이터와 Docs 읽기 전용 권한을 사용하며 지정된 두 문서만 읽습니다. 동기화가 실패하면 마지막 정상 목록과 기존 예약은 유지됩니다."));
+        profileDetails.addView(Ui.button(this, "자동 업데이트 끄기", v -> {
+            try {
+                authorizationAttempt.cancel(ProfileAuthorizationSession.Outcome.DISABLED, android.os.SystemClock.elapsedRealtime());
+                updateDiagnosticStatus();
+                profileRegistry.setSyncEnabled(false); updateProfileStatus();
+                toast("자동 업데이트를 껐습니다. 마지막 목록은 유지됩니다. Google 계정의 앱 접근 권한은 계정 설정에서 관리할 수 있습니다.");
+            } catch (IllegalStateException error) { toast("저장 공간을 확인해 주세요. 이전 설정은 유지됩니다."); }
+        }));
+        addAuthorizationDiagnostics(profileDetails);
 
-        root.addView(Ui.section(this, "실행 설정"));
+        root.addView(Ui.section(this, "실행 옵션"));
+        LinearLayout execution = Ui.card(this, root);
         notifySuccess = new CheckBox(this);
         notifySuccess.setText("성공 알림");
+        notifySuccess.setMinHeight(Ui.dp(this, 48));
         notifySuccess.setChecked(settings.optBoolean("notifySuccess", true));
-        root.addView(notifySuccess);
+        execution.addView(notifySuccess);
         notifyFailure = new CheckBox(this);
         notifyFailure.setText("실패 알림");
+        notifyFailure.setMinHeight(Ui.dp(this, 48));
         notifyFailure.setChecked(settings.optBoolean("notifyFailure", true));
-        root.addView(notifyFailure);
-        missedGrace = field(root, "누락 실행 허용 시간(분)", String.valueOf(settings.optInt("missedGraceMinutes", 30)));
-        maxRetries = field(root, "기본 재시도 횟수(0∼5)", String.valueOf(settings.optInt("maxRetries", 2)));
-        timeout = field(root, "실행 제한 시간(초, 30∼300)", String.valueOf(settings.optInt("executionTimeoutSeconds", 90)));
-        root.addView(Ui.section(this, "백업 및 진단"));
-        root.addView(Ui.actionGrid(this,
+        execution.addView(notifyFailure);
+        missedGrace = field(execution, "누락 실행 허용 시간(분)", String.valueOf(settings.optInt("missedGraceMinutes", 30)));
+        maxRetries = field(execution, "기본 재시도 횟수(0∼5)", String.valueOf(settings.optInt("maxRetries", 2)));
+        timeout = field(execution, "실행 제한 시간(초, 30∼300)", String.valueOf(settings.optInt("executionTimeoutSeconds", 90)));
+        execution.addView(Ui.body(this, "알림과 실행 옵션을 변경한 뒤 아래 저장을 누르세요."));
+
+        root.addView(Ui.section(this, "백업 및 관리"));
+        LinearLayout management = Ui.card(this, root);
+        management.addView(Ui.actionGrid(this,
                 Ui.button(this, "설정 내보내기", v -> exportConfig()),
-                Ui.button(this, "설정 가져오기", v -> importConfig()),
-                Ui.button(this, "실행 기록", v -> startActivity(new Intent(this, LogsActivity.class))),
-                Ui.button(this, "알람 재구축", v -> {
-                    AlarmEngine.rebuildAll(this);
-                    toast("알람을 다시 등록했습니다.");
-                })));
+                Ui.button(this, "설정 가져오기", v -> importConfig())));
+        LinearLayout advanced = Ui.disclosure(this, management, "유지관리");
+        advanced.addView(Ui.button(this, "알람 재구축", v -> {
+            AlarmEngine.rebuildAll(this);
+            toast("알람을 다시 등록했습니다.");
+        }));
+        advanced.addView(Ui.button(this, "프로젝트 목록 전체 삭제", v -> confirmClearProjects()));
         root.addView(Ui.actionGrid(this,
-                Ui.button(this, "저장", v -> save()),
+                Ui.primaryButton(this, "설정 저장", v -> save()),
                 Ui.button(this, "취소", v -> finish())));
+        root.addView(Ui.label(this, "ChatGPT Prompt Scheduler · v" + BuildConfig.VERSION_NAME));
         Ui.setContent(this, scroll);
     }
 
@@ -245,6 +250,7 @@ public final class SettingsActivity extends Activity {
         diagnostics.addView(Ui.body(this, "기본 요청으로 먼저 확인하세요. 비교가 필요할 때만 아래 옵션을 선택한 뒤 Google 로그인 버튼을 직접 누르세요. 모드를 바꾸면 진행 중인 요청은 취소됩니다. 최근 4회 기록은 이 설정 화면에만 남으며, 계정이나 토큰은 포함하지 않습니다. 기존 권한을 재사용했는지는 확인할 수 없습니다."));
         CheckBox comparison = new CheckBox(this);
         comparison.setText("이전 동의 요청 방식과 비교");
+        comparison.setMinHeight(Ui.dp(this, 48));
         comparison.setOnCheckedChangeListener((button, checked) -> {
             authorizationAttempt.selectMode(checked ? ProfileAuthorizationSession.Mode.PREVIOUS_CONSENT
                     : ProfileAuthorizationSession.Mode.DEFAULT, android.os.SystemClock.elapsedRealtime());
@@ -338,8 +344,10 @@ public final class SettingsActivity extends Activity {
     private String projectStatusText() { return "등록된 프로젝트: " + projectCatalog.entries().size() + "개"; }
 
     private EditText field(LinearLayout root, String label, String value) {
-        root.addView(Ui.body(this, label));
+        root.addView(Ui.label(this, label));
         EditText edit = new EditText(this);
+        Ui.input(this, edit);
+        edit.setContentDescription(label);
         edit.setSingleLine(true);
         edit.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
         edit.setText(value);

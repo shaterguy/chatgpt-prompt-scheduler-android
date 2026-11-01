@@ -25,6 +25,7 @@ public final class LogsActivity extends Activity {
     private RunLogStore store;
     private String pendingExportText;
     private boolean autoExportHandled;
+    private ScrollView scrollView;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -38,49 +39,69 @@ public final class LogsActivity extends Activity {
         }
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (store != null) render();
+    }
+
     private void render() {
+        int previousScrollY = scrollView == null ? 0 : scrollView.getScrollY();
         ScrollView scroll = Ui.scroll(this);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(Ui.dp(this, 18), Ui.dp(this, 12), Ui.dp(this, 18), Ui.dp(this, 24));
+        scrollView = scroll;
+        LinearLayout root = Ui.content(this);
         scroll.addView(root);
         root.addView(Ui.title(this, "실행 기록"));
-        root.addView(Ui.body(this, "실패 카드의 ‘이 실패 풀로그 내려받기’에서 WebView·페이지 이동·입력기·전송 검증 진단을 JSON으로 저장할 수 있습니다."));
+        Ui.navigation(this, root, "logs");
+        JSONArray logs = store.read();
+        root.addView(Ui.body(this, "최근 실행 " + logs.length() + "건"));
         root.addView(Ui.actionGrid(this,
                 Ui.button(this, "새로고침", v -> render()),
-                Ui.button(this, "전체 풀로그 내려받기", v -> exportAll()),
-                Ui.button(this, "전체 삭제", v -> new AlertDialog.Builder(this).setTitle("기록 삭제").setMessage("모든 실행 기록을 삭제합니다.")
-                        .setNegativeButton("취소", null).setPositiveButton("삭제", (dialog, which) -> { store.clear(); render(); }).show()),
-                Ui.button(this, "닫기", v -> finish())));
-        JSONArray logs = store.read();
-        if (logs.length() == 0) root.addView(Ui.body(this, "실행 기록이 없습니다."));
+                Ui.button(this, "전체 풀로그 내려받기", v -> exportAll())));
+        LinearLayout management = Ui.disclosure(this, root, "기록 관리");
+        management.addView(Ui.button(this, "전체 삭제", v ->
+                new AlertDialog.Builder(this).setTitle("기록 삭제").setMessage("모든 실행 기록을 삭제합니다.")
+                        .setNegativeButton("취소", null).setPositiveButton("삭제",
+                                (dialog, which) -> { store.clear(); render(); }).show()));
+        if (logs.length() == 0) {
+            LinearLayout empty = Ui.card(this, root);
+            empty.addView(Ui.emphasis(this, "아직 실행 기록이 없습니다"));
+            empty.addView(Ui.body(this, "예약을 실행하면 완료 여부와 진단 내용을 확인할 수 있습니다."));
+        }
         for (int i = 0; i < logs.length(); i++) {
             JSONObject item = logs.optJSONObject(i);
             if (item == null) continue;
-            LinearLayout card = new LinearLayout(this);
-            card.setOrientation(LinearLayout.VERTICAL);
-            card.setPadding(Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 12), Ui.dp(this, 8));
-            card.setBackgroundResource(R.drawable.panel_background);
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            params.setMargins(0, Ui.dp(this, 5), 0, Ui.dp(this, 5));
-            root.addView(card, params);
+            LinearLayout card = Ui.card(this, root);
             long finished = item.optLong("finishedAt", 0L);
             String status = item.optString("status", "UNKNOWN");
-            card.addView(Ui.section(this, item.optString("scheduleName", "예약") + " · " + status));
-            card.addView(Ui.body(this, finished == 0 ? "시각 확인 불가" : formatter.format(Instant.ofEpochMilli(finished))));
-            card.addView(Ui.body(this, "Run ID: " + item.optString("runId", "")));
-            card.addView(Ui.body(this, item.optString("detail", "")));
-            card.addView(Ui.body(this, item.optString("targetUrl", "")));
+            String scheduleName = item.optString("scheduleName", "예약");
+            card.addView(Ui.emphasis(this, scheduleName));
+            card.addView(Ui.body(this, UiDisplayPolicy.status(status) + " · "
+                    + (finished == 0 ? "시각 확인 불가" : formatter.format(Instant.ofEpochMilli(finished)))));
+            android.widget.TextView summary = Ui.body(this, item.optString("detail", ""));
+            summary.setMaxLines(3);
+            summary.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            card.addView(summary);
+            LinearLayout detail = Ui.disclosure(this, card, "실행 상세");
+            detail.addView(Ui.body(this, "상태 원문: " + status));
+            detail.addView(Ui.body(this, "Run ID: " + item.optString("runId", "")));
+            detail.addView(Ui.body(this, item.optString("detail", "")));
+            detail.addView(Ui.body(this, item.optString("targetUrl", "")));
             String conversationUrl = item.optString("conversationUrl", "");
-            if (!conversationUrl.isBlank()) card.addView(Ui.body(this, "대화 주소: " + conversationUrl));
+            if (!conversationUrl.isBlank()) detail.addView(Ui.body(this, "대화 주소: " + conversationUrl));
             JSONArray events = item.optJSONArray("events");
-            card.addView(Ui.body(this, "진단 이벤트: " + (events == null ? 0 : events.length()) + "개"));
+            detail.addView(Ui.body(this, "진단 이벤트: " + (events == null ? 0 : events.length()) + "개"));
             if (!item.optBoolean("success", "VERIFIED".equals(status))) {
                 String runId = item.optString("runId", "");
-                card.addView(Ui.button(this, "이 실패 풀로그 내려받기", v -> exportOne(runId)));
+                android.widget.Button export = Ui.button(this, "이 실패 풀로그 내려받기", v -> exportOne(runId));
+                export.setContentDescription(scheduleName + ", 실패 풀로그 내려받기");
+                card.addView(export);
             }
         }
         Ui.setContent(this, scroll);
+        scroll.post(() -> {
+            if (scrollView == scroll) scroll.scrollTo(0, previousScrollY);
+        });
     }
 
     private void exportAll() {

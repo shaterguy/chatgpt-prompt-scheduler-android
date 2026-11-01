@@ -61,18 +61,18 @@ public final class MainActivity extends Activity {
         int previousScrollY = selectionChanged || scrollView == null ? 0 : scrollView.getScrollY();
         ScrollView scroll = Ui.scroll(this);
         scrollView = scroll;
-        root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(Ui.dp(this, 18), Ui.dp(this, 12), Ui.dp(this, 18), Ui.dp(this, 24));
+        root = Ui.content(this);
         scroll.addView(root);
-        root.addView(Ui.title(this, "ChatGPT Prompt Scheduler"));
-        root.addView(Ui.body(this, "v" + BuildConfig.VERSION_NAME + " · 화면을 열지 않고 예약 프롬프트를 실행하는 Android 앱"));
-        root.addView(Ui.button(this, "설정", v -> startActivity(new Intent(this, SettingsActivity.class))));
-
-        root.addView(Ui.section(this, "예약 작업"));
-        root.addView(Ui.button(this, "+ 예약 추가", v -> startActivity(new Intent(this, ScheduleEditorActivity.class))));
+        root.addView(Ui.title(this, "예약"));
+        Ui.navigation(this, root, "schedules");
 
         List<Schedule> schedules = store.loadSchedules();
+        int enabledCount = 0;
+        for (Schedule schedule : schedules) if (schedule.enabled) enabledCount++;
+        root.addView(Ui.body(this, "전체 " + schedules.size() + "개 · 활성 " + enabledCount + "개"));
+        root.addView(Ui.primaryButton(this, "예약 추가", v ->
+                startActivity(new Intent(this, ScheduleEditorActivity.class))));
+
         ProjectCatalog catalog = new ProjectCatalog(this);
         Map<String, String> projectNames = new LinkedHashMap<>();
         for (ProjectUrlPolicy.ProjectRef project : catalog.entries()) {
@@ -80,7 +80,11 @@ public final class MainActivity extends Activity {
         }
         List<ScheduleListPolicy.Filter> filters = ScheduleListPolicy.filters(schedules, projectNames);
         if (!ScheduleListPolicy.hasFilter(filters, filterKey)) filterKey = ScheduleListPolicy.ALL;
-        root.addView(Ui.body(this, "보기"));
+
+        LinearLayout filterCard = Ui.card(this, root);
+        LinearLayout filterBox = new LinearLayout(this);
+        filterBox.setOrientation(LinearLayout.VERTICAL);
+        filterBox.addView(Ui.label(this, "보기"));
         ArrayList<String> labels = new ArrayList<>();
         int selectedIndex = 0;
         for (int i = 0; i < filters.size(); i++) {
@@ -89,6 +93,7 @@ public final class MainActivity extends Activity {
             if (filter.key.equals(filterKey)) selectedIndex = i;
         }
         Spinner filterSpinner = new Spinner(this);
+        Ui.selector(this, filterSpinner, "프로젝트별 예약 보기");
         ArrayAdapter<String> filterAdapter = new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_item, labels);
         filterAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
@@ -104,10 +109,13 @@ public final class MainActivity extends Activity {
             }
             @Override public void onNothingSelected(AdapterView<?> parent) {}
         });
-        root.addView(filterSpinner);
+        filterBox.addView(filterSpinner);
 
-        root.addView(Ui.body(this, "정렬"));
+        LinearLayout sortBox = new LinearLayout(this);
+        sortBox.setOrientation(LinearLayout.VERTICAL);
+        sortBox.addView(Ui.label(this, "정렬"));
         Spinner sortSpinner = new Spinner(this);
+        Ui.selector(this, sortSpinner, "예약 정렬");
         ArrayAdapter<String> sortAdapter = new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_item, List.of("최신 등록순", "예약 도래순"));
         sortAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
@@ -124,17 +132,20 @@ public final class MainActivity extends Activity {
             }
             @Override public void onNothingSelected(AdapterView<?> parent) {}
         });
-        root.addView(sortSpinner);
+        sortBox.addView(sortSpinner);
+        filterCard.addView(Ui.actionGrid(this, filterBox, sortBox));
 
         long now = System.currentTimeMillis();
         List<Schedule> visible = ScheduleListPolicy.visible(schedules, filterKey, sortKey, now);
-        root.addView(Ui.body(this, "표시 " + visible.size() + "개 / 전체 " + schedules.size() + "개"));
+        root.addView(Ui.label(this, visible.size() + "개 예약 표시"));
         if (visible.isEmpty()) {
-            root.addView(Ui.body(this, schedules.isEmpty()
-                    ? "등록된 예약이 없습니다." : "현재 보기 조건에 해당하는 예약이 없습니다."));
+            LinearLayout empty = Ui.card(this, root);
+            empty.addView(Ui.emphasis(this, schedules.isEmpty() ? "첫 예약을 만들어 보세요" : "해당 프로젝트에 예약이 없습니다"));
+            empty.addView(Ui.body(this, schedules.isEmpty()
+                    ? "프롬프트와 실행 시각을 지정하면 여기에서 관리할 수 있습니다."
+                    : "위의 보기에서 다른 프로젝트나 전체 예약을 선택하세요."));
         }
         for (Schedule schedule : visible) addScheduleCard(schedule, now);
-
         Ui.setContent(this, scroll);
         scroll.post(() -> {
             if (scrollView == scroll) scroll.scrollTo(0, previousScrollY);
@@ -142,46 +153,60 @@ public final class MainActivity extends Activity {
     }
 
     private void addScheduleCard(Schedule schedule, long now) {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(Ui.dp(this, 12), Ui.dp(this, 10), Ui.dp(this, 12), Ui.dp(this, 10));
-        card.setBackgroundResource(R.drawable.panel_background);
-        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        cardParams.setMargins(0, Ui.dp(this, 6), 0, Ui.dp(this, 6));
-        root.addView(card, cardParams);
-        card.addView(Ui.section(this, schedule.name));
-        String targetSummary = "existing".equals(schedule.targetType)
-                ? "existing · 기존 대화 모드 유지"
-                : schedule.targetType + " · " + Schedule.normalizedExperience(schedule.targetType, schedule.experience);
-        String reasoningSummary;
-        if ("work".equals(schedule.experience)) {
-            reasoningSummary = " · 모델 " + Schedule.displayWorkModel(schedule.experience, schedule.workModel)
-                    + " · 추론 " + Schedule.displayReasoningEffort(schedule.experience, schedule.reasoningEffort);
-        } else if ("chat".equals(schedule.experience) && !"existing".equals(schedule.targetType)) {
-            reasoningSummary = " · 추론 " + Schedule.displayChatReasoning(schedule.experience, schedule.chatReasoning);
-        } else {
-            reasoningSummary = "";
-        }
-        card.addView(Ui.body(this, targetSummary + reasoningSummary + " · " + Recurrence.describeNext(schedule, now)));
-        card.addView(Ui.body(this, "마지막 상태: " + schedule.lastStatus));
+        LinearLayout card = Ui.card(this, root);
+        LinearLayout heading = Ui.row(this);
+        android.widget.TextView name = Ui.emphasis(this, schedule.name);
+        Ui.addWeighted(heading, name);
         Switch toggle = new Switch(this);
-        toggle.setText(schedule.enabled ? "활성" : "비활성");
+        toggle.setText(schedule.enabled ? "활성" : "중지");
+        toggle.setMinHeight(Ui.dp(this, 48));
+        toggle.setMinimumWidth(Ui.dp(this, 88));
+        toggle.setContentDescription(schedule.name + ", 예약 활성화");
         toggle.setChecked(schedule.enabled);
         toggle.setOnCheckedChangeListener((button, checked) -> {
             schedule.enabled = checked;
             store.saveSchedule(schedule);
             AlarmEngine.cancel(this, schedule.id);
             if (checked) AlarmEngine.scheduleNext(this, schedule, System.currentTimeMillis());
-            button.setText(checked ? "활성" : "비활성");
-            // Refresh due order after AlarmEngine has persisted its next-run target.
+            button.setText(checked ? "활성" : "중지");
             root.post(() -> { if (!isFinishing() && !isDestroyed()) render(); });
         });
-        card.addView(Ui.actionGrid(this, toggle,
-                Ui.button(this, "편집", v -> startActivity(new Intent(this, ScheduleEditorActivity.class)
-                        .putExtra("scheduleId", schedule.id))),
-                Ui.button(this, "지금 실행", v -> runNow(schedule.id)),
-                Ui.button(this, "삭제", v -> confirmDelete(schedule))));
+        heading.addView(toggle);
+        card.addView(heading);
+        card.addView(Ui.emphasis(this, Recurrence.describeNext(schedule, now)));
+
+        String target = UiDisplayPolicy.label(schedule.targetType);
+        if ("project".equals(schedule.targetType)) {
+            ProjectCatalog catalog = new ProjectCatalog(this);
+            String projectId = TargetParser.projectId(schedule.targetUrl);
+            for (ProjectUrlPolicy.ProjectRef project : catalog.entries()) {
+                if (project.projectId.equals(projectId)) { target += " · " + catalog.displayName(project); break; }
+            }
+        }
+        String mode = "existing".equals(schedule.targetType)
+                ? "기존 대화 설정 유지" : UiDisplayPolicy.label(schedule.experience);
+        card.addView(Ui.body(this, target + " · " + mode));
+        if ("work".equals(schedule.experience) && !"existing".equals(schedule.targetType)) {
+            card.addView(Ui.body(this, Schedule.displayWorkModel(schedule.experience, schedule.workModel)
+                    + " · 추론 " + Schedule.displayReasoningEffort(schedule.experience, schedule.reasoningEffort)));
+        } else if ("chat".equals(schedule.experience) && !"existing".equals(schedule.targetType)) {
+            card.addView(Ui.body(this, "추론 " + Schedule.displayChatReasoning(schedule.experience, schedule.chatReasoning)));
+        }
+        card.addView(Ui.label(this, "마지막 결과 · " + UiDisplayPolicy.status(schedule.lastStatus)));
+        android.widget.Button edit = Ui.button(this, "편집", v ->
+                startActivity(new Intent(this, ScheduleEditorActivity.class).putExtra("scheduleId", schedule.id)));
+        edit.setContentDescription(schedule.name + ", 예약 편집");
+        android.widget.Button run = Ui.button(this, "지금 실행", v -> runNow(schedule.id));
+        run.setContentDescription(schedule.name + ", 지금 실행");
+        card.addView(Ui.actionGrid(this, edit, run));
+        android.widget.Button more = Ui.button(this, "더보기", v -> {
+            android.widget.PopupMenu menu = new android.widget.PopupMenu(this, v);
+            menu.getMenu().add("예약 삭제");
+            menu.setOnMenuItemClickListener(item -> { confirmDelete(schedule); return true; });
+            menu.show();
+        });
+        more.setContentDescription(schedule.name + ", 더보기, 예약 삭제");
+        card.addView(more);
     }
 
     private void runNow(String scheduleId) {
