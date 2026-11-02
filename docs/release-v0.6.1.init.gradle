@@ -1,0 +1,7 @@
+gradle.afterProject { p, state ->
+    if (p.path == ':app') {
+        p.android.defaultConfig.applicationId = 'com.shaterguy.chatgptpromptscheduler'
+        p.android.defaultConfig.versionCode = 2100000013
+        p.android.defaultConfig.versionName = '0.6.1'
+    }
+}
