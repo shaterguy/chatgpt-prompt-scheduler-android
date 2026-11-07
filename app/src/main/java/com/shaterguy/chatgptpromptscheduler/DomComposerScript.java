@@ -9,6 +9,14 @@ final class DomComposerScript {
                 const domStates=window.__schedulerComposerStates||(window.__schedulerComposerStates={});
                 const domKey=markerKey+':dom';
                 const domState=domStates[domKey]||(domStates[domKey]={phase:'clearing',reverts:0});
+                const markInputStarted=()=>{
+                    domState.inputStarted=true;
+                    try{if(sessionStorage.getItem(inputMarkerKey)==='1')return true;}catch(_){}
+                    try{if(localStorage.getItem(inputMarkerKey)==='1')return true;}catch(_){}
+                    try{sessionStorage.setItem(inputMarkerKey,'1');if(sessionStorage.getItem(inputMarkerKey)==='1')return true;}catch(_){}
+                    try{localStorage.setItem(inputMarkerKey,'1');if(localStorage.getItem(inputMarkerKey)==='1')return true;}catch(_){}
+                    return false;
+                };
                 """.replace("\n", "");
     }
 

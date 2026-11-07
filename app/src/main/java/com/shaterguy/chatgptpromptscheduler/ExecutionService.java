@@ -55,6 +55,7 @@ public final class ExecutionService extends Service {
     private long startedAt;
     private long deadline;
     private int pageAttempts;
+    private final ComposerRecoveryPolicy composerRecovery = new ComposerRecoveryPolicy();
     private int engineAttempt;
     private int routeRecoveryAttempts;
     private int navigationGeneration;
@@ -189,6 +190,7 @@ public final class ExecutionService extends Service {
         routeRecoveryAttempts = 0;
         navigationGeneration = 0;
         submitted = false;
+        composerRecovery.reset();
         nativeProfilePrepared = false;
         stepInFlight = false;
         lastObservedUrl = "";
@@ -348,7 +350,7 @@ public final class ExecutionService extends Service {
             trace("ENGINE_ENTRY", object("url", entryUrl, "projectDirectory", "project".equals(currentSchedule.targetType)));
             webView.loadUrl(entryUrl);
             handler.removeCallbacks(watchdogRunnable);
-            handler.postDelayed(watchdogRunnable, 10_000L);
+            handler.postDelayed(watchdogRunnable, Math.min(10_000L, Math.max(0L, deadline - System.currentTimeMillis())));
         } catch (Throwable error) {
             trace("ENGINE_START_EXCEPTION", object("type", error.getClass().getName(), "message", valueOrEmpty(error.getMessage())));
             recoverEngine("ENGINE_START_FAILED", error.getMessage());
@@ -380,7 +382,7 @@ public final class ExecutionService extends Service {
             finish(false, "EXECUTION_TIMEOUT", timeoutDetail());
             return;
         }
-        handler.postDelayed(watchdogRunnable, 10_000L);
+        handler.postDelayed(watchdogRunnable, Math.min(10_000L, Math.max(0L, deadline - System.currentTimeMillis())));
     }
 
     private void runAutomationStep() {
@@ -483,8 +485,10 @@ public final class ExecutionService extends Service {
         String detail = result.optString("detail", "");
         String resultUrl = result.optString("url", "");
         if (!resultUrl.isBlank()) lastObservedUrl = resultUrl;
+        JSONObject diagnostics = result.optJSONObject("diagnostics");
+        composerRecovery.observeInputStarted(diagnostics != null && diagnostics.optBoolean("inputStarted", false));
         trace("SCRIPT_RESULT", object("status", status, "detail", detail, "url", resultUrl,
-                "diagnostics", result.optJSONObject("diagnostics"), "raw", clip(raw, 12_000)));
+                "diagnostics", diagnostics, "raw", clip(raw, 12_000)));
         switch (status) {
             case "SUBMITTED" -> {
                 submitted = true;
@@ -494,10 +498,17 @@ public final class ExecutionService extends Service {
                 scheduleAutomationStep(2500L);
             }
             case "RETRY" -> {
-                pageAttempts++;
                 lastRetryDetail = detail;
-                if (pageAttempts > 48) finish(false, retryFailureStatus(detail), contextualDetail(detail));
-                else scheduleAutomationStep("입력 반영 확인 대기".equals(detail) ? 350L : 1200L);
+                boolean composerMissing = diagnostics != null && diagnostics.optBoolean("composerMissing", false);
+                ComposerRecoveryPolicy.Decision decision = composerRecovery.onRetry(
+                        composerMissing, submitted, System.currentTimeMillis(), deadline);
+                pageAttempts = composerRecovery.retryAttempts();
+                switch (decision) {
+                    case REENTER -> recoverMissingComposer();
+                    case EXHAUSTED -> finish(false, retryFailureStatus(detail), contextualDetail(detail));
+                    case TIMED_OUT -> finish(false, "EXECUTION_TIMEOUT", timeoutDetail());
+                    case WAIT -> scheduleAutomationStep("입력 반영 확인 대기".equals(detail) ? 350L : 1200L);
+                }
             }
             case "TARGET_CONTEXT_MISMATCH" -> recoverTargetRoute(detail);
             case "AUTH_REQUIRED", "DRAFT_PRESENT" -> finish(false, status, contextualDetail(detail));
@@ -505,6 +516,26 @@ public final class ExecutionService extends Service {
         }
     }
 
+
+    private void recoverMissingComposer() {
+        if (currentSchedule == null || webView == null || submitted || composerRecovery.inputStarted()) return;
+        if (System.currentTimeMillis() >= deadline) {
+            finish(false, "EXECUTION_TIMEOUT", timeoutDetail());
+            return;
+        }
+        String target = currentRequestProfile == null ? currentSchedule.targetUrl
+                : NativeProfilePreparationScript.targetUrl(currentSchedule, currentRequestProfile.mode);
+        trace("COMPOSER_RECOVERY", object("url", target, "attempt", composerRecovery.recoveryAttempts(),
+                "missingPolls", composerRecovery.missingPolls(), "remainingMs", Math.max(0, deadline - System.currentTimeMillis()),
+                "nativeProfilePrepared", nativeProfilePrepared, "submitted", submitted,
+                "inputStarted", composerRecovery.inputStarted()));
+        cancelAutomationStep();
+        stepInFlight = false;
+        navigationGeneration++;
+        webView.stopLoading();
+        // Reuse the same WebView and prepared native settings; never extend this run's deadline.
+        webView.loadUrl(target);
+    }
 
     private void handleVerification(String raw) {
         JSONObject result = parseObject(raw);
@@ -724,10 +755,6 @@ public final class ExecutionService extends Service {
     }
 
     private void trace(String type, JSONObject data) {
-        if (traceEvents.length() >= MAX_TRACE_EVENTS) {
-            traceDropped++;
-            return;
-        }
         JSONObject event = new JSONObject();
         try {
             long now = System.currentTimeMillis();
@@ -735,7 +762,8 @@ public final class ExecutionService extends Service {
             event.put("elapsedMs", startedAt == 0 ? 0 : Math.max(0, now - startedAt));
             event.put("type", type);
             event.put("data", data == null ? new JSONObject() : data);
-            traceEvents.put(event);
+            if (TraceRetention.append(traceEvents, event, MAX_TRACE_EVENTS)) traceDropped++;
+            if ("RUN_FINISHED".equals(type)) event.getJSONObject("data").put("traceDropped", traceDropped);
         } catch (JSONException ignored) {
         }
     }
