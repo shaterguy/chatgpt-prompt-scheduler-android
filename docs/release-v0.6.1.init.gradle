@@ -3,5 +3,6 @@ gradle.afterProject { p, state ->
         p.android.defaultConfig.applicationId = 'com.shaterguy.chatgptpromptscheduler'
         p.android.defaultConfig.versionCode = 2100000013
         p.android.defaultConfig.versionName = '0.6.1'
+        p.android.sourceSets.release.res.srcDir(p.file('src/formal/res'))
     }
 }

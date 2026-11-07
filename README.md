@@ -10,7 +10,7 @@ ChatGPT 웹 세션에 예약 프롬프트를 자동 전송하는 독립 Android 
 
 입력창 준비 대기와 입력 진행의 재시도 횟수를 분리하여 준비 대기만으로 48회 제한에 먼저 도달하지 않도록 합니다. 실행 진단이 120개를 넘으면 반복 대기 기록부터 제거하여 복구와 종료 결과를 남깁니다. 대상 검증, 전송 중복 방지와 전송 후 성공 판정은 유지합니다.
 
-DEV 설치 ID는 `com.shaterguy.chatgptpromptscheduler.dev`, 버전은 `0.6.2-dev1`, versionCode는 `6002001`입니다. 기존 DEV 서명 계보로 업데이트합니다.
+DEV 설치 ID는 `com.shaterguy.chatgptpromptscheduler.dev`, 버전은 `0.6.2-dev1`, versionCode는 `6002001`입니다. 기존 DEV 서명 계보로 업데이트합니다. 정식 표시명은 정식 빌드 스크립트를 적용할 때만 포함하며, DEV APK는 DEV 이름을 유지합니다.
 
 ## 0.6.1-dev10 화면과 메뉴 구성 개선
 
