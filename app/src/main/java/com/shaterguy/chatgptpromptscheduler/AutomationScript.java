@@ -14,7 +14,7 @@ public final class AutomationScript {
                 "const readMarker=()=>{try{return localStorage.getItem(markerKey)||sessionStorage.getItem(markerKey)||window[markerKey]||'';}catch(_){return window[markerKey]||'';}};" +
                 "const priorMarker=readMarker();if(priorMarker)return result('SUBMITTED','동일 실행의 전송 클릭 기록을 확인했습니다.',{marker:priorMarker,recoveredAfterNavigation:true});" +
                 "const inputMarkerKey=markerKey+':input-started';" +
-                "const readInputStarted=()=>{if(window.__schedulerComposerStates?.[markerKey+':dom']?.inputStarted===true)return true;try{if(sessionStorage.getItem(inputMarkerKey)==='1')return true;}catch(_){}try{return localStorage.getItem(inputMarkerKey)==='1';}catch(_){return false;}};" +
+                "const readInputStarted=()=>{if(window.__schedulerComposerStates?.[markerKey+':dom']?.inputStarted===true)return true;try{if(sessionStorage.getItem(inputMarkerKey)==='1')return true;}catch(_){return true;}try{return localStorage.getItem(inputMarkerKey)==='1';}catch(_){return true;}};" +
                 "const norm=s=>String(s??'').replace(/[\\u200B-\\u200D\\uFEFF]/g,'').replace(/\\u00a0/g,' ').replace(/\\r\\n?/g,'\\n').replace(/[\\u2028\\u2029]/g,'\\n').trim();" +
                 "const canonical=s=>norm(s).replace(/[ \\t]+/g,' ').replace(/ *\\n+ */g,'\\n');" +
                 "const expected=norm(" + prompt + ");" +

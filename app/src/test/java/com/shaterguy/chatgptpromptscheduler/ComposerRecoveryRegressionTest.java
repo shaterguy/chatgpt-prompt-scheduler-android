@@ -139,6 +139,37 @@ public final class ComposerRecoveryRegressionTest {
         }
     }
 
+    @Test(timeout = 20_000) public void unreadablePersistedInputEvidenceBlocksReentryAfterLostCallback() throws Exception {
+        for (String markerStore : new String[]{"session", "local"}) {
+            ComposerRecoveryPolicy policy = new ComposerRecoveryPolicy();
+            policy.reset();
+            try (Page page = new Page()) {
+                page.setComposer("");
+                if ("local".equals(markerStore)) {
+                    page.command(new JSONObject().put("action", "storage").put("store", "session").put("value", "discard"));
+                }
+                JSONObject oldDocumentResult = page.evaluate();
+                assertTrue(oldDocumentResult.getJSONObject("diagnostics").getBoolean("inputStarted"));
+                // The marker lives in one store; the other store has no evidence of this input.
+                page.command(new JSONObject().put("action", "storage").put("value", "normal"));
+                page.navigate("https://chatgpt.com/g/g-p-fixture/project");
+                page.command(new JSONObject().put("action", "storage").put("store", markerStore).put("value", "read-throw"));
+
+                JSONObject absent = page.evaluate();
+                assertEquals("입력창 대기", absent.getString("detail"));
+                assertTrue("An unreadable store cannot establish that no input has started",
+                        absent.getJSONObject("diagnostics").getBoolean("inputStarted"));
+                policy.observeInputStarted(absent.getJSONObject("diagnostics").getBoolean("inputStarted"));
+                assertEquals(ComposerRecoveryPolicy.Decision.WAIT,
+                        policy.onRetry(true, false, 1_000L, DEADLINE));
+                assertEquals(ComposerRecoveryPolicy.Decision.WAIT,
+                        policy.onRetry(true, false, 30_000L, DEADLINE));
+                assertEquals(0, policy.recoveryAttempts());
+                assertEquals(0, page.clicks);
+            }
+        }
+    }
+
     @Test(timeout = 20_000) public void twoReentriesDoNotExtendOriginalDeadline() throws Exception {
         ComposerRecoveryPolicy policy = new ComposerRecoveryPolicy();
         policy.reset();
@@ -191,14 +222,20 @@ public final class ComposerRecoveryRegressionTest {
             String server = "const compose=" + RequestProfileScript.jsQuote(compose) + ";" + """
                     const vm=require('node:vm');
                     const readline=require('node:readline');
-                    const storage=new Map();
+                    const stores={local:new Map(),session:new Map()};
+                    const storageModes={local:'normal',session:'normal'};
                     let clicks=0,context,state;
-                    let storageMode='normal';
-                    const saved={
-                      getItem:key=>{if(storageMode==='throw')throw Error('Fixture storage unavailable');return storage.get(key)||null;},
-                      setItem:(key,value)=>{if(storageMode==='throw')throw Error('Fixture storage unavailable');
-                        if(storageMode!=='discard')storage.set(key,value);}
-                    };
+                    const access=kind=>({
+                      getItem:key=>{
+                        if(storageModes[kind]==='throw'||storageModes[kind]==='read-throw')throw Error('Fixture storage unavailable');
+                        return stores[kind].get(key)||null;
+                      },
+                      setItem:(key,value)=>{
+                        if(storageModes[kind]==='throw')throw Error('Fixture storage unavailable');
+                        if(storageModes[kind]!=='discard')stores[kind].set(key,value);
+                      }
+                    });
+                    const localSaved=access('local'),sessionSaved=access('session');
                     function navigate(url){
                       state={composer:null,auth:false};
                       const localState=state;
@@ -216,7 +253,7 @@ public final class ComposerRecoveryRegressionTest {
                       localState.createComposer=value=>({value,isConnected:true,offsetParent:{},tagName:'TEXTAREA',
                         getAttribute:()=>null,focus(){document.activeElement=this;},dispatchEvent:()=>true,
                         closest:()=>({querySelectorAll:()=>[send]})});
-                      const page={location:new URL(url),document,localStorage:saved,sessionStorage:saved,
+                      const page={location:new URL(url),document,localStorage:localSaved,sessionStorage:sessionSaved,
                         Event:class Event{constructor(type,options){this.type=type;Object.assign(this,options);}}};
                       page.window=page;
                       context=vm.createContext(page);
@@ -230,7 +267,10 @@ public final class ComposerRecoveryRegressionTest {
                         else if(request.action==='composer')state.composer=state.createComposer(request.value);
                         else if(request.action==='remove')state.composer=null;
                         else if(request.action==='auth')state.auth=request.value;
-                        else if(request.action==='storage')storageMode=request.value;
+                        else if(request.action==='storage'){
+                          if(request.store)storageModes[request.store]=request.value;
+                          else for(const kind of ['local','session'])storageModes[kind]=request.value;
+                        }
                         else if(request.action==='snapshot'){}
                         else if(request.action==='evaluate')result=JSON.parse(vm.runInContext(compose,context,{timeout:1000}));
                         else throw Error('Unknown fixture action');
