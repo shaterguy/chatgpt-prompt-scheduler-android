@@ -43,6 +43,8 @@ public final class ScheduleEditorActivity extends Activity {
     private TextView profileListStatus;
     private EditText prompt;
     private Spinner recurrence;
+    private LinearLayout holidaySection;
+    private Switch excludeHolidays;
     private EditText times;
     private LinearLayout timesSection;
     private EditText weekdays;
@@ -172,6 +174,13 @@ public final class ScheduleEditorActivity extends Activity {
         root.addView(Ui.section(this, "실행 일정"));
         LinearLayout timing = Ui.card(this, root);
         recurrence = spinner(timing, "반복", new String[]{"once", "daily", "weekly", "interval"}, schedule.recurrence);
+        holidaySection = section(timing);
+        excludeHolidays = new Switch(this);
+        excludeHolidays.setText("공휴일 제외");
+        excludeHolidays.setMinHeight(Ui.dp(this, 48));
+        excludeHolidays.setChecked(schedule.excludesHolidays());
+        holidaySection.addView(excludeHolidays);
+        holidaySection.addView(Ui.body(this, "토·일요일과 대한민국 공휴일에는 실행하지 않습니다."));
         timesSection = section(timing);
         times = edit(timesSection, "실행 시각", String.join(",", schedule.times), false);
         times.setHint("08:00,17:00");
@@ -308,6 +317,7 @@ public final class ScheduleEditorActivity extends Activity {
 
     private void updateRecurrenceOptionVisibility() {
         String value = selected(recurrence);
+        holidaySection.setVisibility(Schedule.supportsHolidayExclusion(value) ? View.VISIBLE : View.GONE);
         timesSection.setVisibility(showsClockTimes(value) ? View.VISIBLE : View.GONE);
         weekdaysSection.setVisibility(showsWeekdays(value) ? View.VISIBLE : View.GONE);
         intervalSection.setVisibility(showsIntervalMinutes(value) ? View.VISIBLE : View.GONE);
@@ -460,6 +470,8 @@ public final class ScheduleEditorActivity extends Activity {
                 schedule.experience, selectedProfileValue(chatReasoning, chatReasoningValues));
         schedule.prompt = prompt.getText().toString();
         schedule.recurrence = recurrenceValue;
+        schedule.excludeHolidays = Schedule.supportsHolidayExclusion(recurrenceValue)
+                && excludeHolidays.isChecked();
         schedule.intervalMinutes = Schedule.normalizedIntervalMinutes(parsedInterval);
         if (showsClockTimes(recurrenceValue)) {
             schedule.times.clear();

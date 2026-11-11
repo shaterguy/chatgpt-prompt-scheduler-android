@@ -11,10 +11,22 @@ public final class AlarmReceiver extends BroadcastReceiver {
         String scheduleId = intent.getStringExtra("scheduleId");
         if (scheduleId == null || scheduleId.isBlank()) return;
 
+        long scheduledAt = intent.getLongExtra("scheduledAt", 0L);
+        Schedule schedule = new ConfigStore(context).findSchedule(scheduleId);
+        if (schedule != null && schedule.enabled && schedule.excludesHolidays()) {
+            long now = System.currentTimeMillis();
+            if (scheduledAt == 0L) scheduledAt = schedule.nextRunAt;
+            if (scheduledAt > now || scheduledAt != schedule.nextRunAt) return;
+            if (Recurrence.excludesAutomaticRun(schedule, scheduledAt, now, KoreanHolidaySync.cached(context))) {
+                AlarmEngine.scheduleNext(context, schedule, now);
+                return;
+            }
+        }
+
         QueueStore queueStore = new QueueStore(context);
         QueueStore.EnqueueResult result;
         try {
-            result = queueStore.enqueue(scheduleId, false);
+            result = queueStore.enqueue(scheduleId, false, scheduledAt);
         } catch (RuntimeException error) {
             return;
         }

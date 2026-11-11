@@ -23,6 +23,7 @@ public final class Schedule {
     public String chatReasoning = "keep";
     public String prompt = "";
     public String recurrence = "daily";
+    public boolean excludeHolidays;
     public int intervalMinutes = 30;
     public final List<Integer> weekdays = new ArrayList<>(Arrays.asList(1, 2, 3, 4, 5, 6, 7));
     public final List<String> times = new ArrayList<>(List.of("09:00"));
@@ -82,6 +83,14 @@ public final class Schedule {
         return Math.max(MIN_INTERVAL_MINUTES, Math.min(MAX_INTERVAL_MINUTES, value));
     }
 
+    static boolean supportsHolidayExclusion(String recurrence) {
+        return "daily".equals(recurrence) || "weekly".equals(recurrence);
+    }
+
+    boolean excludesHolidays() {
+        return excludeHolidays && supportsHolidayExclusion(recurrence);
+    }
+
     public JSONObject toJson() throws JSONException {
         JSONObject object = new JSONObject();
         object.put("id", id);
@@ -95,6 +104,7 @@ public final class Schedule {
         object.put("chatReasoning", normalizedChatReasoning(normalizedExperience, chatReasoning));
         object.put("prompt", prompt);
         object.put("recurrence", recurrence);
+        if (excludesHolidays()) object.put("excludeHolidays", true);
         object.put("intervalMinutes", normalizedIntervalMinutes(intervalMinutes));
         object.put("weekdays", new JSONArray(weekdays));
         object.put("times", new JSONArray(times));
@@ -118,6 +128,8 @@ public final class Schedule {
         schedule.chatReasoning = normalizedChatReasoning(schedule.experience, object.optString("chatReasoning", "keep"));
         schedule.prompt = object.optString("prompt", "");
         schedule.recurrence = object.optString("recurrence", "daily");
+        schedule.excludeHolidays = supportsHolidayExclusion(schedule.recurrence)
+                && object.optBoolean("excludeHolidays", false);
         schedule.intervalMinutes = normalizedIntervalMinutes(object.optInt("intervalMinutes", 30));
         schedule.weekdays.clear();
         JSONArray weekdayArray = object.optJSONArray("weekdays");

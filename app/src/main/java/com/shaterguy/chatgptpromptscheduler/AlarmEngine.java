@@ -16,6 +16,7 @@ public final class AlarmEngine {
         ConfigStore store = new ConfigStore(context);
         List<Schedule> schedules = store.loadSchedules();
         long now = System.currentTimeMillis();
+        var published = KoreanHolidaySync.cached(context);
         for (Schedule schedule : schedules) {
             cancel(context, schedule.id);
             if (!schedule.enabled) {
@@ -25,7 +26,8 @@ public final class AlarmEngine {
                 }
                 continue;
             }
-            if (schedule.nextRunAt > now) {
+            if (schedule.nextRunAt > now
+                    && !Recurrence.isExcludedAt(schedule, schedule.nextRunAt, published)) {
                 scheduleAt(context, schedule, schedule.nextRunAt);
             } else {
                 scheduleNext(context, schedule, now);
@@ -34,8 +36,11 @@ public final class AlarmEngine {
     }
 
     public static long scheduleNext(Context context, Schedule schedule, long after) {
-        long when = Recurrence.nextRunAt(schedule, after);
+        long when = schedule.excludesHolidays()
+                ? Recurrence.nextRunAt(schedule, after, KoreanHolidaySync.cached(context))
+                : Recurrence.nextRunAt(schedule, after);
         if (when == 0L) {
+            cancel(context, schedule.id);
             schedule.nextRunAt = 0L;
             new ConfigStore(context).saveSchedule(schedule);
             return 0L;
@@ -43,10 +48,20 @@ public final class AlarmEngine {
         return scheduleAt(context, schedule, when);
     }
 
+    static void reconcileHolidayAlarms(Context context) {
+        long now = System.currentTimeMillis();
+        var published = KoreanHolidaySync.cached(context);
+        for (Schedule schedule : new ConfigStore(context).loadSchedules()) {
+            if (!schedule.enabled || !schedule.excludesHolidays() || schedule.nextRunAt <= now) continue;
+            long next = Recurrence.nextRunAt(schedule, now, published);
+            if (next != schedule.nextRunAt) scheduleNext(context, schedule, now);
+        }
+    }
+
     public static long scheduleAt(Context context, Schedule schedule, long when) {
         if (when <= 0L) return 0L;
         AlarmManager manager = context.getSystemService(AlarmManager.class);
-        PendingIntent pending = pending(context, schedule.id);
+        PendingIntent pending = pending(context, schedule.id, when, PendingIntent.FLAG_UPDATE_CURRENT);
         boolean interval = "interval".equals(schedule.recurrence);
         int alarmType = interval ? AlarmManager.ELAPSED_REALTIME_WAKEUP : AlarmManager.RTC_WAKEUP;
         long trigger = interval
@@ -63,12 +78,13 @@ public final class AlarmEngine {
     }
 
     public static void cancel(Context context, String scheduleId) {
-        context.getSystemService(AlarmManager.class).cancel(pending(context, scheduleId));
+        PendingIntent pending = pending(context, scheduleId, 0L, PendingIntent.FLAG_NO_CREATE);
+        if (pending != null) context.getSystemService(AlarmManager.class).cancel(pending);
     }
 
-    private static PendingIntent pending(Context context, String scheduleId) {
-        Intent intent = new Intent(context, AlarmReceiver.class).setAction("RUN_SCHEDULE").putExtra("scheduleId", scheduleId);
-        return PendingIntent.getBroadcast(context, scheduleId.hashCode(), intent,
-                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+    private static PendingIntent pending(Context context, String scheduleId, long scheduledAt, int flags) {
+        Intent intent = new Intent(context, AlarmReceiver.class).setAction("RUN_SCHEDULE")
+                .putExtra("scheduleId", scheduleId).putExtra("scheduledAt", scheduledAt);
+        return PendingIntent.getBroadcast(context, scheduleId.hashCode(), intent, PendingIntent.FLAG_IMMUTABLE | flags);
     }
 }

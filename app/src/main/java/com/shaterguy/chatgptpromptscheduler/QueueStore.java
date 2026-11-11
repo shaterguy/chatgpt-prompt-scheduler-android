@@ -30,7 +30,11 @@ public final class QueueStore {
         preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
-    public synchronized EnqueueResult enqueue(String scheduleId, boolean manual) {
+    public EnqueueResult enqueue(String scheduleId, boolean manual) {
+        return enqueue(scheduleId, manual, 0L);
+    }
+
+    synchronized EnqueueResult enqueue(String scheduleId, boolean manual, long scheduledAt) {
         JSONArray queue = read();
         for (int i = 0; i < queue.length(); i++) {
             JSONObject item = queue.optJSONObject(i);
@@ -49,6 +53,7 @@ public final class QueueStore {
             item.put("manual", manual);
             item.put("state", "queued");
             item.put("enqueuedAt", System.currentTimeMillis());
+            if (scheduledAt > 0L) item.put("scheduledAt", scheduledAt);
             queue.put(item);
             save(queue);
         } catch (JSONException e) {

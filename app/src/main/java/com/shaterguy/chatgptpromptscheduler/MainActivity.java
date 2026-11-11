@@ -45,6 +45,13 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (root != null) render();
+        if (store.loadSchedules().stream().anyMatch(schedule -> schedule.enabled && schedule.excludesHolidays())) {
+            KoreanHolidaySync.refresh(this, changed -> {
+                if (!changed) return;
+                AlarmEngine.reconcileHolidayAlarms(this);
+                if (!isFinishing() && !isDestroyed() && root != null) render();
+            });
+        }
         ProfileRegistrySync.refresh(this, result -> { if (!isFinishing() && !isDestroyed() && root != null && result.updated) render(); });
     }
 

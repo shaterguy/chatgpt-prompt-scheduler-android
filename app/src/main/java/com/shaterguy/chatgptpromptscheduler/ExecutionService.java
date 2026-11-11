@@ -130,8 +130,32 @@ public final class ExecutionService extends Service {
         final String claimedRunId = currentItem.optString("runId");
         try {
             acquireProfilePreparationWakeLock();
+            Schedule queuedSchedule = currentItem.optBoolean("manual", false) ? null
+                    : configStore.findSchedule(currentItem.optString("scheduleId"));
+            if (queuedSchedule != null && queuedSchedule.enabled && queuedSchedule.excludesHolidays()) {
+                KoreanHolidaySync.refresh(this, changed -> {
+                    if (!isCurrentRun(claimedRunId)) return;
+                    if (changed) AlarmEngine.reconcileHolidayAlarms(this);
+                    prepareProfile(claimedRunId);
+                });
+            } else {
+                prepareProfile(claimedRunId);
+            }
+        } catch (RuntimeException error) {
+            profilePreparation.close();
+            finish(false, "PROFILE_PREPARATION_FAILED", "모델 목록 확인을 시작하지 못했습니다.");
+        }
+    }
+
+    private boolean isCurrentRun(String runId) {
+        return !serviceDestroyed && processing.get() && currentItem != null
+                && runId.equals(currentItem.optString("runId"));
+    }
+
+    private void prepareProfile(String runId) {
+        try {
             ProfileRegistrySync.refresh(this, result -> {
-                if (serviceDestroyed || !processing.get() || currentItem == null || !claimedRunId.equals(currentItem.optString("runId"))) return;
+                if (!isCurrentRun(runId)) return;
                 // processClaimedItem acquires the run lock before the preparation lease is released.
                 try { processClaimedItem(); }
                 finally { profilePreparation.close(); }
@@ -157,6 +181,20 @@ public final class ExecutionService extends Service {
         if (!currentItem.optBoolean("manual", false) && !currentSchedule.enabled) {
             finish(false, "SCHEDULE_DISABLED", "예약이 비활성화되어 있습니다.");
             return;
+        }
+        if (!currentItem.optBoolean("manual", false) && currentSchedule.excludesHolidays()) {
+            long now = System.currentTimeMillis();
+            long scheduledAt = currentItem.optLong("scheduledAt", 0L);
+            if (scheduledAt > 0L && scheduledAt != currentSchedule.nextRunAt) {
+                discardClaimedItem();
+                return;
+            }
+            long occurrence = scheduledAt > 0L ? scheduledAt : currentItem.optLong("enqueuedAt", now);
+            if (Recurrence.excludesAutomaticRun(currentSchedule, occurrence, now, KoreanHolidaySync.cached(this))) {
+                AlarmEngine.scheduleNext(this, currentSchedule, now);
+                discardClaimedItem();
+                return;
+            }
         }
         if (!TargetParser.isSupported(currentSchedule.targetUrl)) {
             finish(false, "TARGET_URL_INVALID", "지원하지 않는 ChatGPT URL입니다.");
@@ -200,6 +238,12 @@ public final class ExecutionService extends Service {
         acquireWakeLock();
         startAsForeground(currentSchedule.name + " 실행 중");
         launchEngine();
+    }
+
+    private void discardClaimedItem() {
+        queueStore.finish(currentItem.optString("runId"));
+        currentItem = null;
+        handler.post(this::processNext);
     }
 
     private void traceResolvedRequestProfile() {
