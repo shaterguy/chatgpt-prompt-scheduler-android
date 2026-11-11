@@ -1,0 +1,66 @@
+name: Sign pinned local scheduler v0.6.2-dev2
+on:
+  push:
+    branches: ['ops/sign-local-v0.6.2-dev2-20261111']
+permissions:
+  contents: write
+jobs:
+  sign:
+    if: github.repository_id == '1325378971' && github.actor_id == '108107617' && github.triggering_actor == 'shaterguy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: shaterguy/chatgpt-prompt-scheduler-android
+      EXPECTED_CERT: 3cfe95acd09077a89cd8de85434cbd5d8bb3e2021d8e9eacb804a8da9ccce52a
+    steps:
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          cmdline-tools-version: '11076708'
+          log-accepted-android-sdk-licenses: 'false'
+          packages: 'build-tools;36.0.0'
+      - name: Verify exact local build input
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh release view v0.6.2-dev2 --json isDraft --jq .isDraft)" = true
+          test "$(gh release view v0.6.2-dev2 --json isPrerelease --jq .isPrerelease)" = true
+          test "$(gh api repos/$GH_REPO/git/ref/tags/v0.6.2-dev2 --jq .object.type)" = commit
+          test "$(gh api repos/$GH_REPO/git/ref/tags/v0.6.2-dev2 --jq .object.sha)" = d1a4ef4f079d797ebfa3cfc169f50e2e8a2852b3
+          test "$(gh release view v0.6.2-dev2 --json targetCommitish --jq .targetCommitish)" = d1a4ef4f079d797ebfa3cfc169f50e2e8a2852b3
+          mkdir -p input dist
+          gh release download v0.6.2-dev2 --pattern 'chatgpt-prompt-scheduler-dev-v0.6.2-dev2-unsigned.apk' --dir input
+          echo '60d833f41f49eeab86107474aaa75c21128020227fbf55d76efee13d14ed56cb  input/chatgpt-prompt-scheduler-dev-v0.6.2-dev2-unsigned.apk' | sha256sum -c -
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging input/chatgpt-prompt-scheduler-dev-v0.6.2-dev2-unsigned.apk > input/badging.txt
+          grep -q "package: name='com.shaterguy.chatgptpromptscheduler.dev' versionCode='6002002' versionName='0.6.2-dev2'" input/badging.txt
+          grep -q "application-label:'ChatGPT Prompt Scheduler DEV'" input/badging.txt
+      - name: Sign only verified APK
+        shell: bash
+        env:
+          SIGNING_BUNDLE_BASE64: ${{ secrets.CHATGPT_PUBLIC_SIGNING_BUNDLE_BASE64 }}
+        run: |
+          set -euo pipefail
+          keydir="$(mktemp -d)"
+          trap 'rm -rf "$keydir"' EXIT
+          test -n "$SIGNING_BUNDLE_BASE64"
+          printf '%s' "$SIGNING_BUNDLE_BASE64" | base64 --decode > "$keydir/bundle.tar.gz"
+          tar -xzf "$keydir/bundle.tar.gz" -C "$keydir"
+          actual="$(openssl x509 -in "$keydir/cert.pem" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr 'A-F' 'a-f')"
+          test "$actual" = "$EXPECTED_CERT"
+          bt="$ANDROID_HOME/build-tools/36.0.0"
+          "$bt/zipalign" -p -f 4 input/chatgpt-prompt-scheduler-dev-v0.6.2-dev2-unsigned.apk input/aligned.apk
+          "$bt/apksigner" sign --key "$keydir/key.pk8" --cert "$keydir/cert.pem" --out dist/chatgpt-prompt-scheduler-dev-v0.6.2-dev2.apk input/aligned.apk
+          "$bt/apksigner" verify --verbose --print-certs dist/*.apk > dist/SIGNING_CERTIFICATE.txt
+          grep -qi "$EXPECTED_CERT" dist/SIGNING_CERTIFICATE.txt
+          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' dist/SIGNING_CERTIFICATE.txt
+          grep -q 'Verified using v3 scheme (APK Signature Scheme v3): true' dist/SIGNING_CERTIFICATE.txt
+          "$bt/zipalign" -c -p 4 dist/chatgpt-prompt-scheduler-dev-v0.6.2-dev2.apk
+          unzip -t dist/*.apk > /dev/null
+          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
+      - name: Attach signed output to draft only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh release view v0.6.2-dev2 --json isDraft --jq .isDraft)" = true
+          test "$(gh release view v0.6.2-dev2 --json targetCommitish --jq .targetCommitish)" = d1a4ef4f079d797ebfa3cfc169f50e2e8a2852b3
+          gh release upload v0.6.2-dev2 dist/*
