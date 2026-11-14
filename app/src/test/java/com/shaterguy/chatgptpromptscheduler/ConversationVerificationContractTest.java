@@ -2,6 +2,10 @@ package com.shaterguy.chatgptpromptscheduler;
 
 import org.junit.Test;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -72,6 +76,25 @@ public final class ConversationVerificationContractTest {
         confirm.reset();
         assertFalse(confirm.observe(existing, existing.targetUrl));
         assertFalse(confirm.observe(existing, existing.targetUrl));
+    }
+
+    @Test public void provisionalProjectConversationIsNotVerifiedEvenWithAMatchingDomMessage() {
+        String target = "https://chatgpt.com/g/" + PROJECT + "/project";
+        String temporary = "https://chatgpt.com/g/" + PROJECT + "-vibe-coding/c/local-chatgpt%3A5742c868-e76a-4a42-8087-d936b319117d";
+        assertFalse(TargetParser.matchesVerifiedConversation("project", target, temporary));
+        assertFalse(TargetParser.matchesVerifiedConversation("general", "https://chatgpt.com/",
+                "https://chatgpt.com/c/local-chatgpt:5742c868-e76a-4a42-8087-d936b319117d"));
+    }
+
+    @Test public void submissionVerificationUsesRunDeadlineInsteadOfPollLimit() throws Exception {
+        Path path = Path.of("app/src/main/java/com/shaterguy/chatgptpromptscheduler/ExecutionService.java");
+        if (!Files.exists(path)) path = Path.of("..").resolve(path);
+        String service = new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
+        String verify = service.substring(service.indexOf("private void handleVerification("),
+                service.indexOf("private void recoverTargetRoute("));
+        assertFalse(verify.contains("pageAttempts >"));
+        assertTrue(service.substring(service.indexOf("private void watchdog("),
+                service.indexOf("private void runAutomationStep(")).contains("System.currentTimeMillis() >= deadline"));
     }
 
     @Test public void verificationScriptWaitsForConversationAddress() {

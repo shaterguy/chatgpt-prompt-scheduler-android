@@ -8,6 +8,7 @@ import android.graphics.Bitmap;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.Uri;
 import android.net.http.SslError;
 import android.os.Build;
 import android.os.Handler;
@@ -298,7 +299,7 @@ public final class ExecutionService extends Service {
     @SuppressWarnings("SetJavaScriptEnabled")
     private void launchEngine() {
         if (System.currentTimeMillis() >= deadline) {
-            finish(false, "EXECUTION_TIMEOUT", timeoutDetail());
+            finishAtDeadline();
             return;
         }
         if (!submitted) nativeProfilePrepared = false;
@@ -329,6 +330,15 @@ public final class ExecutionService extends Service {
             });
             webView.setWebViewClient(new WebViewClient() {
                 @Override
+                public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                    String route = submissionRequestRoute(request);
+                    if (!route.isEmpty()) {
+                        handler.post(() -> traceSubmissionRequest(view, "SUBMIT_REQUEST_OBSERVED", route, 0));
+                    }
+                    return null;
+                }
+
+                @Override
                 public void onPageStarted(WebView view, String url, Bitmap favicon) {
                     trace("PAGE_STARTED", object("url", url));
                     recordNavigation(url);
@@ -355,6 +365,8 @@ public final class ExecutionService extends Service {
 
                 @Override
                 public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                    String route = submissionRequestRoute(request);
+                    if (!route.isEmpty()) traceSubmissionRequest(view, "SUBMIT_NETWORK_ERROR", route, error.getErrorCode());
                     if (!request.isForMainFrame()) return;
                     trace("PAGE_LOAD_ERROR", object("url", String.valueOf(request.getUrl()), "code", error.getErrorCode(),
                             "description", String.valueOf(error.getDescription())));
@@ -363,6 +375,8 @@ public final class ExecutionService extends Service {
 
                 @Override
                 public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
+                    String route = submissionRequestRoute(request);
+                    if (!route.isEmpty()) traceSubmissionRequest(view, "SUBMIT_HTTP_ERROR", route, response.getStatusCode());
                     if (!request.isForMainFrame()) return;
                     trace("HTTP_ERROR", object("url", String.valueOf(request.getUrl()), "statusCode", response.getStatusCode(),
                             "reason", response.getReasonPhrase()));
@@ -401,6 +415,25 @@ public final class ExecutionService extends Service {
         }
     }
 
+    private static String submissionRequestRoute(WebResourceRequest request) {
+        Uri url = request.getUrl();
+        if (!"POST".equals(request.getMethod()) || !"https".equals(url.getScheme())) return "";
+        String host = url.getHost();
+        if (!"chatgpt.com".equals(host) && !"www.chatgpt.com".equals(host)) return "";
+        String path = url.getPath();
+        if (path == null) return "";
+        return switch (path) {
+            case "/backend-api/conversation", "/backend-api/conversation/" -> "/backend-api/conversation";
+            case "/backend-api/f/conversation", "/backend-api/f/conversation/" -> "/backend-api/f/conversation";
+            default -> "";
+        };
+    }
+
+    private void traceSubmissionRequest(WebView source, String event, String route, int code) {
+        if (source != webView || currentItem == null) return;
+        trace(event, object("route", route, "code", code, "submitted", submitted));
+    }
+
     private void recordNavigation(String url) {
         navigationGeneration++;
         stepInFlight = false;
@@ -423,7 +456,7 @@ public final class ExecutionService extends Service {
                 "pageAttempts", pageAttempts, "engineAttempt", engineAttempt, "submitted", submitted,
                 "url", lastObservedUrl));
         if (System.currentTimeMillis() >= deadline) {
-            finish(false, "EXECUTION_TIMEOUT", timeoutDetail());
+            finishAtDeadline();
             return;
         }
         handler.postDelayed(watchdogRunnable, Math.min(10_000L, Math.max(0L, deadline - System.currentTimeMillis())));
@@ -432,7 +465,7 @@ public final class ExecutionService extends Service {
     private void runAutomationStep() {
         if (webView == null || currentItem == null || stepInFlight) return;
         if (System.currentTimeMillis() >= deadline) {
-            finish(false, "EXECUTION_TIMEOUT", timeoutDetail());
+            finishAtDeadline();
             return;
         }
         WebView activeWebView = webView;
@@ -550,7 +583,7 @@ public final class ExecutionService extends Service {
                 switch (decision) {
                     case REENTER -> recoverMissingComposer();
                     case EXHAUSTED -> finish(false, retryFailureStatus(detail), contextualDetail(detail));
-                    case TIMED_OUT -> finish(false, "EXECUTION_TIMEOUT", timeoutDetail());
+                    case TIMED_OUT -> finishAtDeadline();
                     case WAIT -> scheduleAutomationStep("입력 반영 확인 대기".equals(detail) ? 350L : 1200L);
                 }
             }
@@ -564,7 +597,7 @@ public final class ExecutionService extends Service {
     private void recoverMissingComposer() {
         if (currentSchedule == null || webView == null || submitted || composerRecovery.inputStarted()) return;
         if (System.currentTimeMillis() >= deadline) {
-            finish(false, "EXECUTION_TIMEOUT", timeoutDetail());
+            finishAtDeadline();
             return;
         }
         String target = currentRequestProfile == null ? currentSchedule.targetUrl
@@ -599,9 +632,7 @@ public final class ExecutionService extends Service {
                             "targetType", currentSchedule == null ? "" : currentSchedule.targetType,
                             "requested", currentSchedule == null ? "" : currentSchedule.targetUrl,
                             "actual", resultUrl));
-                    if (pageAttempts > 45) finish(false, "SUBMIT_VERIFICATION_FAILED",
-                            contextualDetail("실제 대화 주소를 확인하지 못했습니다."));
-                    else scheduleAutomationStep(1400L);
+                    scheduleAutomationStep(1400L);
                 } else {
                     verifiedConversationUrl = resultUrl;
                     finish(true, "VERIFIED", "프롬프트 전송과 실제 대화 주소를 확인했습니다.");
@@ -622,9 +653,7 @@ public final class ExecutionService extends Service {
                 }
                 pageAttempts++;
                 lastRetryDetail = detail;
-                if (pageAttempts > 45) finish(false, "SUBMIT_VERIFICATION_FAILED",
-                        contextualDetail("전송된 사용자 메시지를 확인하지 못했습니다."));
-                else scheduleAutomationStep(1400L);
+                scheduleAutomationStep(1400L);
             }
             case "TARGET_CONTEXT_MISMATCH" -> finish(false, "SUBMIT_CONTEXT_LOST", contextualDetail(detail));
             default -> finish(false, status, contextualDetail(detail.isBlank() ? "전송 검증 스크립트가 실패했습니다." : detail));
@@ -686,6 +715,10 @@ public final class ExecutionService extends Service {
         if (detail.contains("전송 버튼")) return "SEND_BUTTON_UNAVAILABLE";
         if (detail.contains("전송 검증")) return "SUBMISSION_STATE_STALLED";
         return "AUTOMATION_RETRY_EXHAUSTED";
+    }
+
+    private void finishAtDeadline() {
+        finish(false, submitted ? "SUBMIT_VERIFICATION_FAILED" : "EXECUTION_TIMEOUT", timeoutDetail());
     }
 
     private String timeoutDetail() {

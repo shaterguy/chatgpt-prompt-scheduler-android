@@ -35,6 +35,7 @@ final class TraceRetention {
         String type = event.optString("type");
         if ("SCRIPT_EVALUATE".equals(type) || "WATCHDOG".equals(type)) return true;
         JSONObject data = event.optJSONObject("data");
-        return "SCRIPT_RESULT".equals(type) && data != null && "RETRY".equals(data.optString("status"));
+        return ("SCRIPT_RESULT".equals(type) || "VERIFY_RESULT".equals(type))
+                && data != null && "RETRY".equals(data.optString("status"));
     }
 }

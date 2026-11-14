@@ -44,6 +44,13 @@ public final class ConversationVerificationWebViewAndroidTest {
         assertEquals(url, result.getString("url"));
     }
 
+    @Test public void projectProvisionalUrlWithMessageStillWaitsForServerAddress() throws Exception {
+        String url = "https://chatgpt.com/g/" + PROJECT + "-vibe-coding/c/local-chatgpt%3A5742c868-e76a-4a42-8087-d936b319117d";
+        JSONObject result = runVerification(projectSchedule(), url, PROMPT, userMessage(PROMPT));
+        assertEquals("RETRY", result.getString("status"));
+        assertEquals("서버 대화 주소 생성 대기", result.getString("detail"));
+    }
+
     @Test public void generalHomeWithOptimisticMessageWaitsForConversationAddress() throws Exception {
         Schedule schedule = generalSchedule();
         JSONObject result = runVerification(schedule, "https://chatgpt.com/", PROMPT, userMessage(PROMPT));

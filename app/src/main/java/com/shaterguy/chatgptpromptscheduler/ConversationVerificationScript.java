@@ -31,6 +31,7 @@ public final class ConversationVerificationScript {
                 "else if(expectedType==='project'){if(!expectedProject||actualProject!==expectedProject)return result('TARGET_CONTEXT_MISMATCH','expected='+expectedUrl+' actual='+location.href,routeDiagnostics);if(!actualConversation)return result('RETRY','실제 대화 주소 생성 대기',routeDiagnostics);}" +
                 "else if(expectedType==='general'){if(actualProject)return result('TARGET_CONTEXT_MISMATCH','expected='+expectedUrl+' actual='+location.href,routeDiagnostics);if(!actualConversation){if(homePath)return result('RETRY','실제 대화 주소 생성 대기',routeDiagnostics);return result('TARGET_CONTEXT_MISMATCH','expected='+expectedUrl+' actual='+location.href,routeDiagnostics);}}" +
                 "else return result('TARGET_CONTEXT_MISMATCH','지원하지 않는 대상 유형',routeDiagnostics);" +
+                "if(expectedType!=='existing'&&/^local-chatgpt(?::|%3a)/i.test(actualConversation))return result('RETRY','서버 대화 주소 생성 대기',routeDiagnostics);" +
                 "return promptAlreadyPresent?result('VERIFIED','프롬프트 전송과 실제 대화 주소 확인',{...routeDiagnostics,userMessages:users.length,matchCounts,maxMatchCount:Math.max(0,...matchCounts)}):result('RETRY','전송된 사용자 메시지 대기',{...routeDiagnostics,userMessages:users.length,matchCounts,maxMatchCount:Math.max(0,...matchCounts),readyState:document.readyState});" +
                 "})()";
     }

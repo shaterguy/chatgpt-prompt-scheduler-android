@@ -70,10 +70,14 @@ public final class TargetParser {
                     && (expectedProject == null ? actualProject == null : expectedProject.equals(actualProject));
             case "project" -> expectedProject != null
                     && expectedProject.equals(actualProject)
-                    && actualConversation != null;
-            case "general" -> actualProject == null && actualConversation != null;
+                    && isServerConversationId(actualConversation);
+            case "general" -> actualProject == null && isServerConversationId(actualConversation);
             default -> false;
         };
+    }
+
+    private static boolean isServerConversationId(String id) {
+        return id != null && !id.regionMatches(true, 0, "local-chatgpt:", 0, "local-chatgpt:".length());
     }
 
     public static String mismatchDetail(String targetType, String expectedUrl, String actualUrl) {
