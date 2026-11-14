@@ -35,6 +35,8 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class ExecutionService extends Service {
@@ -77,6 +79,7 @@ public final class ExecutionService extends Service {
     private String verifiedConversationUrl = "";
     private final SubmissionRouteConfirmation submittedRouteConfirmation = new SubmissionRouteConfirmation();
     private JSONArray traceEvents = new JSONArray();
+    private final Map<String, HttpResponseCapture> httpResponses = new HashMap<>();
 
     @Override
     public void onCreate() {
@@ -504,21 +507,73 @@ public final class ExecutionService extends Service {
         if (message == null || message.length() > 32_000) return;
         try {
             JSONObject data = new JSONObject(message);
+            String part = data.optString("part");
+            String id = data.optString("id");
+            if (!part.isEmpty() && !id.matches("[a-z0-9-]{1,64}")) return;
+            if ("chunk".equals(part)) {
+                HttpResponseCapture capture = httpResponses.get(id);
+                String chunk = data.optString("body");
+                if (capture != null && chunk.length() <= HttpFailureObserver.CHUNK_CHARS) capture.body.append(chunk);
+                return;
+            }
+            if ("end".equals(part)) {
+                HttpResponseCapture capture = httpResponses.remove(id);
+                if (capture != null) archiveHttpFailure(capture, data.optString("bodyState"));
+                return;
+            }
             String path = data.optString("path");
             int code = data.optInt("code", -1);
             if (!isChatGptApiPath(path)
                     || (code != 0 && (code < 400 || code >= 600))) return;
             String method = data.optString("method");
-            String bodyState = data.optString("bodyState");
-            if (!bodyState.matches("[a-z_]{1,40}")) bodyState = "unknown";
-            String body = data.optString("body");
-            if (body.length() > HttpFailureObserver.MAX_BODY_CHARS) return;
-            trace("CHATGPT_HTTP_FAILURE", object("route", path, "code", code,
+            JSONObject details = object("route", path, "code", code,
                     "method", method.matches("[A-Za-z]{1,20}") ? method : "",
-                    "requestId", safeRequestId(data.optString("requestId")), "bodyState", bodyState,
-                    "responseBody", HttpFailureObserver.sanitizeBody(body)));
+                    "requestId", safeRequestId(data.optString("requestId")));
+            if ("start".equals(part)) {
+                httpResponses.putIfAbsent(id, new HttpResponseCapture(id, details));
+            } else if (part.isEmpty()) {
+                trace("CHATGPT_HTTP_FAILURE", details.put("bodyState", safeBodyState(data.optString("bodyState"))));
+            }
         } catch (JSONException ignored) {
-            // A malformed page message is not an execution failure.
+            // Malformed page diagnostics do not affect the execution.
+        }
+    }
+
+    private void archiveHttpFailure(HttpResponseCapture capture, String bodyState) {
+        JSONObject details = capture.details;
+        try {
+            details.put("bodyState", safeBodyState(bodyState));
+            details.put("responseId", capture.id);
+            logStore.appendHttpResponse(currentItem.optString("runId"), capture.id,
+                    HttpFailureObserver.sanitizeBody(capture.body.toString()));
+        } catch (java.io.IOException | RuntimeException error) {
+            try { details.put("bodyState", "storage_failed"); }
+            catch (JSONException ignored) {}
+        } catch (JSONException ignored) {
+            return;
+        }
+        trace("CHATGPT_HTTP_FAILURE", details);
+    }
+
+    private void archiveInterruptedHttpResponses() {
+        if (currentItem != null) {
+            for (HttpResponseCapture response : httpResponses.values()) archiveHttpFailure(response, "interrupted");
+        }
+        httpResponses.clear();
+    }
+
+    private static String safeBodyState(String state) {
+        return state.matches("[a-z_]{1,40}") ? state : "unknown";
+    }
+
+    private static final class HttpResponseCapture {
+        final String id;
+        final JSONObject details;
+        final StringBuilder body = new StringBuilder();
+
+        HttpResponseCapture(String id, JSONObject details) {
+            this.id = id;
+            this.details = details;
         }
     }
 
@@ -848,6 +903,7 @@ public final class ExecutionService extends Service {
 
     private void finish(boolean success, String status, String detail) {
         if (currentItem == null) return;
+        archiveInterruptedHttpResponses();
         long finishedAt = System.currentTimeMillis();
         String runId = currentItem.optString("runId");
         String scheduleId = currentItem.optString("scheduleId");
@@ -957,6 +1013,7 @@ public final class ExecutionService extends Service {
     }
 
     private void cleanupWebViewOnly() {
+        archiveInterruptedHttpResponses();
         cancelAutomationStep();
         navigationGeneration++;
         stepInFlight = false;

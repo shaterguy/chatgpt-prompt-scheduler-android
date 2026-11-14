@@ -7,6 +7,12 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 
 public final class RunLogStore {
@@ -15,9 +21,11 @@ public final class RunLogStore {
     private static final String KEY_BACKUP = "logs_backup";
     private static final int MAX_LOGS = 120;
     private final SharedPreferences preferences;
+    private final File httpBodies;
 
     public RunLogStore(Context context) {
         preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        httpBodies = new File(context.getFilesDir(), "scheduler_http_bodies");
     }
 
     public synchronized String newRunId() {
@@ -58,6 +66,7 @@ public final class RunLogStore {
             throw new IllegalStateException("실행 기록을 구성하지 못했습니다.", e);
         }
         persist(next);
+        pruneHttpBodies(next, current);
     }
 
     public synchronized JSONArray read() {
@@ -106,12 +115,66 @@ public final class RunLogStore {
         return null;
     }
 
+    synchronized void appendHttpResponse(String runId, String responseId, String body) throws IOException {
+        File output = httpBodyFile(runId, responseId);
+        if (output == null) throw new IOException("잘못된 응답 기록 ID");
+        File directory = output.getParentFile();
+        if (!directory.isDirectory() && !directory.mkdirs()) throw new IOException("응답 기록 폴더 생성 실패");
+        Files.write(output.toPath(), body.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private File httpBodyFile(String runId, String responseId) {
+        if (!runId.matches("[A-Za-z0-9_-]{1,80}") || !responseId.matches("[a-z0-9-]{1,64}")) return null;
+        return new File(new File(httpBodies, runId), responseId + ".txt");
+    }
+
+    private void includeHttpResponseBodies(JSONObject run) throws JSONException {
+        JSONArray events = run.optJSONArray("events");
+        if (events == null) return;
+        for (int i = 0; i < events.length(); i++) {
+            JSONObject event = events.optJSONObject(i);
+            if (event == null || !"CHATGPT_HTTP_FAILURE".equals(event.optString("type"))) continue;
+            JSONObject data = event.optJSONObject("data");
+            if (data == null || !data.has("responseId") || "storage_failed".equals(data.optString("bodyState"))) continue;
+            File body = httpBodyFile(run.optString("runId"), data.optString("responseId"));
+            if (body == null) continue;
+            try {
+                data.put("responseBody", new String(Files.readAllBytes(body.toPath()), StandardCharsets.UTF_8));
+            } catch (IOException error) {
+                data.put("bodyState", "storage_unreadable");
+            }
+        }
+    }
+
+    private void pruneHttpBodies(JSONArray... retained) {
+        File[] directories = httpBodies.listFiles();
+        if (directories == null) return;
+        Set<String> keep = new HashSet<>();
+        for (JSONArray logs : retained) {
+            for (int i = 0; i < logs.length(); i++) {
+                JSONObject log = logs.optJSONObject(i);
+                if (log != null) keep.add(log.optString("runId"));
+            }
+        }
+        for (File directory : directories) {
+            if (keep.contains(directory.getName())) continue;
+            File[] files = directory.listFiles();
+            if (files != null) for (File file : files) file.delete();
+            directory.delete();
+        }
+    }
+
     public synchronized JSONObject exportAll() {
         JSONObject exported = new JSONObject();
         try {
             exported.put("schemaVersion", 2);
             exported.put("generatedAt", System.currentTimeMillis());
-            exported.put("logs", copyArray(read()));
+            JSONArray logs = read();
+            for (int i = 0; i < logs.length(); i++) {
+                JSONObject log = logs.optJSONObject(i);
+                if (log != null) includeHttpResponseBodies(log);
+            }
+            exported.put("logs", logs);
             return exported;
         } catch (JSONException e) {
             throw new IllegalStateException("전체 실행 로그를 구성하지 못했습니다.", e);
@@ -125,6 +188,7 @@ public final class RunLogStore {
         try {
             exported.put("schemaVersion", 2);
             exported.put("generatedAt", System.currentTimeMillis());
+            includeHttpResponseBodies(item);
             exported.put("log", item);
             return exported;
         } catch (JSONException e) {

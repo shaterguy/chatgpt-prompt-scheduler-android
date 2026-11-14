@@ -5,9 +5,9 @@ import java.util.regex.Pattern;
 /** Reads only failed ChatGPT API responses; it leaves the page's response intact. */
 final class HttpFailureObserver {
     static final String BRIDGE = "SchedulerHttpDiagnostics";
-    static final int MAX_BODY_CHARS = 4096;
+    static final int CHUNK_CHARS = 8192;
     private static final Pattern SECRET_FIELD = Pattern.compile(
-            "(?i)(\"[^\"]*(?:token|authorization|cookie|secret|password|api[_-]?key|credential|e[_-]?mail|session[_-]?id|prompt|input[_-]?text|refresh[_-]?token|session[_-]?key)[^\"]*\"\\s*:\\s*)\"(?:\\\\.|[^\"\\\\])*(?:\"|$)");
+            "(?i)(\"[^\"]*(?:token|authorization|cookie|secret|password|api[_-]?key|credential|e[_-]?mail|session[_-]?id|prompt|input[_-]?text|refresh[_-]?token|session[_-]?key)[^\"]*\"\\s*:\\s*)\"(?:\\\\.|[^\"\\\\])*+(?:\"|$)");
     private static final Pattern BEARER = Pattern.compile("(?i)\\bBearer\\s+[A-Za-z0-9._~+/=-]+");
     private static final Pattern EMAIL = Pattern.compile("(?i)\\b[A-Z0-9._%+\\-]+@[A-Z0-9.\\-]+\\.[A-Z]{2,}\\b");
     private static final Pattern URL_SECRET = Pattern.compile("(?i)([?&](?:[^=&#\\s]*(?:token|key|secret|password|auth|code)[^=&#\\s]*)=)[^&#\\s\"<>]*");
@@ -31,7 +31,9 @@ final class HttpFailureObserver {
                 (() => {
                     if (window.top !== window || !window.SchedulerHttpDiagnostics) return;
                     const post = window.SchedulerHttpDiagnostics.postMessage.bind(window.SchedulerHttpDiagnostics);
-                    const max = 4096;
+                    const chunkSize = 8192;
+                    let sequence = 0;
+                    const prefix = Math.random().toString(36).slice(2) + '-';
                     const origins = new Set(['https://chatgpt.com', 'https://www.chatgpt.com']);
                     const pathOf = value => {
                         try {
@@ -43,44 +45,53 @@ final class HttpFailureObserver {
                     const report = (path, method, code, requestId, bodyState, body = '') => {
                         try { post(JSON.stringify({path, method, code, requestId, bodyState, body})); } catch (_) {}
                     };
-                    const reportText = (path, method, code, id, body, truncated = false) =>
-                        report(path, method, code, id, truncated || body.length > max ? 'truncated' : body ? 'captured' : 'empty',
-                            body.slice(0, max));
+                    const splitResponse = (path, method, code, requestId) => {
+                        const id = prefix + (++sequence);
+                        const emit = value => post(JSON.stringify({...value, id}));
+                        emit({part:'start', path, method, code, requestId});
+                        let hasText = false;
+                        return {
+                            write(text) {
+                                for (let i = 0; i < text.length; i += chunkSize) {
+                                    emit({part:'chunk', body:text.slice(i, i + chunkSize)});
+                                    hasText = true;
+                                }
+                            },
+                            end(state) { emit({part:'end', bodyState:state || (hasText ? 'captured' : 'empty')}); }
+                        };
+                    };
+                    const reportText = (path, method, code, id, body) => {
+                        const capture = splitResponse(path, method, code, id);
+                        capture.write(body);
+                        capture.end();
+                    };
                     const requestId = read => read('x-request-id') || read('openai-request-id') || read('request-id') || '';
                     const readFetchError = async (response, path, method) => {
-                        const code = response.status;
                         const id = requestId(name => response.headers.get(name));
+                        const capture = splitResponse(path, method, response.status, id);
                         let reader;
-                        let timeout;
                         try {
                             const copy = response.clone();
-                            if (!copy.body) {
-                                reportText(path, method, code, id, '');
-                                return;
-                            }
-                            reader = copy.body.getReader();
-                            const decoder = new TextDecoder();
-                            let body = '', left = max;
-                            const expired = new Promise((_, reject) => {
-                                timeout = setTimeout(() => reject(new Error('body-read-timeout')), 4000);
-                            });
-                            while (true) {
-                                const {done, value} = await Promise.race([reader.read(), expired]);
-                                if (done) {
-                                    reportText(path, method, code, id, body + decoder.decode());
-                                    break;
+                            if (copy.body) {
+                                reader = copy.body.getReader();
+                                const decoder = new TextDecoder();
+                                while (true) {
+                                    let timer;
+                                    let read;
+                                    try {
+                                        read = await Promise.race([reader.read(), new Promise((_, reject) => {
+                                            timer = setTimeout(() => reject(new Error('body-read-timeout')), 4000);
+                                        })]);
+                                    } finally { clearTimeout(timer); }
+                                    if (read.done) break;
+                                    capture.write(decoder.decode(read.value, {stream:true}));
                                 }
-                                body += decoder.decode(value.subarray(0, left), {stream: true});
-                                if (value.length > left) {
-                                    reportText(path, method, code, id, body + decoder.decode(), true);
-                                    break;
-                                }
-                                left -= value.length;
+                                capture.write(decoder.decode());
                             }
+                            capture.end();
                         } catch (error) {
-                            report(path, method, code, id, error?.message === 'body-read-timeout' ? 'read_timeout' : 'read_failed');
+                            capture.end(error?.message === 'body-read-timeout' ? 'read_timeout' : 'read_failed');
                         } finally {
-                            clearTimeout(timeout);
                             if (reader) void reader.cancel().catch(() => {});
                         }
                     };

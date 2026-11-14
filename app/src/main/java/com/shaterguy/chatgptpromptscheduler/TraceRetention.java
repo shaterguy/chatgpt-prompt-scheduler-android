@@ -18,7 +18,8 @@ final class TraceRetention {
             if (remove < 0) {
                 for (int i = 0; i < events.length(); i++) {
                     String type = events.optJSONObject(i).optString("type");
-                    if (!"RUN_FINISHED".equals(type) && !type.contains("RECOVERY")) {
+                    if (!"RUN_FINISHED".equals(type) && !"CHATGPT_HTTP_FAILURE".equals(type)
+                            && !type.contains("RECOVERY")) {
                         remove = i;
                         break;
                     }

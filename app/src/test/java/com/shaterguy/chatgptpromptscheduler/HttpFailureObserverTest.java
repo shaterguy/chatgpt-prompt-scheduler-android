@@ -14,7 +14,20 @@ public final class HttpFailureObserverTest {
                 global.window=global;
                 global.top=global;
                 global.location=new URL('https://chatgpt.com/');
-                global.SchedulerHttpDiagnostics={postMessage:s=>messages.push(JSON.parse(s))};
+                const parts=new Map();
+                global.SchedulerHttpDiagnostics={postMessage:s=>{
+                    const value=JSON.parse(s);
+                    if (value.part==='start') parts.set(value.id,{...value,body:''});
+                    else if (value.part==='chunk') {
+                        assert.ok(value.body.length<=8192);
+                        parts.get(value.id).body+=value.body;
+                    } else if (value.part==='end') {
+                        const start=parts.get(value.id);
+                        if (!start) throw new Error('Missing response start');
+                        messages.push({...start, bodyState:value.bodyState});
+                        parts.delete(value.id);
+                    } else messages.push(value);
+                }};
                 class Xhr extends EventTarget {
                     open(method,url){this.status=0;this.responseType='';}
                     send(){this.status=403;this.responseText='denied by server';this.dispatchEvent(new Event('loadend'));}
@@ -36,7 +49,7 @@ public final class HttpFailureObserverTest {
                     response=new Response('unrelated',{status:500});
                     await fetch('https://another.example/backend-api/f/conversation');
                     const xhr=new Xhr();xhr.open('POST','/backend-api/f/conversation/prepare');xhr.send();
-                    response=new Response('x'.repeat(6000),{status:502});
+                    response=new Response('x'.repeat(100000)+'꼬리 😀 원인코드 LARGE_BODY',{status:502});
                     await fetch('/backend-api/f/conversation');
                     response=new Response('',{status:404});
                     await fetch('/backend-api/f/conversation');
@@ -49,8 +62,8 @@ public final class HttpFailureObserverTest {
                     assert.equal(byCode[429].body,'server error 429');
                     assert.equal(byCode[503].requestId,'id-503');
                     assert.equal(byCode[403].body,'denied by server');
-                    assert.equal(byCode[502].body.length,4096);
-                    assert.equal(byCode[502].bodyState,'truncated');
+                    assert.equal(byCode[502].body,'x'.repeat(100000)+'꼬리 😀 원인코드 LARGE_BODY');
+                    assert.equal(byCode[502].bodyState,'captured');
                     assert.equal(byCode[404].bodyState,'empty');
                 })().catch(error=>{console.error(error);process.exitCode=1;});
                 """;
