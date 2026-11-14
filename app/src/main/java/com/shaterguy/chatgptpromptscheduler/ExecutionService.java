@@ -27,6 +27,9 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -374,6 +377,11 @@ public final class ExecutionService extends Service {
                 public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                     String route = submissionRequestRoute(request);
                     if (!route.isEmpty()) traceSubmissionRequest(view, "SUBMIT_NETWORK_ERROR", route, error.getErrorCode());
+                    else if (view == webView && currentItem != null) {
+                        String apiPath = chatGptApiPath(request);
+                        if (!apiPath.isEmpty()) trace("CHATGPT_API_NETWORK_ERROR", object(
+                                "route", apiPath, "method", request.getMethod(), "code", error.getErrorCode()));
+                    }
                     if (!request.isForMainFrame()) return;
                     trace("PAGE_LOAD_ERROR", object("url", String.valueOf(request.getUrl()), "code", error.getErrorCode(),
                             "description", String.valueOf(error.getDescription())));
@@ -383,7 +391,24 @@ public final class ExecutionService extends Service {
                 @Override
                 public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
                     String route = submissionRequestRoute(request);
-                    if (!route.isEmpty()) traceSubmissionRequest(view, "SUBMIT_HTTP_ERROR", route, response.getStatusCode());
+                    String apiPath = route.isEmpty() ? chatGptApiPath(request) : route;
+                    if (!apiPath.isEmpty() && view == webView && currentItem != null) {
+                        String requestId = "";
+                        var headers = response.getResponseHeaders();
+                        if (headers != null) {
+                            for (var header : headers.entrySet()) {
+                                String name = header.getKey();
+                                if ("x-request-id".equalsIgnoreCase(name) || "openai-request-id".equalsIgnoreCase(name)
+                                        || "request-id".equalsIgnoreCase(name)) {
+                                    requestId = safeRequestId(header.getValue());
+                                    if (!requestId.isEmpty()) break;
+                                }
+                            }
+                        }
+                        trace(route.isEmpty() ? "CHATGPT_API_HTTP_ERROR" : "SUBMIT_HTTP_ERROR", object(
+                                "route", apiPath, "method", request.getMethod(), "code", response.getStatusCode(),
+                                "submitted", submitted, "requestId", requestId, "bodyState", "native_callback_metadata_only"));
+                    }
                     if (!request.isForMainFrame()) return;
                     trace("HTTP_ERROR", object("url", String.valueOf(request.getUrl()), "statusCode", response.getStatusCode(),
                             "reason", response.getReasonPhrase()));
@@ -409,6 +434,7 @@ public final class ExecutionService extends Service {
                     return true;
                 }
             });
+            installHttpFailureObserver();
             String entryUrl = currentRequestProfile != null && !submitted
                     ? NativeProfilePreparationScript.homeUrl(currentRequestProfile.mode)
                     : ProjectDirectoryNavigationScript.entryUrl(currentSchedule);
@@ -439,6 +465,65 @@ public final class ExecutionService extends Service {
     private void traceSubmissionRequest(WebView source, String event, String route, int code) {
         if (source != webView || currentItem == null) return;
         trace(event, object("route", route, "code", code, "submitted", submitted));
+    }
+
+    private static String chatGptApiPath(WebResourceRequest request) {
+        Uri url = request.getUrl();
+        if (!"https".equals(url.getScheme())
+                || (!"chatgpt.com".equals(url.getHost()) && !"www.chatgpt.com".equals(url.getHost()))) return "";
+        String path = url.getEncodedPath();
+        return isChatGptApiPath(path) ? path : "";
+    }
+
+    private static boolean isChatGptApiPath(String path) {
+        return path != null && path.length() <= 256
+                && path.matches("/(?:backend-api(?:-anon)?|api)(?:/[^?#]*)?");
+    }
+
+    private void installHttpFailureObserver() {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
+                || !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            trace("HTTP_BODY_CAPTURE_UNAVAILABLE", object("reason", "webview_feature_unsupported"));
+            return;
+        }
+        try {
+            WebViewCompat.addWebMessageListener(webView, HttpFailureObserver.BRIDGE, RequestProfileScript.CHATGPT_ORIGINS,
+                    (view, message, origin, isMainFrame, replyProxy) -> {
+                        if (!isMainFrame || view != webView || currentItem == null
+                                || !RequestProfileScript.CHATGPT_ORIGINS.contains(origin.toString())
+                                || message.getType() != androidx.webkit.WebMessageCompat.TYPE_STRING) return;
+                        logHttpFailure(message.getData());
+                    });
+            WebViewCompat.addDocumentStartJavaScript(webView, HttpFailureObserver.script(), RequestProfileScript.CHATGPT_ORIGINS);
+        } catch (RuntimeException error) {
+            trace("HTTP_BODY_CAPTURE_UNAVAILABLE", object("reason", error.getClass().getSimpleName()));
+        }
+    }
+
+    private void logHttpFailure(String message) {
+        if (message == null || message.length() > 32_000) return;
+        try {
+            JSONObject data = new JSONObject(message);
+            String path = data.optString("path");
+            int code = data.optInt("code", -1);
+            if (!isChatGptApiPath(path)
+                    || (code != 0 && (code < 400 || code >= 600))) return;
+            String method = data.optString("method");
+            String bodyState = data.optString("bodyState");
+            if (!bodyState.matches("[a-z_]{1,40}")) bodyState = "unknown";
+            String body = data.optString("body");
+            if (body.length() > HttpFailureObserver.MAX_BODY_CHARS) return;
+            trace("CHATGPT_HTTP_FAILURE", object("route", path, "code", code,
+                    "method", method.matches("[A-Za-z]{1,20}") ? method : "",
+                    "requestId", safeRequestId(data.optString("requestId")), "bodyState", bodyState,
+                    "responseBody", HttpFailureObserver.sanitizeBody(body)));
+        } catch (JSONException ignored) {
+            // A malformed page message is not an execution failure.
+        }
+    }
+
+    private static String safeRequestId(String value) {
+        return value != null && value.matches("[a-zA-Z0-9._:-]{1,128}") ? value : "";
     }
 
     private void recordNavigation(String url) {
