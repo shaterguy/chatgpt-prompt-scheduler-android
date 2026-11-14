@@ -46,6 +46,13 @@ public final class ScheduleViewAndSettingsAndroidTest {
         }
     }
 
+    @Test public void loginScreenExposesSessionReset() {
+        try (ActivityScenario<LoginActivity> scenario = ActivityScenario.launch(LoginActivity.class)) {
+            scenario.onActivity(activity -> assertTrue(hasExactText(
+                    activity.getWindow().getDecorView(), "ChatGPT 세션 초기화")));
+        }
+    }
+
     private static int countSpinners(View view) {
         int count = view instanceof Spinner ? 1 : 0;
         if (view instanceof ViewGroup) {

@@ -1,6 +1,7 @@
 package com.shaterguy.chatgptpromptscheduler;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -10,8 +11,13 @@ import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebStorage;
+import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+
+import androidx.webkit.WebStorageCompat;
+import androidx.webkit.WebViewFeature;
 
 public final class LoginActivity extends Activity {
     private static final String OBSERVE_PROJECT_SCRIPT =
@@ -29,6 +35,10 @@ public final class LoginActivity extends Activity {
             "return JSON.stringify({href:location.href,name:name});" +
             "})()";
 
+    private static final String CHATGPT_HOME = "https://chatgpt.com/";
+    private final Runnable openSession = this::openSession;
+    private LinearLayout root;
+    private Button resetButton;
     private WebView webView;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable observeRunnable = this::observeVisitedProject;
@@ -38,24 +48,37 @@ public final class LoginActivity extends Activity {
     private int observerGeneration;
 
     @Override
-    @SuppressWarnings("SetJavaScriptEnabled")
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        LinearLayout root = new LinearLayout(this);
+        root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.addView(Ui.actionGrid(this,
                 Ui.button(this, "뒤로", v -> navigateBack()),
-                Ui.button(this, "새로고침", v -> webView.reload()),
-                Ui.button(this, "ChatGPT 홈", v -> webView.loadUrl("https://chatgpt.com/")),
+                Ui.button(this, "새로고침", v -> { if (webView != null) webView.reload(); }),
+                Ui.button(this, "ChatGPT 홈", v -> { if (webView != null) webView.loadUrl(CHATGPT_HOME); }),
                 Ui.button(this, "닫기", v -> finish())));
         root.addView(Ui.body(this,
                 "로그인 상태를 확인하고 예약에 사용할 프로젝트를 직접 한 번씩 여세요. " +
                         "앱은 현재 방문한 프로젝트 주소와 화면에서 확인된 프로젝트 이름만 등록하며 목록을 자동으로 누르지 않습니다."));
-        status = Ui.body(this, "프로젝트 방문 대기");
+        resetButton = Ui.button(this, "ChatGPT 세션 초기화", v -> confirmReset());
+        root.addView(resetButton);
+        status = Ui.body(this, SessionResetGate.INSTANCE.isResetting()
+                ? "ChatGPT 세션 초기화 중" : "프로젝트 방문 대기");
         root.addView(status);
-
-        webView = new WebView(this);
         catalog = new ProjectCatalog(this);
+        Ui.setContent(this, root);
+        SessionResetGate.INSTANCE.whenReady(openSession);
+    }
+
+    private void openSession() {
+        if (isFinishing() || isDestroyed() || webView != null) return;
+        createWebView();
+        webView.loadUrl(CHATGPT_HOME);
+    }
+
+    @SuppressWarnings("SetJavaScriptEnabled")
+    private void createWebView() {
+        webView = new WebView(this);
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
@@ -82,8 +105,65 @@ public final class LoginActivity extends Activity {
         });
         root.addView(webView, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
-        Ui.setContent(this, root);
-        webView.loadUrl("https://chatgpt.com/");
+    }
+
+    private void confirmReset() {
+        if (SessionResetGate.INSTANCE.isResetting()) return;
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DELETE_BROWSING_DATA)) {
+            status.setText("세션을 초기화하려면 Android System WebView를 업데이트해 주세요.");
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("ChatGPT 세션 초기화")
+                .setMessage("앱 안의 ChatGPT 로그인과 웹 저장 데이터를 지웁니다. 다시 로그인해야 합니다. "
+                        + "예약, 등록한 프로젝트, 앱 설정, 실행 기록은 보존됩니다.")
+                .setNegativeButton("취소", null)
+                .setPositiveButton("초기화", (dialog, which) -> resetSession())
+                .show();
+    }
+
+    private void resetSession() {
+        SessionResetGate gate = SessionResetGate.INSTANCE;
+        if (!gate.beginReset()) {
+            status.setText("예약 실행이 끝난 뒤 세션을 초기화해 주세요.");
+            return;
+        }
+        resetButton.setEnabled(false);
+        status.setText("ChatGPT 세션 초기화 중");
+        destroyWebView();
+        WebStorage storage = WebStorage.getInstance();
+        try {
+            WebStorageCompat.deleteBrowsingDataForSite(storage, "chatgpt.com", () -> {
+                try {
+                    WebStorageCompat.deleteBrowsingDataForSite(storage, "openai.com", () -> finishReset(true));
+                } catch (RuntimeException error) {
+                    finishReset(false);
+                }
+            });
+        } catch (RuntimeException error) {
+            finishReset(false);
+        }
+    }
+
+    private void finishReset(boolean success) {
+        SessionResetGate.INSTANCE.finishReset();
+        if (isFinishing() || isDestroyed()) return;
+        resetButton.setEnabled(true);
+        status.setText(success ? "초기화했습니다. ChatGPT에 다시 로그인해 주세요."
+                : "세션 초기화를 마치지 못했습니다. 다시 시도해 주세요.");
+        openSession();
+    }
+
+    private void destroyWebView() {
+        observerGeneration++;
+        handler.removeCallbacks(observeRunnable);
+        if (webView == null) return;
+        webView.setWebViewClient(null);
+        webView.setWebChromeClient(null);
+        webView.stopLoading();
+        root.removeView(webView);
+        webView.destroy();
+        webView = null;
     }
 
     @Override
@@ -162,11 +242,9 @@ public final class LoginActivity extends Activity {
         resumed = false;
         observerGeneration++;
         handler.removeCallbacks(observeRunnable);
-        if (webView != null) {
-            CookieManager.getInstance().flush();
-            webView.stopLoading();
-            webView.destroy();
-        }
+        SessionResetGate.INSTANCE.cancelWait(openSession);
+        if (webView != null) CookieManager.getInstance().flush();
+        destroyWebView();
         super.onDestroy();
     }
 }

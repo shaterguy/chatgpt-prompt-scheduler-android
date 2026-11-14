@@ -40,6 +40,7 @@ public final class ExecutionService extends Service {
     private static final int MAX_TRACE_EVENTS = 120;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final AtomicBoolean processing = new AtomicBoolean(false);
+    private final Runnable resumeQueue = this::processNext;
     private final Runnable automationRunnable = this::runAutomationStep;
     private final Runnable watchdogRunnable = this::watchdog;
     private QueueStore queueStore;
@@ -105,6 +106,10 @@ public final class ExecutionService extends Service {
 
     private void processNext() {
         if (serviceDestroyed) return;
+        if (SessionResetGate.INSTANCE.isResetting()) {
+            SessionResetGate.INSTANCE.whenReady(resumeQueue);
+            return;
+        }
         cleanupEngine();
         currentSchedule = null;
         startedAt = 0L;
@@ -128,6 +133,7 @@ public final class ExecutionService extends Service {
             stopSelf();
             return;
         }
+        SessionResetGate.INSTANCE.startRun();
         final String claimedRunId = currentItem.optString("runId");
         try {
             acquireProfilePreparationWakeLock();
@@ -244,6 +250,7 @@ public final class ExecutionService extends Service {
     private void discardClaimedItem() {
         queueStore.finish(currentItem.optString("runId"));
         currentItem = null;
+        SessionResetGate.INSTANCE.finishRun();
         handler.post(this::processNext);
     }
 
@@ -794,6 +801,7 @@ public final class ExecutionService extends Service {
         }
         cleanupEngine();
         currentItem = null;
+        SessionResetGate.INSTANCE.finishRun();
         currentSchedule = null;
         currentRequestProfile = null;
         projectDisplayName = "";
@@ -904,7 +912,9 @@ public final class ExecutionService extends Service {
     @Override
     public void onDestroy() {
         serviceDestroyed = true;
+        SessionResetGate.INSTANCE.cancelWait(resumeQueue);
         cleanupEngine();
+        if (currentItem != null) SessionResetGate.INSTANCE.finishRun();
         super.onDestroy();
     }
 
