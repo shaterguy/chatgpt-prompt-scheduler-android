@@ -142,10 +142,14 @@ public final class ExecutionService extends Service {
         SessionResetGate.INSTANCE.startRun();
         final String claimedRunId = currentItem.optString("runId");
         try {
-            acquireProfilePreparationWakeLock();
             Schedule queuedSchedule = currentItem.optBoolean("manual", false) ? null
                     : configStore.findSchedule(currentItem.optString("scheduleId"));
-            if (queuedSchedule != null && queuedSchedule.enabled && queuedSchedule.excludesHolidays()) {
+            if (queuedSchedule != null && !queuedSchedule.enabled) {
+                discardClaimedItem();
+                return;
+            }
+            acquireProfilePreparationWakeLock();
+            if (queuedSchedule != null && queuedSchedule.excludesHolidays()) {
                 KoreanHolidaySync.refresh(this, changed -> {
                     if (!isCurrentRun(claimedRunId)) return;
                     if (changed) AlarmEngine.reconcileHolidayAlarms(this);
@@ -192,7 +196,7 @@ public final class ExecutionService extends Service {
         trace("SCHEDULE_LOADED", object("scheduleId", currentSchedule.id, "name", currentSchedule.name,
                 "targetType", currentSchedule.targetType, "targetUrl", currentSchedule.targetUrl));
         if (!currentItem.optBoolean("manual", false) && !currentSchedule.enabled) {
-            finish(false, "SCHEDULE_DISABLED", "예약이 비활성화되어 있습니다.");
+            discardClaimedItem();
             return;
         }
         if (!currentItem.optBoolean("manual", false) && currentSchedule.excludesHolidays()) {

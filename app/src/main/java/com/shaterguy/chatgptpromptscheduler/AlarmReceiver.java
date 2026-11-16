@@ -13,7 +13,8 @@ public final class AlarmReceiver extends BroadcastReceiver {
 
         long scheduledAt = intent.getLongExtra("scheduledAt", 0L);
         Schedule schedule = new ConfigStore(context).findSchedule(scheduleId);
-        if (schedule != null && schedule.enabled && schedule.excludesHolidays()) {
+        if (schedule != null && !schedule.enabled) return;
+        if (schedule != null && schedule.excludesHolidays()) {
             long now = System.currentTimeMillis();
             if (scheduledAt == 0L) scheduledAt = schedule.nextRunAt;
             if (scheduledAt > now || scheduledAt != schedule.nextRunAt) return;
