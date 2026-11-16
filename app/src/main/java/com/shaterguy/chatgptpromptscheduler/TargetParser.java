@@ -2,9 +2,22 @@ package com.shaterguy.chatgptpromptscheduler;
 
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class TargetParser {
+    private static final Pattern CONVERSATION_PATH =
+            Pattern.compile("(?:/g/[A-Za-z0-9_-]+)?/c/([A-Za-z0-9_-]{1,160})/?");
+
     private TargetParser() {}
+
+    static String canonicalConversationUrl(String url) {
+        if (!isSupported(url)) return null;
+        URI uri = URI.create(url);
+        if (uri.getRawUserInfo() != null || uri.getPort() != -1) return null;
+        Matcher match = CONVERSATION_PATH.matcher(uri.getRawPath());
+        return match.matches() ? "https://chatgpt.com/c/" + match.group(1) : null;
+    }
 
     public static boolean isSupported(String url) {
         try {

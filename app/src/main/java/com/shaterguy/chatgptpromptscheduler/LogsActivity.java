@@ -2,6 +2,7 @@ package com.shaterguy.chatgptpromptscheduler;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
@@ -20,6 +21,7 @@ import java.time.format.DateTimeFormatter;
 
 public final class LogsActivity extends Activity {
     private static final int REQUEST_EXPORT_LOG = 2101;
+    private static final String CHATGPT_PACKAGE = "com.openai.chatgpt";
     private final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy.MM.dd HH:mm:ss").withZone(ZoneId.of("Asia/Seoul"));
     private final DateTimeFormatter fileFormatter = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneId.of("Asia/Seoul"));
     private RunLogStore store;
@@ -82,13 +84,22 @@ public final class LogsActivity extends Activity {
             summary.setMaxLines(3);
             summary.setEllipsize(android.text.TextUtils.TruncateAt.END);
             card.addView(summary);
+            String directConversationUrl =
+                    TargetParser.canonicalConversationUrl(item.optString("conversationUrl", ""));
+            if (directConversationUrl != null) {
+                card.addView(Ui.button(this, "ChatGPT에서 대화 열기",
+                        v -> openConversation(directConversationUrl)));
+            }
             LinearLayout detail = Ui.disclosure(this, card, "실행 상세");
             detail.addView(Ui.body(this, "상태 원문: " + status));
             detail.addView(Ui.body(this, "Run ID: " + item.optString("runId", "")));
             detail.addView(Ui.body(this, item.optString("detail", "")));
             detail.addView(Ui.body(this, item.optString("targetUrl", "")));
-            String conversationUrl = item.optString("conversationUrl", "");
-            if (!conversationUrl.isBlank()) detail.addView(Ui.body(this, "대화 주소: " + conversationUrl));
+            String savedConversationUrl = item.optString("conversationUrl", "");
+            if (!savedConversationUrl.isBlank()) {
+                detail.addView(Ui.body(this, "대화 주소: "
+                        + (directConversationUrl == null ? savedConversationUrl : directConversationUrl)));
+            }
             JSONArray events = item.optJSONArray("events");
             detail.addView(Ui.body(this, "진단 이벤트: " + (events == null ? 0 : events.length()) + "개"));
             if (!item.optBoolean("success", "VERIFIED".equals(status))) {
@@ -102,6 +113,20 @@ public final class LogsActivity extends Activity {
         scroll.post(() -> {
             if (scrollView == scroll) scroll.scrollTo(0, previousScrollY);
         });
+    }
+
+    private void openConversation(String directUrl) {
+        Intent view = new Intent(Intent.ACTION_VIEW, Uri.parse(directUrl))
+                .addCategory(Intent.CATEGORY_BROWSABLE);
+        try {
+            startActivity(new Intent(view).setPackage(CHATGPT_PACKAGE));
+        } catch (ActivityNotFoundException chatGptUnavailable) {
+            try {
+                startActivity(view);
+            } catch (ActivityNotFoundException noHandler) {
+                toast("대화 링크를 열 수 있는 앱이 없습니다.");
+            }
+        }
     }
 
     private void exportAll() {
