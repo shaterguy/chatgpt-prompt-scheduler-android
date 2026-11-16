@@ -58,6 +58,23 @@ public final class ConfigStore {
         saveSchedules(schedules);
     }
 
+    /** Merge execution metadata into the most recently saved schedule. */
+    public synchronized Schedule recordRunCompletion(String id, long finishedAt,
+                                                     String status, boolean automaticOnce) {
+        Schedule latest = findSchedule(id);
+        if (latest == null) return null;
+        mergeRunCompletion(latest, finishedAt, status, automaticOnce);
+        saveSchedule(latest);
+        return latest;
+    }
+
+    static void mergeRunCompletion(Schedule latest, long finishedAt,
+                                   String status, boolean automaticOnce) {
+        latest.lastRunAt = finishedAt;
+        latest.lastStatus = status;
+        if (automaticOnce && "once".equals(latest.recurrence)) latest.enabled = false;
+    }
+
     public synchronized void deleteSchedule(String id) {
         List<Schedule> schedules = loadSchedules();
         schedules.removeIf(schedule -> schedule.id.equals(id));

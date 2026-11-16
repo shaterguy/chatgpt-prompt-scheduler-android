@@ -926,18 +926,17 @@ public final class ExecutionService extends Service {
             effectiveStatus = status + "_LOG_SAVE_FAILED";
             effectiveDetail = effectiveDetail + " | 실행 기록 저장 실패: " + valueOrEmpty(logError.getMessage());
         }
-        if (currentSchedule != null) {
-            currentSchedule.lastRunAt = finishedAt;
-            currentSchedule.lastStatus = effectiveStatus;
-            if (!manual && "once".equals(currentSchedule.recurrence)) currentSchedule.enabled = false;
-            configStore.saveSchedule(currentSchedule);
-            if (currentSchedule.enabled) AlarmEngine.scheduleNext(this, currentSchedule, finishedAt + 1000L);
+        Schedule completedSchedule = currentSchedule == null ? null : configStore.recordRunCompletion(
+                currentSchedule.id, finishedAt, effectiveStatus,
+                !manual && "once".equals(currentSchedule.recurrence));
+        if (completedSchedule != null) {
+            if (completedSchedule.enabled) AlarmEngine.scheduleNext(this, completedSchedule, finishedAt + 1000L);
             JSONObject settings = configStore.settings();
             if ((success && settings.optBoolean("notifySuccess", true))
                     || (!success && settings.optBoolean("notifyFailure", true))) {
                 NotificationHelper.result(this, success,
                         success ? "예약 프롬프트 전송 완료" : "예약 프롬프트 실행 실패",
-                        currentSchedule.name + " · " + effectiveStatus, runId);
+                        completedSchedule.name + " · " + effectiveStatus, runId);
             }
         }
         try {
