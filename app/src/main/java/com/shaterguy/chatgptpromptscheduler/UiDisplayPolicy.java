@@ -22,7 +22,9 @@ public final class UiDisplayPolicy {
             case "once" -> "한 번";
             case "daily" -> "매일";
             case "weekly" -> "매주";
-            case "interval" -> "분 간격";
+            case "interval" -> "간격";
+            case "minutes" -> "분";
+            case "hours" -> "시간";
             default -> value;
         };
     }

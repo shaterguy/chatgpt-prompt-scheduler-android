@@ -25,11 +25,14 @@ public final class Schedule {
     public String recurrence = "daily";
     public boolean excludeHolidays;
     public int intervalMinutes = 30;
+    public String intervalUnit = "minutes";
+    public int dailyIntervalDays = 1;
     public final List<Integer> weekdays = new ArrayList<>(Arrays.asList(1, 2, 3, 4, 5, 6, 7));
     public final List<String> times = new ArrayList<>(List.of("09:00"));
     public boolean enabled = true;
     public int retryCount = 2;
     public long lastRunAt = 0L;
+    public long lastOccurrenceAt = 0L;
     public long nextRunAt = 0L;
     public String lastStatus = "NEVER";
     transient RequestProfileEngine.TargetProfile resolvedRequestProfile;
@@ -83,6 +86,32 @@ public final class Schedule {
         return Math.max(MIN_INTERVAL_MINUTES, Math.min(MAX_INTERVAL_MINUTES, value));
     }
 
+    public String normalizedIntervalUnit() {
+        return "hours".equals(intervalUnit) && normalizedIntervalMinutes(intervalMinutes) % 60 == 0
+                ? "hours" : "minutes";
+    }
+
+    public int intervalValue() {
+        return normalizedIntervalMinutes(intervalMinutes) / ("hours".equals(normalizedIntervalUnit()) ? 60 : 1);
+    }
+
+    static int parseIntervalMinutes(String value, String unit) {
+        try {
+            long amount = Long.parseLong(value.trim());
+            long minutes = Math.multiplyExact(amount, "hours".equals(unit) ? 60L : 1L);
+            if (minutes < MIN_INTERVAL_MINUTES || minutes > MAX_INTERVAL_MINUTES) throw new IllegalArgumentException();
+            return (int) minutes;
+        } catch (ArithmeticException | NumberFormatException error) {
+            throw new IllegalArgumentException(error);
+        }
+    }
+
+    static int parseDailyIntervalDays(String value) {
+        int days = Integer.parseInt(value.trim());
+        if (days < 1) throw new IllegalArgumentException();
+        return days;
+    }
+
     static boolean supportsHolidayExclusion(String recurrence) {
         return "daily".equals(recurrence) || "weekly".equals(recurrence);
     }
@@ -106,11 +135,14 @@ public final class Schedule {
         object.put("recurrence", recurrence);
         if (excludesHolidays()) object.put("excludeHolidays", true);
         object.put("intervalMinutes", normalizedIntervalMinutes(intervalMinutes));
+        object.put("intervalUnit", normalizedIntervalUnit());
+        object.put("dailyIntervalDays", Math.max(1, dailyIntervalDays));
         object.put("weekdays", new JSONArray(weekdays));
         object.put("times", new JSONArray(times));
         object.put("enabled", enabled);
         object.put("retryCount", retryCount);
         object.put("lastRunAt", lastRunAt);
+        object.put("lastOccurrenceAt", lastOccurrenceAt);
         object.put("nextRunAt", nextRunAt);
         object.put("lastStatus", lastStatus);
         return object;
@@ -131,6 +163,10 @@ public final class Schedule {
         schedule.excludeHolidays = supportsHolidayExclusion(schedule.recurrence)
                 && object.optBoolean("excludeHolidays", false);
         schedule.intervalMinutes = normalizedIntervalMinutes(object.optInt("intervalMinutes", 30));
+        schedule.intervalUnit = object.optString("intervalUnit", "minutes");
+        schedule.intervalUnit = schedule.normalizedIntervalUnit();
+        long dailyDays = object.optLong("dailyIntervalDays", 1L);
+        schedule.dailyIntervalDays = dailyDays > 0 && dailyDays <= Integer.MAX_VALUE ? (int) dailyDays : 1;
         schedule.weekdays.clear();
         JSONArray weekdayArray = object.optJSONArray("weekdays");
         if (weekdayArray != null) for (int i = 0; i < weekdayArray.length(); i++) schedule.weekdays.add(weekdayArray.optInt(i));
@@ -145,6 +181,7 @@ public final class Schedule {
         schedule.enabled = object.optBoolean("enabled", true);
         schedule.retryCount = Math.max(0, Math.min(5, object.optInt("retryCount", 2)));
         schedule.lastRunAt = object.optLong("lastRunAt", 0L);
+        schedule.lastOccurrenceAt = object.optLong("lastOccurrenceAt", schedule.lastRunAt);
         schedule.nextRunAt = Math.max(0L, object.optLong("nextRunAt", 0L));
         schedule.lastStatus = object.optString("lastStatus", "NEVER");
         return schedule;

@@ -22,6 +22,7 @@ public final class ScheduleEditorActivity extends Activity {
     private ProjectCatalog projectCatalog;
     private RequestProfileRegistry profileRegistry;
     private Schedule schedule;
+    private boolean originallyEnabled;
     private EditText name;
     private Spinner targetType;
     private Spinner projectTarget;
@@ -50,7 +51,10 @@ public final class ScheduleEditorActivity extends Activity {
     private EditText weekdays;
     private LinearLayout weekdaysSection;
     private EditText intervalMinutes;
+    private Spinner intervalUnit;
     private LinearLayout intervalSection;
+    private EditText dailyIntervalDays;
+    private LinearLayout dailyIntervalSection;
     private EditText retryCount;
     private Switch enabled;
 
@@ -63,6 +67,7 @@ public final class ScheduleEditorActivity extends Activity {
         String id = getIntent().getStringExtra("scheduleId");
         schedule = id == null ? new Schedule() : store.findSchedule(id);
         if (schedule == null) schedule = new Schedule();
+        originallyEnabled = schedule.enabled;
         buildUi();
     }
 
@@ -174,13 +179,17 @@ public final class ScheduleEditorActivity extends Activity {
         root.addView(Ui.section(this, "실행 일정"));
         LinearLayout timing = Ui.card(this, root);
         recurrence = spinner(timing, "반복", new String[]{"once", "daily", "weekly", "interval"}, schedule.recurrence);
+        dailyIntervalSection = section(timing);
+        dailyIntervalDays = edit(dailyIntervalSection, "일 간격", String.valueOf(Math.max(1, schedule.dailyIntervalDays)), false);
+        dailyIntervalDays.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        dailyIntervalSection.addView(Ui.body(this, "기본은 매 1일입니다. 2, 3 등 원하는 일 간격을 입력하세요."));
         holidaySection = section(timing);
         excludeHolidays = new Switch(this);
         excludeHolidays.setText("공휴일 제외");
         excludeHolidays.setMinHeight(Ui.dp(this, 48));
         excludeHolidays.setChecked(schedule.excludesHolidays());
         holidaySection.addView(excludeHolidays);
-        holidaySection.addView(Ui.body(this, "토·일요일과 대한민국 공휴일에는 실행하지 않습니다."));
+        holidaySection.addView(Ui.body(this, "토·일요일과 대한민국 공휴일에는 실행하지 않습니다. 매일 반복의 도래일이 휴일이면 다음 평일의 지정 시각에 실행합니다."));
         timesSection = section(timing);
         times = edit(timesSection, "실행 시각", String.join(",", schedule.times), false);
         times.setHint("08:00,17:00");
@@ -191,9 +200,11 @@ public final class ScheduleEditorActivity extends Activity {
         weekdays.setHint("1,2,3,4,5");
         weekdaysSection.addView(Ui.body(this, "1 월요일 · 2 화요일 · 3 수요일 · 4 목요일\n5 금요일 · 6 토요일 · 7 일요일"));
         intervalSection = section(timing);
-        intervalMinutes = edit(intervalSection, "실행 완료 후 간격(분, 15∼10080)",
-                String.valueOf(Schedule.normalizedIntervalMinutes(schedule.intervalMinutes)), false);
+        intervalMinutes = edit(intervalSection, "실행 완료 후 간격",
+                String.valueOf(schedule.intervalValue()), false);
         intervalMinutes.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        intervalUnit = spinner(intervalSection, "간격 단위", new String[]{"minutes", "hours"}, schedule.normalizedIntervalUnit());
+        intervalSection.addView(Ui.body(this, "15∼10080분 또는 1∼168시간으로 설정할 수 있습니다."));
         recurrence.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) { updateRecurrenceOptionVisibility(); }
             @Override public void onNothingSelected(AdapterView<?> parent) { updateRecurrenceOptionVisibility(); }
@@ -321,6 +332,7 @@ public final class ScheduleEditorActivity extends Activity {
         timesSection.setVisibility(showsClockTimes(value) ? View.VISIBLE : View.GONE);
         weekdaysSection.setVisibility(showsWeekdays(value) ? View.VISIBLE : View.GONE);
         intervalSection.setVisibility(showsIntervalMinutes(value) ? View.VISIBLE : View.GONE);
+        dailyIntervalSection.setVisibility(showsDailyInterval(value) ? View.VISIBLE : View.GONE);
     }
 
     static boolean requiresTargetUrl(String targetType) {
@@ -339,6 +351,7 @@ public final class ScheduleEditorActivity extends Activity {
     static boolean showsClockTimes(String recurrence) { return !"interval".equals(recurrence); }
     static boolean showsWeekdays(String recurrence) { return "weekly".equals(recurrence); }
     static boolean showsIntervalMinutes(String recurrence) { return "interval".equals(recurrence); }
+    static boolean showsDailyInterval(String recurrence) { return "daily".equals(recurrence); }
 
     static boolean isTargetValidForType(String targetType, String url) {
         if ("general".equals(targetType)) return true;
@@ -437,14 +450,18 @@ public final class ScheduleEditorActivity extends Activity {
         int parsedInterval = schedule.intervalMinutes;
         if (showsIntervalMinutes(recurrenceValue)) {
             try {
-                parsedInterval = Integer.parseInt(intervalMinutes.getText().toString().trim());
-            } catch (NumberFormatException ignored) {
-                toast("분 간격을 숫자로 입력하세요.");
+                parsedInterval = Schedule.parseIntervalMinutes(intervalMinutes.getText().toString(), selected(intervalUnit));
+            } catch (IllegalArgumentException ignored) {
+                toast("간격은 15∼10080분 또는 1∼168시간의 정수로 입력하세요.");
                 return;
             }
-            if (parsedInterval < Schedule.MIN_INTERVAL_MINUTES
-                    || parsedInterval > Schedule.MAX_INTERVAL_MINUTES) {
-                toast("분 간격은 15∼10080 사이로 입력하세요.");
+        }
+        int parsedDailyDays = schedule.dailyIntervalDays;
+        if (showsDailyInterval(recurrenceValue)) {
+            try {
+                parsedDailyDays = Schedule.parseDailyIntervalDays(dailyIntervalDays.getText().toString());
+            } catch (IllegalArgumentException ignored) {
+                toast("일 간격은 1 이상의 정수로 입력하세요.");
                 return;
             }
         }
@@ -473,6 +490,8 @@ public final class ScheduleEditorActivity extends Activity {
         schedule.excludeHolidays = Schedule.supportsHolidayExclusion(recurrenceValue)
                 && excludeHolidays.isChecked();
         schedule.intervalMinutes = Schedule.normalizedIntervalMinutes(parsedInterval);
+        schedule.intervalUnit = selected(intervalUnit);
+        schedule.dailyIntervalDays = parsedDailyDays;
         if (showsClockTimes(recurrenceValue)) {
             schedule.times.clear();
             schedule.times.addAll(parsedTimes);
@@ -497,9 +516,11 @@ public final class ScheduleEditorActivity extends Activity {
         profileRegistry.attach(schedule);
         try { RequestProfileEngine.forSchedule(schedule); }
         catch (IllegalArgumentException unavailable) { toast("선택한 모델·추론 조합이 현재 목록에 없습니다. 다른 조합을 선택하거나 목록을 업데이트해 주세요."); return; }
-        store.saveSchedule(schedule);
-        AlarmEngine.cancel(this, schedule.id);
-        if (schedule.enabled) AlarmEngine.scheduleNext(this, schedule, System.currentTimeMillis());
+        synchronized (ConfigStore.LOCK) {
+            store.saveEditedSchedule(schedule, originallyEnabled, System.currentTimeMillis(), KoreanHolidaySync.cached(this));
+            AlarmEngine.cancel(this, schedule.id);
+            if (schedule.enabled) AlarmEngine.scheduleAt(this, schedule, schedule.nextRunAt);
+        }
         toast("예약을 저장했습니다.");
         finish();
     }

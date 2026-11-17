@@ -175,6 +175,7 @@ public final class Ui {
     }
 
     public static void input(Context context, TextView input) {
+        input.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
         input.setMinHeight(dp(context, 48));
         input.setTextSize(15);
         input.setTextColor(color(context, R.color.text_primary));

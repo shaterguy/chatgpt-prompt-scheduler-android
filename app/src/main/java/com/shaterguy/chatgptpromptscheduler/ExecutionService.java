@@ -199,13 +199,14 @@ public final class ExecutionService extends Service {
             discardClaimedItem();
             return;
         }
+        long scheduledAt = currentItem.optLong("scheduledAt", 0L);
+        if (Recurrence.isStaleAutomaticOccurrence(currentSchedule,
+                currentItem.optBoolean("manual", false), scheduledAt)) {
+            discardClaimedItem();
+            return;
+        }
         if (!currentItem.optBoolean("manual", false) && currentSchedule.excludesHolidays()) {
             long now = System.currentTimeMillis();
-            long scheduledAt = currentItem.optLong("scheduledAt", 0L);
-            if (scheduledAt > 0L && scheduledAt != currentSchedule.nextRunAt) {
-                discardClaimedItem();
-                return;
-            }
             long occurrence = scheduledAt > 0L ? scheduledAt : currentItem.optLong("enqueuedAt", now);
             if (Recurrence.excludesAutomaticRun(currentSchedule, occurrence, now, KoreanHolidaySync.cached(this))) {
                 AlarmEngine.scheduleNext(this, currentSchedule, now);
@@ -926,11 +927,18 @@ public final class ExecutionService extends Service {
             effectiveStatus = status + "_LOG_SAVE_FAILED";
             effectiveDetail = effectiveDetail + " | 실행 기록 저장 실패: " + valueOrEmpty(logError.getMessage());
         }
-        Schedule completedSchedule = currentSchedule == null ? null : configStore.recordRunCompletion(
-                currentSchedule.id, finishedAt, effectiveStatus,
-                !manual && "once".equals(currentSchedule.recurrence));
+        long occurrenceAt = !manual ? currentItem.optLong("scheduledAt", 0L) : startedAt;
+        if (occurrenceAt <= 0L) occurrenceAt = currentItem.optLong("enqueuedAt", finishedAt);
+        Schedule completedSchedule;
+        synchronized (ConfigStore.LOCK) {
+            completedSchedule = currentSchedule == null ? null : configStore.recordRunCompletion(
+                    currentSchedule.id, finishedAt, effectiveStatus,
+                    !manual && "once".equals(currentSchedule.recurrence), occurrenceAt);
+            if (completedSchedule != null && completedSchedule.enabled) {
+                AlarmEngine.scheduleNext(this, completedSchedule, finishedAt + 1000L);
+            }
+        }
         if (completedSchedule != null) {
-            if (completedSchedule.enabled) AlarmEngine.scheduleNext(this, completedSchedule, finishedAt + 1000L);
             JSONObject settings = configStore.settings();
             if ((success && settings.optBoolean("notifySuccess", true))
                     || (!success && settings.optBoolean("notifyFailure", true))) {

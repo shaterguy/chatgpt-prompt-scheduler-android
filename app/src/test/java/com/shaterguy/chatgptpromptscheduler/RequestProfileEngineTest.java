@@ -184,9 +184,25 @@ public final class RequestProfileEngineTest {
         assertEquals("inherit", restoredWork.workModel);
         assertEquals("inherit", restoredWork.reasoningEffort);
 
+        JSONObject previous = baseline.toJson();
+        previous.put("intervalMinutes", 90);
+        previous.put("lastRunAt", 1234L);
+        previous.remove("intervalUnit");
+        previous.remove("dailyIntervalDays");
+        previous.remove("lastOccurrenceAt");
+        Schedule migrated = Schedule.fromJson(previous);
+        assertEquals("minutes", migrated.intervalUnit);
+        assertEquals(90, migrated.intervalMinutes);
+        assertEquals(1, migrated.dailyIntervalDays);
+        assertEquals(1234L, migrated.lastOccurrenceAt);
+        Schedule roundTrip = Schedule.fromJson(migrated.toJson());
+        assertEquals(90, roundTrip.intervalMinutes);
+        assertEquals(1234L, roundTrip.lastOccurrenceAt);
+
         assertEquals(1, ConfigStore.SCHEMA_VERSION);
         assertEquals(Set.of("id", "name", "targetType", "targetUrl", "experience", "workModel",
                         "reasoningEffort", "chatReasoning", "prompt", "recurrence", "intervalMinutes",
+                        "intervalUnit", "dailyIntervalDays", "lastOccurrenceAt",
                         "weekdays", "times", "enabled", "retryCount", "lastRunAt", "nextRunAt", "lastStatus"),
                 jsonKeys(baseline.toJson()));
     }
