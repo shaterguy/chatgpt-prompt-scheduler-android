@@ -57,7 +57,7 @@ final class NativeProfilePreparationScript {
                   const state={key,phase,status:'RETRY',detail:'모델·추론 설정 준비 중',receipt:null};
                   window.__chatgptPromptSchedulerNativeProfile=state;
                 """
-                + preferenceFunction() + environmentFunction()
+                + preferenceFunction() + environmentFunction() + failureCaptureFunction()
                 + """
                   (async()=>{
                     const env=await nativeEnvironment();
@@ -67,7 +67,9 @@ final class NativeProfilePreparationScript {
                     state.status='NATIVE_PREFERENCE_FAILED';
                     const code=String(e?.message||'');
                     state.receipt=e.receipt||null;
-                    state.error={phase:e.phase||'runtime-discovery',status:typeof e.status==='number'?e.status:null,message:code.replace(/Bearer\\s+[^\\s]+/gi,'Bearer [redacted]').replace(/([?&](?:token|key|code|auth)[^=]*=)[^&\\s]+/gi,'$1[redacted]').slice(0,300)};
+                    const archive=archiveNativePreferenceFailure(e);
+                    state.error={phase:e.phase||'runtime-discovery',status:typeof e.status==='number'?e.status:null,message:code.replace(/Bearer\\s+[^\\s]+/gi,'Bearer [redacted]').replace(/([?&](?:token|key|code|auth)[^=]*=)[^&\\s]+/gi,'$1[redacted]').slice(0,300),
+                      responseKind:e.diagnosticKind||null,responseKeys:e.diagnosticKeys||[],responseId:archive.id||null,captureState:archive.state};
                     state.detail='모델·추론 설정 실패 ['+state.error.phase+']: '+state.error.message;
                   });
                   return result(state.status,state.detail,{receipt:state.receipt});
@@ -77,6 +79,21 @@ final class NativeProfilePreparationScript {
 
     static String preferenceFunction() {
         return """
+                function safePreferenceDiagnostic(value){
+                  const seen=new WeakSet();
+                  try{
+                    const text=JSON.stringify(value,(key,item)=>{
+                      if(/(?:token|authorization|cookie|secret|password|api[_-]?key|credential|e[_-]?mail|session[_-]?id|prompt|input[_-]?text)/i.test(key))return '[redacted]';
+                      if(typeof item==='bigint')return item.toString();
+                      if(item&&typeof item==='object'){
+                        if(seen.has(item))return '[circular]';
+                        seen.add(item);
+                      }
+                      return item;
+                    });
+                    return text===undefined?String(value):text;
+                  }catch(_){return JSON.stringify({type:typeof value,serialization:'failed'});}
+                }
                 async function applyPreference(env,profile,strategy='combined'){
                   if(env.origin!=='https://chatgpt.com')throw new Error('ChatGPT 화면에서 실행해야 합니다.');
                   if(!['chat','work'].includes(profile?.mode)||!['combined','native','server'].includes(strategy))throw new Error('테스트 조합이 올바르지 않습니다.');
@@ -84,15 +101,24 @@ final class NativeProfilePreparationScript {
                   if(typeof profile.model!=='string'||!/^[-a-zA-Z0-9_.]{1,128}$/.test(profile.model)||(!removesEffort&&!['standard','extended','min','max','ultra','xhigh','zero'].includes(profile.thinking_effort)))throw new Error('프로필 원본값이 올바르지 않습니다.');
                   const selection={slug:profile.model,thinkingEffort:profile.thinking_effort};
                   const receipt={mode:profile.mode,model:profile.model,effort:profile.thinking_effort,strategy,serverAcknowledged:null,adapterVersion:'0.1.0-dev9'};
+                  const endpoint=profile.mode==='work'?'/settings/user_tpp_last_used_model_config':'/settings/user_last_used_model_config';
                   let phase='server-patch';
                   try {
                   if(strategy!=='native'){
-                    const endpoint=profile.mode==='work'?'/settings/user_tpp_last_used_model_config':'/settings/user_last_used_model_config';
                     const query={model_slug:profile.model};
                     if(!removesEffort)query.thinking_effort=profile.thinking_effort;
                     const saved=await env.api.safePatch(endpoint,{parameters:{query}});
                     phase='server-acknowledgement';
-                    if(saved?.success!==true)throw new Error('설정 저장 성공 응답을 받지 못했습니다.');
+                    if(saved?.success!==true){
+                      receipt.serverAcknowledged=false;
+                      const error=new Error('설정 저장 성공 응답을 받지 못했습니다.');
+                      error.diagnosticResponse=safePreferenceDiagnostic(saved);
+                      error.diagnosticKind=saved===null?'null':Array.isArray(saved)?'array':typeof saved;
+                      error.diagnosticKeys=saved&&typeof saved==='object'?Object.keys(saved).slice(0,32):[];
+                      const status=typeof saved?.status==='number'?saved.status:typeof saved?.response?.status==='number'?saved.response.status:null;
+                      if(status!==null)error.status=status;
+                      throw error;
+                    }
                     receipt.serverAcknowledged=true;
                   }
                   if(strategy!=='server'){
@@ -126,8 +152,45 @@ final class NativeProfilePreparationScript {
                   } catch(e) {
                     const error=e instanceof Error?e:new Error(typeof e?.message==='string'?e.message:'NATIVE_CALL_REJECTED');
                     if(typeof e?.status==='number')error.status=e.status;
+                    if(typeof e?.response?.status==='number'&&typeof error.status!=='number')error.status=e.response.status;
+                    if(phase==='server-patch'||phase==='server-acknowledgement'){
+                      error.endpoint=endpoint;
+                      if(typeof error.diagnosticResponse!=='string'){
+                        error.diagnosticResponse=safePreferenceDiagnostic({
+                          kind:'exception',name:typeof e?.name==='string'?e.name:null,
+                          message:typeof e?.message==='string'?e.message:null,
+                          status:typeof error.status==='number'?error.status:null,
+                          response:e?.response??null,data:e?.data??null,body:e?.body??null
+                        });
+                        error.diagnosticKind='exception';
+                        error.diagnosticKeys=[];
+                      }
+                    }
                     error.phase=phase;error.receipt=receipt;throw error;
                   }
+                }
+                """;
+    }
+
+    static String failureCaptureFunction() {
+        return """
+                // Preserve the full safePatch semantic failure in existing chunked diagnostics.
+                function archiveNativePreferenceFailure(error){
+                  const payload=error?.diagnosticResponse;
+                  if(typeof payload!=='string')return {state:'not_applicable'};
+                  const bridge=window.SchedulerHttpDiagnostics;
+                  if(!bridge||typeof bridge.postMessage!=='function')return {state:'bridge_unavailable'};
+                  const id='np-'+Math.random().toString(36).slice(2,12)+'-'+Date.now().toString(36);
+                  const endpoint=error.endpoint;
+                  if(!['/settings/user_last_used_model_config','/settings/user_tpp_last_used_model_config'].includes(endpoint))return {state:'endpoint_unavailable'};
+                  try{
+                    const emit=item=>bridge.postMessage(JSON.stringify({...item,id}));
+                    emit({kind:'native-preference-ack',part:'start',endpoint,method:'PATCH',
+                      code:typeof error.status==='number'?error.status:0,responseKind:error.diagnosticKind||'unknown'});
+                    for(let index=0;index<payload.length;index+=8192)emit({part:'chunk',body:payload.slice(index,index+8192)});
+                    emit({part:'end',bodyState:payload.length?'captured':'empty'});
+                    return {state:'captured',id};
+                  }catch(_){return {state:'bridge_failed'};}
                 }
                 """;
     }

@@ -133,7 +133,8 @@ public final class RunLogStore {
         if (events == null) return;
         for (int i = 0; i < events.length(); i++) {
             JSONObject event = events.optJSONObject(i);
-            if (event == null || !"CHATGPT_HTTP_FAILURE".equals(event.optString("type"))) continue;
+            if (event == null || (!"CHATGPT_HTTP_FAILURE".equals(event.optString("type"))
+                    && !"NATIVE_PREFERENCE_ACK_FAILURE".equals(event.optString("type")))) continue;
             JSONObject data = event.optJSONObject("data");
             if (data == null || !data.has("responseId") || "storage_failed".equals(data.optString("bodyState"))) continue;
             File body = httpBodyFile(run.optString("runId"), data.optString("responseId"));

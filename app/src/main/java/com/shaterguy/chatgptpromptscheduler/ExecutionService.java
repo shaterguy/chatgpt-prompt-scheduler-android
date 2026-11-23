@@ -526,6 +526,18 @@ public final class ExecutionService extends Service {
                 if (capture != null) archiveHttpFailure(capture, data.optString("bodyState"));
                 return;
             }
+            if ("native-preference-ack".equals(data.optString("kind"))) {
+                String endpoint = data.optString("endpoint");
+                if (!"start".equals(part) || !"PATCH".equals(data.optString("method"))
+                        || (!"/settings/user_last_used_model_config".equals(endpoint)
+                        && !"/settings/user_tpp_last_used_model_config".equals(endpoint))) return;
+                int statusCode = data.optInt("code", 0);
+                if (statusCode < 0 || statusCode > 599) return;
+                JSONObject details = object("endpoint", endpoint, "method", "PATCH",
+                        "code", statusCode, "responseKind", data.optString("responseKind"));
+                httpResponses.putIfAbsent(id, new HttpResponseCapture(id, details, "NATIVE_PREFERENCE_ACK_FAILURE"));
+                return;
+            }
             String path = data.optString("path");
             int code = data.optInt("code", -1);
             if (!isChatGptApiPath(path)
@@ -557,7 +569,7 @@ public final class ExecutionService extends Service {
         } catch (JSONException ignored) {
             return;
         }
-        trace("CHATGPT_HTTP_FAILURE", details);
+        trace(capture.eventType, details);
     }
 
     private void archiveInterruptedHttpResponses() {
@@ -575,10 +587,16 @@ public final class ExecutionService extends Service {
         final String id;
         final JSONObject details;
         final StringBuilder body = new StringBuilder();
+        final String eventType;
 
         HttpResponseCapture(String id, JSONObject details) {
+            this(id, details, "CHATGPT_HTTP_FAILURE");
+        }
+
+        HttpResponseCapture(String id, JSONObject details, String eventType) {
             this.id = id;
             this.details = details;
+            this.eventType = eventType;
         }
     }
 

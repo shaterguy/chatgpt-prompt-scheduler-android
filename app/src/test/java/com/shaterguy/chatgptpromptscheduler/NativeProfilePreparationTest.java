@@ -229,6 +229,66 @@ public final class NativeProfilePreparationTest {
             """);
     }
 
+    @Test public void failedAcknowledgementPreservesStatusAndResponseWithoutAcceptingNestedSuccess() throws Exception {
+        run(ENV + NativeProfilePreparationScript.preferenceFunction() + """
+            (async()=>{
+              const p={mode:'chat',model:'fixture-model',thinking_effort:'max'};
+              for(const saved of [undefined,null,{success:false,status:400,details:{code:'bad_model'}},
+                                  {data:{success:true},status:200}]){
+                env.api.safePatch=async()=>saved;
+                await assert.rejects(applyPreference(env,p,'server'),e=>{
+                  assert.equal(e.phase,'server-acknowledgement');
+                  assert.equal(e.receipt.serverAcknowledged,false);
+                  assert.equal(e.diagnosticResponse,
+                    saved===undefined?'undefined':JSON.stringify(saved));
+                  if(saved?.status)assert.equal(e.status,saved.status);
+                  return true;
+                });
+              }
+              const massive='X'.repeat(150000)+'END_OF_RESPONSE';
+              env.api.safePatch=async()=>({success:false,status:200,error:massive,access_token:'secret'});
+              await assert.rejects(applyPreference(env,p,'server'),e=>{
+                assert.equal(e.status,200);
+                assert.ok(e.diagnosticResponse.includes('END_OF_RESPONSE'));
+                assert.ok(e.diagnosticResponse.length>150000);
+                assert.ok(!e.diagnosticResponse.includes('secret'));
+                return true;
+              });
+              env.api.safePatch=async()=>{throw {message:'Invalid arguments',status:422,body:'server-detail'};};
+              await assert.rejects(applyPreference(env,p,'server'),e=>
+                e.phase==='server-patch'&&e.status===422&&e.diagnosticKind==='exception'
+                &&e.diagnosticResponse.includes('server-detail'));
+            })().catch(e=>{console.error(e);process.exitCode=1;});
+            """);
+    }
+
+    @Test public void failureCaptureStreamsFullResponseAndReportsUnavailableBridge() throws Exception {
+        run("const assert=require('node:assert/strict');" +
+            NativeProfilePreparationScript.failureCaptureFunction() + """
+            const received=[];
+            global.window={SchedulerHttpDiagnostics:{postMessage:s=>received.push(JSON.parse(s))}};
+            const payload='Y'.repeat(110000)+'FINAL_FRAGMENT';
+            const result=archiveNativePreferenceFailure({
+              endpoint:'/settings/user_last_used_model_config',status:200,
+              diagnosticResponse:payload,diagnosticKind:'object'
+            });
+            assert.equal(result.state,'captured');
+            assert.equal(received[0].kind,'native-preference-ack');
+            assert.equal(received[0].code,200);
+            assert.equal(received.at(-1).bodyState,'captured');
+            const chunks=received.filter(x=>x.part==='chunk');
+            assert.ok(chunks.length>12);
+            assert.ok(chunks.every(x=>x.body.length<=8192));
+            assert.equal(chunks.map(x=>x.body).join(''),payload);
+            assert.ok(received.every(x=>x.id===result.id));
+            delete window.SchedulerHttpDiagnostics;
+            assert.equal(archiveNativePreferenceFailure({
+              endpoint:'/settings/user_last_used_model_config',
+              diagnosticResponse:'diagnostic'
+            }).state,'bridge_unavailable');
+            """);
+    }
+
     private static TargetProfile chatProfile() {
         return new TargetProfile(Mode.CHAT,"","fixture-signal",List.of(
                 Operation.set("model","fixture-model"),Operation.set("thinking_effort","extended"),
