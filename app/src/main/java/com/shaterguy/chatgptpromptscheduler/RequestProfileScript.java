@@ -32,19 +32,41 @@ final class RequestProfileScript {
     }
 
     static String activate(Schedule schedule) {
+        return activate(schedule, false);
+    }
+
+    static String activate(Schedule schedule, boolean enforceConversationModel) {
         if ("existing".equals(schedule.targetType)) return nativeInherit("inherit", "inherit", "inherit");
         String experience = Schedule.normalizedExperience(schedule.targetType, schedule.experience);
         String model = "work".equals(experience) ? Schedule.normalizedWorkModel(experience, schedule.workModel) : "";
         String reasoning = "work".equals(experience)
                 ? Schedule.normalizedReasoningEffort(experience, schedule.reasoningEffort)
                 : Schedule.normalizedChatReasoning(experience, schedule.chatReasoning);
+        RequestProfileEngine.TargetProfile target;
         try {
-            RequestProfileEngine.TargetProfile target = RequestProfileEngine.forSchedule(schedule);
+            target = RequestProfileEngine.forSchedule(schedule);
             if (target == null) return nativeInherit(experience, model.isEmpty() ? "chat" : model, reasoning);
         } catch (IllegalArgumentException invalid) {
             return "return result('REQUEST_PROFILE_INVALID','요청 프로필이 지원되지 않습니다.',"
                     + "{mode:" + jsQuote(experience) + ",model:" + jsQuote(model)
                     + ",reasoning:" + jsQuote(reasoning) + ",operation:'validate'});";
+        }
+        if (enforceConversationModel) {
+            String operations = operationsJs(RequestProfileEngine.plan(target).operations);
+            String modelSlug = target.model;
+            for (RequestProfileEngine.Operation op : target.operations) {
+                if ("model".equals(op.path) && op.kind == RequestProfileEngine.OperationKind.SET)
+                    modelSlug = op.value;
+            }
+            return "const profileEngine=window.__chatgptPromptSchedulerRequestProfileEngine;"
+                    + "if(!profileEngine||typeof profileEngine.configure!=='function')"
+                    + "return result('MODEL_ENFORCEMENT_UNAVAILABLE','대화별 모델 적용 기능을 찾지 못했습니다.');"
+                    + "try{profileEngine.configure(" + jsQuote(experience) + "," + jsQuote(modelSlug) + ","
+                    + jsQuote(reasoning) + "," + operations + ");}catch(_){return result('MODEL_ENFORCEMENT_FAILED',"
+                    + "'대화별 모델 적용을 준비하지 못했습니다.');}"
+                    + "const modeDiagnostics={requested:" + jsQuote(experience) + ",ready:true,action:'conversation-enforced'};"
+                    + "const modelDiagnostics={requested:" + jsQuote(modelSlug) + ",ready:true,action:'conversation-enforced'};"
+                    + "const reasoningDiagnostics={requested:" + jsQuote(reasoning) + ",ready:true,action:'conversation-enforced'};";
         }
         return "const modeDiagnostics={requested:" + jsQuote(experience) + ",ready:true,action:'native-prepared'};"
                 + "const modelDiagnostics={requested:" + jsQuote(model.isEmpty() ? "chat" : model) + ",ready:true,action:'native-prepared'};"

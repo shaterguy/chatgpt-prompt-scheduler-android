@@ -71,6 +71,7 @@ public final class ExecutionService extends Service {
     private int projectCandidateIndex;
     private boolean submitted;
     private boolean nativeProfilePrepared;
+    private boolean modelEnforcementRequired;
     private boolean stepInFlight;
     private String stampedPrompt;
     private String projectDisplayName = "";
@@ -248,6 +249,7 @@ public final class ExecutionService extends Service {
         submitted = false;
         composerRecovery.reset();
         nativeProfilePrepared = false;
+        modelEnforcementRequired = false;
         stepInFlight = false;
         lastObservedUrl = "";
         lastRetryDetail = "";
@@ -320,7 +322,10 @@ public final class ExecutionService extends Service {
             finishAtDeadline();
             return;
         }
-        if (!submitted) nativeProfilePrepared = false;
+        if (!submitted) {
+            nativeProfilePrepared = false;
+            modelEnforcementRequired = false;
+        }
         engineAttempt++;
         trace("ENGINE_LAUNCH", object("engineAttempt", engineAttempt));
         try {
@@ -654,7 +659,8 @@ public final class ExecutionService extends Service {
                 ? ProjectDirectoryNavigationScript.build(currentSchedule.targetUrl, projectCandidateIndex)
                 : (submitted
                 ? ConversationVerificationScript.build(currentSchedule, stampedPrompt)
-                : AutomationScript.build(currentSchedule, stampedPrompt, currentItem.optString("runId"), pageAttempts));
+                : AutomationScript.build(currentSchedule, stampedPrompt, currentItem.optString("runId"),
+                        pageAttempts, modelEnforcementRequired));
         activeWebView.evaluateJavascript(script, raw -> {
             if (currentItem == null || activeWebView != webView || generation != navigationGeneration) {
                 trace("SCRIPT_RESULT_IGNORED", object("reason", "stale-callback", "generation", generation,
@@ -676,7 +682,30 @@ public final class ExecutionService extends Service {
         trace("NATIVE_PREFERENCE_RESULT", object("status", status, "detail", detail,
                 "diagnostics", result.optJSONObject("diagnostics")));
         switch (status) {
-            case "PREPARED" -> {
+            case "PREPARED", "PREPARED_LOCAL" -> {
+                if ("PREPARED_LOCAL".equals(status)) {
+                    if (currentRequestProfile == null || currentRequestProfile.mode != RequestProfileEngine.Mode.CHAT
+                            || !RequestProfileScript.isDocumentStartSupported()) {
+                        finish(false, "MODEL_ENFORCEMENT_UNAVAILABLE",
+                                contextualDetail("대화별 모델 적용에 필요한 WebView 기능이 없습니다."));
+                        return;
+                    }
+                    try {
+                        RequestProfileScript.installDocumentStart(webView);
+                        modelEnforcementRequired = true;
+                        JSONObject preparationDiagnostics = result.optJSONObject("diagnostics");
+                        JSONObject preparationReceipt = preparationDiagnostics == null
+                                ? null : preparationDiagnostics.optJSONObject("receipt");
+                        trace("NATIVE_PROFILE_ELIGIBILITY_FALLBACK",
+                                object("reason", "LAST_USED_MODEL_CONFIG_INELIGIBLE",
+                                        "model", preparationReceipt == null ? "" : preparationReceipt.optString("model"),
+                                        "enforcement", "conversation-request"));
+                    } catch (RuntimeException error) {
+                        finish(false, "MODEL_ENFORCEMENT_UNAVAILABLE",
+                                contextualDetail("대화별 모델 적용 초기화 실패: " + error.getClass().getSimpleName()));
+                        return;
+                    }
+                }
                 nativeProfilePrepared = true;
                 pageAttempts = 0;
                 lastRetryDetail = detail;
@@ -792,6 +821,12 @@ public final class ExecutionService extends Service {
         if (!resultUrl.isBlank()) lastObservedUrl = resultUrl;
         trace("VERIFY_RESULT", object("status", status, "detail", detail, "url", resultUrl,
                 "diagnostics", result.optJSONObject("diagnostics"), "raw", clip(raw, 12_000)));
+        if (modelEnforcementRequired && ("VERIFIED".equals(status) || "RETRY".equals(status))
+                && !ConversationModelEnforcement.matches(result, currentRequestProfile)) {
+            finish(false, "MODEL_ENFORCEMENT_UNVERIFIED",
+                    contextualDetail("전송 요청에 지정한 모델·추론값의 적용 내역을 확인하지 못했습니다."));
+            return;
+        }
         switch (status) {
             case "VERIFIED" -> {
                 if (currentSchedule == null || !TargetParser.matchesVerifiedConversation(

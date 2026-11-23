@@ -4,6 +4,11 @@ public final class AutomationScript {
     private AutomationScript() {}
 
     public static String build(Schedule schedule, String stampedPrompt, String runId, int attempt) {
+        return build(schedule, stampedPrompt, runId, attempt, false);
+    }
+
+    public static String build(Schedule schedule, String stampedPrompt, String runId,
+                               int attempt, boolean enforceConversationModel) {
         String prompt = jsQuote(stampedPrompt);
         String run = jsQuote(runId);
         return "(() => {" +
@@ -34,7 +39,7 @@ public final class AutomationScript {
                 "const authControl=authControls.find(e=>{const label=authLabel(e),href=String(e.getAttribute?.('href')||'').toLowerCase();return /^(?:log in|sign in|sign up|create account|로그인|회원가입|가입)$/.test(label)||/(?:^|\\/)(?:auth\\/)?(?:login|signup|signin)(?:[\\/?#]|$)/.test(href);});" +
                 "const authRequired=authPath||(!composer&&!!authControl);" +
                 "if(authRequired)return result('AUTH_REQUIRED','ChatGPT 로그인이 필요합니다.',{...routeDiagnostics,authPath,authLabel:authControl?authLabel(authControl):'',composerPresent:!!composer,readyState:document.readyState});" +
-                RequestProfileScript.activate(schedule) +
+                RequestProfileScript.activate(schedule, enforceConversationModel) +
                 "if(!composer)return result('RETRY','입력창 대기',{...routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics,composerMissing:true,inputStarted:readInputStarted(),selectors,readyState:document.readyState,activeTag:document.activeElement?.tagName||'',forms:document.forms.length});" +
                 "const raw=()=>('value'in composer?composer.value:(composer.innerText||composer.textContent||''));" +
                 "const diag=(phase,strategy='')=>({phase,strategy,inputStarted:readInputStarted(),attempt:" + Math.max(0, attempt) + ",selector,tag:composer.tagName,contentEditable:composer.getAttribute('contenteditable')||'',connected:composer.isConnected,visible:composer.offsetParent!==null,activeIsComposer:document.activeElement===composer,hasFocus:document.hasFocus(),hasText:canonical(raw())!=='',readyState:document.readyState,route:routeDiagnostics,mode:modeDiagnostics,model:modelDiagnostics,reasoning:reasoningDiagnostics});" +
