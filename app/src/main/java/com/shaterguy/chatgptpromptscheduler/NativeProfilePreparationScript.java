@@ -62,9 +62,7 @@ final class NativeProfilePreparationScript {
                   (async()=>{
                     const env=await nativeEnvironment();
                     state.receipt=await applyPreference(env,profile);
-                    state.status=state.receipt.serverEligibilityRejected?'PREPARED_LOCAL':'PREPARED';
-                    state.detail=state.receipt.serverEligibilityRejected
-                      ?'기본 모델 저장 거부: 대화별 모델 적용 준비 완료':'모델·추론 설정 저장 완료';
+                    state.status='PREPARED';state.detail='모델·추론 설정 저장 완료';
                   })().catch(e=>{
                     state.status='NATIVE_PREFERENCE_FAILED';
                     const code=String(e?.message||'');
@@ -102,8 +100,7 @@ final class NativeProfilePreparationScript {
                   const removesEffort=profile.mode==='chat'&&profile.effortOperation==='REMOVE'&&profile.thinking_effort===null;
                   if(typeof profile.model!=='string'||!/^[-a-zA-Z0-9_.]{1,128}$/.test(profile.model)||(!removesEffort&&!['standard','extended','min','max','ultra','xhigh','zero'].includes(profile.thinking_effort)))throw new Error('프로필 원본값이 올바르지 않습니다.');
                   const selection={slug:profile.model,thinkingEffort:profile.thinking_effort};
-                  const receipt={mode:profile.mode,model:profile.model,effort:profile.thinking_effort,strategy,serverAcknowledged:null,
-                    serverEligibilityRejected:false,adapterVersion:'0.1.0-dev12'};
+                  const receipt={mode:profile.mode,model:profile.model,effort:profile.thinking_effort,strategy,serverAcknowledged:null,adapterVersion:'0.1.0-dev9'};
                   const endpoint=profile.mode==='work'?'/settings/user_tpp_last_used_model_config':'/settings/user_last_used_model_config';
                   let phase='server-patch';
                   try {
@@ -114,24 +111,15 @@ final class NativeProfilePreparationScript {
                     phase='server-acknowledgement';
                     if(saved?.success!==true){
                       receipt.serverAcknowledged=false;
-                      // Last-used-model persistence is not a conversation entitlement check.
-                      // Only the exact known eligibility rejection permits local selection.
-                      const eligibilityRejected=profile.mode==='chat'&&strategy==='combined'
-                        &&saved?.success===false
-                        &&saved?.message==="Failed to meet eligibility criteria for updating user's last used model config.";
-                      if(eligibilityRejected){
-                        receipt.serverEligibilityRejected=true;
-                        receipt.serverEligibilityReason='LAST_USED_MODEL_CONFIG_INELIGIBLE';
-                      }else{
-                        const error=new Error('설정 저장 성공 응답을 받지 못했습니다.');
-                        error.diagnosticResponse=safePreferenceDiagnostic(saved);
-                        error.diagnosticKind=saved===null?'null':Array.isArray(saved)?'array':typeof saved;
-                        error.diagnosticKeys=saved&&typeof saved==='object'?Object.keys(saved).slice(0,32):[];
-                        const status=typeof saved?.status==='number'?saved.status:typeof saved?.response?.status==='number'?saved.response.status:null;
-                        if(status!==null)error.status=status;
-                        throw error;
-                      }
-                    }else receipt.serverAcknowledged=true;
+                      const error=new Error('설정 저장 성공 응답을 받지 못했습니다.');
+                      error.diagnosticResponse=safePreferenceDiagnostic(saved);
+                      error.diagnosticKind=saved===null?'null':Array.isArray(saved)?'array':typeof saved;
+                      error.diagnosticKeys=saved&&typeof saved==='object'?Object.keys(saved).slice(0,32):[];
+                      const status=typeof saved?.status==='number'?saved.status:typeof saved?.response?.status==='number'?saved.response.status:null;
+                      if(status!==null)error.status=status;
+                      throw error;
+                    }
+                    receipt.serverAcknowledged=true;
                   }
                   if(strategy!=='server'){
                     phase='native-selection';

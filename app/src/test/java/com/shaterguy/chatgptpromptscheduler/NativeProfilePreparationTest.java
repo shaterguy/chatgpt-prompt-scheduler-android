@@ -289,40 +289,22 @@ public final class NativeProfilePreparationTest {
             """);
     }
 
-    @Test public void chatEligibilityRejectionCanPrepareNativeSelectionButOtherFailuresRemainFatal() throws Exception {
+    @Test public void eligibilityRejectionRemainsFailureAndDoesNotChangeSelectedModel() throws Exception {
         run(ENV + NativeProfilePreparationScript.preferenceFunction() + """
             (async()=>{
               const p={mode:'chat',model:'gpt-6-thinking',thinking_effort:'max',effortOperation:'SET'};
-              env.api.safePatch=async()=>({success:false,message:"Failed to meet eligibility criteria for updating user's last used model config."});
-              const receipt=await applyPreference(env,p);
-              assert.equal(receipt.serverAcknowledged,false);
-              assert.equal(receipt.serverEligibilityRejected,true);
-              assert.deepEqual(atoms.get('chatgpt-last-selected-home-model-v1'),{slug:'gpt-6-thinking',thinkingEffort:'max'});
-              assert.equal(events.includes('publish'),true);
-              assert.equal(events.includes('durable'),true);
-              const writes=events.length;
-              env.api.safePatch=async()=>({success:false,message:'Access denied'});
-              await assert.rejects(applyPreference(env,p));
-              assert.equal(events.length,writes);
-              env.api.safePatch=async()=>({success:false,message:"Failed to meet eligibility criteria for updating user's last used model config."});
-              await assert.rejects(applyPreference(env,{...p,mode:'work'}));
-              assert.equal(events.length,writes);
-            })().catch(e=>{console.error(e);process.exitCode=1;});
-            """);
-    }
-
-    @Test public void successfulFallbackHasDistinctPreparedLocalStatus() throws Exception {
-        String script=NativeProfilePreparationScript.build(chatProfile(),"eligibility-run")
-                .replace("await import(runtime)","await Promise.resolve({__webpack_require__:nativeRequire})");
-        run(ENV + browserBoundary() + "const script=" + RequestProfileScript.jsQuote(script) + ";" + """
-            (async()=>{
-              env.api.safePatch=async()=>({success:false,message:"Failed to meet eligibility criteria for updating user's last used model config."});
-              assert.equal(JSON.parse(eval(script)).status,'RETRY');
-              await new Promise(r=>setImmediate(r));
-              const x=JSON.parse(eval(script));
-              assert.equal(x.status,'PREPARED_LOCAL');
-              assert.equal(x.diagnostics.receipt.serverAcknowledged,false);
-              assert.equal(x.diagnostics.receipt.serverEligibilityRejected,true);
+              env.api.safePatch=async()=>({success:false,
+                message:"Failed to meet eligibility criteria for updating user's last used model config."});
+              await assert.rejects(applyPreference(env,p),e=>{
+                assert.equal(e.phase,'server-acknowledgement');
+                assert.equal(e.receipt.serverAcknowledged,false);
+                assert.equal(e.diagnosticKind,'object');
+                assert.match(e.diagnosticResponse,/Failed to meet eligibility criteria/);
+                return true;
+              });
+              assert.equal(atoms.size,0);
+              assert.equal(events.includes('publish'),false);
+              assert.equal(events.includes('durable'),false);
             })().catch(e=>{console.error(e);process.exitCode=1;});
             """);
     }
